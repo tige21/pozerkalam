@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<title>Тренажёр манёвров — работа рулём в тесноте</title>
+<title>По зеркалам — тренажёр манёвров и парковки</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b0f14'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%239fd0ff' stroke-width='3'/%3E%3Cpath d='M16 16v9M16 16 8.2 11.5M16 16l7.8-4.5' stroke='%239fd0ff' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -4586,7 +4586,8 @@ function touchCtrlHTML(){ return ''
   +'</ul>'; }
 function startHTML(){
   if(MOB) return ''
-    +'<h1>Тренажёр манёвров в тесноте</h1>'
+    +'<h1>По зеркалам</h1>'
+    +'<p style="margin:-4px 0 10px;color:#93a7bd">тренажёр манёвров и подготовки к экзамену</p>'
     +'<button data-act="start">Поехали</button>'
     +'<p>Держи телефон горизонтально. Карточка сверху ведёт манёвр: действие + до какого показания. '
     +'Оранжевые стойки показывают, где реально габариты машины. '
@@ -4597,7 +4598,8 @@ function startHTML(){
   /* стена текста про Аккермана на старте отпугивала до первой поездки:
      4 буллета о главном, физика и полный список клавиш — в справке (H) */
   return ''
-  +'<h1>Тренажёр манёвров в тесноте</h1>'
+  +'<h1>По зеркалам</h1>'
+  +'<p style="margin:-4px 0 10px;color:#93a7bd">тренажёр манёвров и подготовки к экзамену</p>'
   +'<button data-act="start">Поехали</button>'
   +readinessHTML()
   +'<ul class="startlist" style="text-align:left">'
