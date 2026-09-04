@@ -32,7 +32,7 @@ Created: 2026-09-04
 - [x] 3. **HTTPS.** (LE-серт на оба имени, 301, автопродление certbot) После резолва DNS (P1): `certbot --nginx` на оба имени, ECDSA-профиль,
   редирект 80→443, HSTS с малым max-age=300 (поднимем после недели стабильности),
   таймер автопродления. Смоук: `curl -sI https://pozerkalam.space` → 200, издатель LE.
-- [ ] 4. **Security-заголовки.** CSP: `default-src 'self'; script-src 'sha256-<hash>';
+- [x] 4. **Security-заголовки.** (3/3 отдаются; ловушка: add_header в location глушит server-уровень — include продублирован в location) CSP: `default-src 'self'; script-src 'sha256-<hash>';
   style-src 'unsafe-inline'; img-src 'self' data:` — хэш единственного inline-скрипта
   считает деплой-скрипт и подставляет в конфиг; `frame-ancestors 'self'
   https://yandex.ru https://*.yandex.net https://playhop.com` (задел под Яндекс Игры);
@@ -56,11 +56,11 @@ Created: 2026-09-04
   залипнет в старом кэше), network-first для index + мгновенная активация
   (skipWaiting). Регистрация SW в игре — 3 строки, guard'ом try/catch.
   Смоук: повторная загрузка из SW, обновление после повторного деплоя.
-- [ ] 8. **GoAccess.** Пакет из apt, ежедневный cron: HTML-отчёт по access-логу vhost'а
+- [x] 8. **GoAccess.** (1.7, cron.daily, /stats/ за basic auth — 401 подтверждён) Пакет из apt, ежедневный cron: HTML-отчёт по access-логу vhost'а
   в `/var/www/pozerkalam/stats/index.html` за basic auth (htpasswd). Ротация логов —
   штатный logrotate Debian. Смоук: отчёт открывается, чужие vhost-логи не смешаны
   (отдельный access_log у нашего server-блока).
-- [ ] 9. **Цели в Метрике + финал.** В интерфейсе Метрики завести цели на события из
+- [x] 9. **Цели в Метрике + финал.** (Lighthouse mobile Performance 92, FCP 1.1s/LCP 2.0s; цели в интерфейсе Метрики — за пользователем, список выдан) В интерфейсе Метрики завести цели на события из
   задачи 5 (JS-событие reachGoal с теми же именами); Lighthouse-замер (цель:
   Performance ≥90 на мобильном профиле); галочки M1/M2/M2b в ROADMAP + строки в
   Completed; CLAUDE.md — раздел деплоя (новый скрипт, домен, SW-версионирование);
