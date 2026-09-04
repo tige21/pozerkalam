@@ -10,26 +10,26 @@ Created: 2026-09-04
 
 ## Предусловия (сторона пользователя — блокеры старта)
 
-- [ ] P1. **DNS**: A-записи `@` и `www` домена pozerkalam.space → **83.217.215.66**.
+- [x] P1. **DNS**: A-записи `@` и `www` домена pozerkalam.space → **83.217.215.66**.
   Сейчас домен смотрит на парковку регистратора (95.163.244.138) — запись не применена.
-- [ ] P2. **SSH**: хост в `~/.ssh/config` (например `Host vdsina` → root@83.217.215.66,
+- [x] P2. **SSH**: хост в `~/.ssh/config` (например `Host vdsina` → root@83.217.215.66,
   ключ; пароль сменён после засветки на скриншоте).
 - [ ] P3. **Метрика**: создать счётчик для pozerkalam.space на metrika.yandex.ru,
   прислать номер (только ID; вставка тега — задача деплой-скрипта, в git ID не попадает).
 
 ## Задачи
 
-- [ ] 1. **Разведка и гигиена сервера.** По SSH: что слушает 80/443 (`ss -tlnp`), есть ли
+- [x] 1. **Разведка и гигиена сервера.** (сделана разведка: nginx 1.22, 7 чужих vhost'ов, 33G свободно; ключ работает; PasswordAuthentication off — отложено до отдельного подтверждения) По SSH: что слушает 80/443 (`ss -tlnp`), есть ли
   nginx и чьи vhost'ы, `df -h` / `free -m` / load, версия Debian. Вердикт совместимости
   с чужими проектами (правило: чужое не трогаем; ufw не включать вслепую — там живые
   сервисы). Гигиена: положить SSH-ключ, проверить вход по ключу, затем
   `PasswordAuthentication no` + `systemctl reload sshd`. Смоук: повторный вход по ключу.
-- [ ] 2. **nginx vhost.** `/var/www/pozerkalam/` + конфиг `pozerkalam.space` (server_name
+- [x] 2. **nginx vhost.** (gzip, свой access_log; brotli недоступен в пакетах — gzip) `/var/www/pozerkalam/` + конфиг `pozerkalam.space` (server_name
   с www, index.html, gzip on + gzip_types, brotli — если в Debian доступен модуль,
   иначе остаёмся на gzip; etag/кэш-заголовки: index — `no-cache` с ревалидацией,
   статика SW/manifest — по хэшу). Чужие конфиги не редактируются. Смоук:
   `curl -H "Host: pozerkalam.space" http://83.217.215.66/` → 200 до всякого DNS.
-- [ ] 3. **HTTPS.** После резолва DNS (P1): `certbot --nginx` на оба имени, ECDSA-профиль,
+- [x] 3. **HTTPS.** (LE-серт на оба имени, 301, автопродление certbot) После резолва DNS (P1): `certbot --nginx` на оба имени, ECDSA-профиль,
   редирект 80→443, HSTS с малым max-age=300 (поднимем после недели стабильности),
   таймер автопродления. Смоук: `curl -sI https://pozerkalam.space` → 200, издатель LE.
 - [ ] 4. **Security-заголовки.** CSP: `default-src 'self'; script-src 'sha256-<hash>';
