@@ -2698,6 +2698,22 @@ let note='', noteT=0;
 function toast(msg,t){ note=msg; noteT=t||1.4; }
 /* воронка: уходит в Метрику, если деплой вставил счётчик; в репозитории — no-op */
 function track(goal){ try{ if(window.ym&&window.METRIKA_ID) ym(window.METRIKA_ID,'reachGoal',goal); }catch(e){} }
+/* рекламный слой: в веб-билде no-op, билд Яндекс Игр подставляет window.ADS.
+   Кулдаун interstitial жёсткий: площадки снимают игры за частый показ,
+   поэтому никогда в первые 60 с сессии и не чаще раза в 180 с */
+let adsLastT=0;
+const adsT0=performance.now();
+function adsInterstitial(reason){
+  if(!window.ADS||!window.ADS.interstitial) return;
+  const now=performance.now();
+  if(now-adsT0<60e3 || now-adsLastT<180e3) return;
+  adsLastT=now;
+  try{ window.ADS.interstitial(reason); }catch(e){}
+}
+function adsRewarded(onReward){
+  if(window.ADS&&window.ADS.rewarded){ try{ window.ADS.rewarded(onReward); }catch(e){} }
+  else onReward();   /* веб: награда без рекламы */
+}
 function shiftSel(step){
   const i=SEL_ORDER.indexOf(car.sel), j=clamp(i+step,0,SEL_ORDER.length-1);
   if(j===i) return;
@@ -4519,8 +4535,8 @@ function doAct(a){
     else if(!seenOnb) setTimeout(showOnboard,240);
     else maybeStartTut();
   }
-  else if(a==='next'){ loadLevel(game.li+1); hideOv(); }
-  else if(a==='again'){ restart(); hideOv(); }
+  else if(a==='next'){ adsInterstitial('next'); loadLevel(game.li+1); hideOv(); }
+  else if(a==='again'){ adsInterstitial('again'); restart(); hideOv(); }
 }
 function ctrlHTML(){ return ''
   +'<h2>Управление</h2><div class="grid2"><ul>'
@@ -5747,6 +5763,10 @@ function buildMenu(){
   add('Настройка зеркал: '+MIR_PRESETS[mirPreset].name, ()=>pressKey('KeyU'));
   add('Сбросить зеркала', ()=>{ applyMirPreset(0); });
   h('Прочее');
+  add('Подсказка: траектория манёвра', ()=>{
+    adsRewarded(()=>{ opt.guides=true;
+      toast('Идеальная траектория включена — смотри зелёно-оранжевую линию', 3.5); });
+  }, ()=>opt.guides);
   add('Коробка: '+(mtOn()?'механика':'автомат'), ()=>{
     opt.gearbox = mtOn() ? 'AT' : 'MT';
     track('mt-'+opt.gearbox.toLowerCase());

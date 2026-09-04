@@ -1,79 +1,59 @@
-# Implementation Plan: Продакшн-выкат «По зеркалам» — pozerkalam.space (M1+M2+M2b роадмапа)
+# Implementation Plan: Каналы дистрибуции — M4 Яндекс Игры + M5 VK/TG + M6 лендинг
 
-Branch: none (fast; правки кода минимальны, работа в main)
+Branch: none (fast, main)
 Created: 2026-09-04
 
 ## Settings
-- Testing: смоук-проверки после каждой серверной задачи (curl-статусы, заголовки, байт-сверка); финал — Lighthouse
-- Logging: n/a (ops); в игре — без новых логов
-- Docs: обновить CLAUDE.md (деплой-раздел) и ROADMAP (галочки M1/M2/M2b) в финале
+- Testing: headless демо-регрессия (18 демо, 0 warn) после каждой правки index.html; билд ЯИ — с мок-SDK; лендинг — билд без ошибок + деплой-смоук
+- Logging: minimal (console.warn только в guard-ветках)
+- Docs: CLAUDE.md (ads-слой, билды, лендинг) + ROADMAP галочки в финале
 
-## Предусловия (сторона пользователя — блокеры старта)
-
-- [x] P1. **DNS**: A-записи `@` и `www` домена pozerkalam.space → **83.217.215.66**.
-  Сейчас домен смотрит на парковку регистратора (95.163.244.138) — запись не применена.
-- [x] P2. **SSH**: хост в `~/.ssh/config` (например `Host vdsina` → root@83.217.215.66,
-  ключ; пароль сменён после засветки на скриншоте).
-- [x] P3. **Метрика** (счётчик 112294388 создан, ID в .deploy.env): создать счётчик для pozerkalam.space на metrika.yandex.ru,
-  прислать номер (только ID; вставка тега — задача деплой-скрипта, в git ID не попадает).
+## Границы: публикация на площадках (аккаунты, модерация) — руками пользователя;
+## мои выходы — готовые артефакты (ZIP ЯИ, URL для VK/TG) и пошаговые инструкции.
 
 ## Задачи
 
-- [x] 1. **Разведка и гигиена сервера.** (сделана разведка: nginx 1.22, 7 чужих vhost'ов, 33G свободно; ключ работает; PasswordAuthentication off — отложено до отдельного подтверждения) По SSH: что слушает 80/443 (`ss -tlnp`), есть ли
-  nginx и чьи vhost'ы, `df -h` / `free -m` / load, версия Debian. Вердикт совместимости
-  с чужими проектами (правило: чужое не трогаем; ufw не включать вслепую — там живые
-  сервисы). Гигиена: положить SSH-ключ, проверить вход по ключу, затем
-  `PasswordAuthentication no` + `systemctl reload sshd`. Смоук: повторный вход по ключу.
-- [x] 2. **nginx vhost.** (gzip, свой access_log; brotli недоступен в пакетах — gzip) `/var/www/pozerkalam/` + конфиг `pozerkalam.space` (server_name
-  с www, index.html, gzip on + gzip_types, brotli — если в Debian доступен модуль,
-  иначе остаёмся на gzip; etag/кэш-заголовки: index — `no-cache` с ревалидацией,
-  статика SW/manifest — по хэшу). Чужие конфиги не редактируются. Смоук:
-  `curl -H "Host: pozerkalam.space" http://83.217.215.66/` → 200 до всякого DNS.
-- [x] 3. **HTTPS.** (LE-серт на оба имени, 301, автопродление certbot) После резолва DNS (P1): `certbot --nginx` на оба имени, ECDSA-профиль,
-  редирект 80→443, HSTS с малым max-age=300 (поднимем после недели стабильности),
-  таймер автопродления. Смоук: `curl -sI https://pozerkalam.space` → 200, издатель LE.
-- [x] 4. **Security-заголовки.** (3/3 отдаются; ловушка: add_header в location глушит server-уровень — include продублирован в location) CSP: `default-src 'self'; script-src 'sha256-<hash>';
-  style-src 'unsafe-inline'; img-src 'self' data:` — хэш единственного inline-скрипта
-  считает деплой-скрипт и подставляет в конфиг; `frame-ancestors 'self'
-  https://yandex.ru https://*.yandex.net https://playhop.com` (задел под Яндекс Игры);
-  X-Content-Type-Options, Referrer-Policy=strict-origin-when-cross-origin.
-  Смоук: securityheaders-подобная проверка curl'ом всех заголовков.
-- [x] 5. **Track-хуки в игре** (7 точек: level-start/win/exam-pass/exam-fail/mt-*/demo-start; регрессия чиста) (правка index.html + коммит). Обёртка
-  `track(goal, params?)` — no-op, если счётчик не вставлен (репозиторий остаётся
-  zero-dependency); вызовы: `level-start` (loadLevel), `win` (win), `exam-pass` /
-  `exam-fail` (examPass/examFail), `mt-on` (тумблер КПП), `demo-start` (startDemo).
-  Смоук: headless-регрессия 18 демо без warn'ов, track молчит без счётчика.
-- [x] 6. **Деплой-скрипт `deploy-pozerkalam.sh`** (минификация 405→301 КБ, вставка Метрики, CSP-хэши, SW-версия, смоук; прод проверен браузером: ym работает, 0 ошибок) (новый; старый 62yun-скрипт не трогаем —
-  сервер остаётся зеркалом). Конвейер: (а) минификация артефакта
-  (`npx html-minifier-terser` с minifyJS/minifyCSS, ~400→~230 КБ; исходник в git
-  остаётся единым читаемым файлом); (б) вставка тега Метрики с ID из локального
-  `.deploy.env` (в .gitignore); (в) пересчёт CSP-хэша и обновление nginx-конфига;
-  (г) scp + установка + reload; (д) смоук: https 200, размер, совпадение sha256,
-  наличие счётчика в отдаче, заголовки на месте.
-- [x] 7. **PWA.** (manifest + иконки 192/512 канвой + sw.js network-first; SW controlling на проде) `manifest.webmanifest` (имя «По зеркалам», иконки 192/512 — сгенерить
-  простой знак «два зеркала» ImageMagick'ом/канвой), `sw.js` — precache index с
-  версией = sha256 артефакта, которую вписывает деплой-скрипт (без версии прод
-  залипнет в старом кэше), network-first для index + мгновенная активация
-  (skipWaiting). Регистрация SW в игре — 3 строки, guard'ом try/catch.
-  Смоук: повторная загрузка из SW, обновление после повторного деплоя.
-- [x] 8. **GoAccess.** (1.7, cron.daily, /stats/ за basic auth — 401 подтверждён) Пакет из apt, ежедневный cron: HTML-отчёт по access-логу vhost'а
-  в `/var/www/pozerkalam/stats/index.html` за basic auth (htpasswd). Ротация логов —
-  штатный logrotate Debian. Смоук: отчёт открывается, чужие vhost-логи не смешаны
-  (отдельный access_log у нашего server-блока).
-- [x] 9. **Цели в Метрике + финал.** (Lighthouse mobile Performance 92, FCP 1.1s/LCP 2.0s; цели в интерфейсе Метрики — за пользователем, список выдан) В интерфейсе Метрики завести цели на события из
-  задачи 5 (JS-событие reachGoal с теми же именами); Lighthouse-замер (цель:
-  Performance ≥90 на мобильном профиле); галочки M1/M2/M2b в ROADMAP + строки в
-  Completed; CLAUDE.md — раздел деплоя (новый скрипт, домен, SW-версионирование);
-  обновить память проекта. Старый прод 194.5.65.182 живёт зеркалом до отдельного
-  решения о выключении.
+- [x] 1. **Ads-абстракция в игре** (adsInterstitial c кулдауном 60с/180с + adsRewarded; хуки next/again; rewarded-пункт меню «траектория»; регрессия 0 warn) (index.html). Слой `ads` с методами
+  `interstitial(reason)` и `rewarded(onReward)` — в веб-билде no-op (как track).
+  Точки вызова: interstitial — смена уровня (loadLevel по действию игрока, не чаще
+  1 раза в 3 мин, кулдаун-переменная) и «Повторить» после win/fail; rewarded —
+  новая кнопка «Подсказка: показать траекторию» на задании/в меню: включает
+  opt.guides до конца уровня. В веб-билде rewarded даёт награду сразу (без рекламы).
+  Смоук: headless-регрессия, кнопка работает в вебе.
+- [x] 2. **Билд Яндекс Игр** (build/yandex.zip 88КБ; мок-тест зелёный: SDK→ADS, облачный merge trainer_*, rewarded/interstitial через adv, LoadingAPI.ready; PWA/favicon вырезаны) — `build-yandex.sh`: артефакт из index.html БЕЗ Метрики,
+  БЕЗ SW/manifest-регистрации (iframe площадки), с тегом `/sdk.js` ЯИ и адаптером:
+  `YaGames.init()` → ysdk; ads.interstitial → `adv.showFullscreenAdv`, ads.rewarded →
+  `adv.showRewardedVideo`; сейвы: зеркалирование ключей trainer_* в
+  `player.setData/getData` поверх localStorage (getData при старте, merge);
+  `LoadingAPI.ready()` после загрузки. ZIP `build/yandex.zip` с index.html в корне.
+  Смоук: локальный прогон с мок-YaGames (init/adv/player заглушки) — игра стартует,
+  регрессия чиста, interstitial-хук зовётся на смене уровня.
+- [ ] 3. **Совместимость VK/Telegram** (M5-код). CSP frame-ancestors дополнить
+  vk.com/*.vk.com/web.telegram.org; проверить игру в iframe (Playwright: страница-
+  обёртка с iframe на prod) — работает, тач-режим жив. TG Mini App и VK — используют
+  прод-URL как есть; выход задачи — проверенный факт «в iframe работает» +
+  инструкция создания бота (BotFather → WebApp URL) и VK Mini App в финале.
+- [ ] 4. **Лендинг (M6, Astro)** — каталог `landing/` в репо: Astro static, 3 страницы:
+  главная (питч «подготовка к практическому экзамену», кнопка «Играть» → /play/,
+  блок фич: 27 уровней/экзамен/МКПП), `/avtoshkolam` (B2B: white-label,
+  «домашка» ученику, контакт-заглушка mailto), `/metodika` (SEO-статья: ориентиры
+  парковки по зеркалам — из hacks игры). Дизайн: тёмная тема игры (#0d141d/#7dd8ff),
+  без фреймворк-CSS. Билд `npm run build` без ошибок.
+- [ ] 5. **Перестановка путей на проде**: лендинг → корень `/`, игра → `/play/`
+  (SEO-правильно). nginx: `/` — лендинг-статик, `/play/` — игра,
+  SW: перерегистрация на /play/, старый SW корня — самоликвидация (unregister при
+  загрузке новой версии). deploy-pozerkalam.sh расширить: билд лендинга + игра в
+  /play/ + смоук обоих. Пересчитать пути манифеста/иконок/SW под /play/.
+- [ ] 6. **Финал**: полная регрессия (18 демо), Lighthouse лендинга и /play/,
+  ROADMAP: M4 «код готов, ZIP собран — подача за пользователем», M5 «iframe
+  проверен — регистрация за пользователем», M6 [x]; инструкции публикации
+  (ЯИ-кабинет, BotFather, VK) в docs/PUBLISH.md; CLAUDE.md: ads-слой, билды,
+  структура /play/; коммит; память.
 
 ## Риски
-
-1. **Чужие проекты на сервере** — все действия только добавляющие (свой vhost, свой
-   лог, свой каталог); никаких глобальных правок nginx.conf, ufw и рестартов чужого.
-2. **SW-кэш** — версия из хэша артефакта в каждом деплое, иначе пользователи
-   застревают на старой версии навсегда.
-3. **CSP + инлайн-скрипт** — только hash-подход (не 'unsafe-inline' для script);
-   хэш обязан пересчитываться в деплое после минификации, иначе белый экран.
-4. **DNS-парковка** — задачи 3+ блокированы до P1; задача 2 проверяется через
-   Host-заголовок без DNS.
+1. **SW-переезд на /play/** — старый SW на scope '/' перехватывал бы лендинг:
+   новая версия обязана вычистить старый кэш и scope.
+2. **Мок-SDK ≠ реальный SDK** — ЯИ-билд тестируется моком; финальная проверка —
+   в песочнице кабинета ЯИ (за пользователем, до модерации).
+3. **Interstitial-кулдаун** — ЯИ режет за частую рекламу: жёсткий минимум 180 с
+   и никогда — в первые 60 с сессии.
