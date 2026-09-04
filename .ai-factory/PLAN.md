@@ -28,23 +28,23 @@ Created: 2026-09-04
   `LoadingAPI.ready()` после загрузки. ZIP `build/yandex.zip` с index.html в корне.
   Смоук: локальный прогон с мок-YaGames (init/adv/player заглушки) — игра стартует,
   регрессия чиста, interstitial-хук зовётся на смене уровня.
-- [ ] 3. **Совместимость VK/Telegram** (M5-код). CSP frame-ancestors дополнить
+- [x] 3. **Совместимость VK/Telegram** (frame-ancestors +vk.com/*.vk.com/web.telegram.org в deploy-скрипте — уйдёт с деплоем задачи 5; iframe-тест: игра загружается и едет) (M5-код). CSP frame-ancestors дополнить
   vk.com/*.vk.com/web.telegram.org; проверить игру в iframe (Playwright: страница-
   обёртка с iframe на prod) — работает, тач-режим жив. TG Mini App и VK — используют
   прод-URL как есть; выход задачи — проверенный факт «в iframe работает» +
   инструкция создания бота (BotFather → WebApp URL) и VK Mini App в финале.
-- [ ] 4. **Лендинг (M6, Astro)** — каталог `landing/` в репо: Astro static, 3 страницы:
+- [x] 4. **Лендинг (M6, Astro)** (landing/: Base-layout в палитре игры + index/avtoshkolam/metodika; build 3 страницы без ошибок) — каталог `landing/` в репо: Astro static, 3 страницы:
   главная (питч «подготовка к практическому экзамену», кнопка «Играть» → /play/,
   блок фич: 27 уровней/экзамен/МКПП), `/avtoshkolam` (B2B: white-label,
   «домашка» ученику, контакт-заглушка mailto), `/metodika` (SEO-статья: ориентиры
   парковки по зеркалам — из hacks игры). Дизайн: тёмная тема игры (#0d141d/#7dd8ff),
   без фреймворк-CSS. Билд `npm run build` без ошибок.
-- [ ] 5. **Перестановка путей на проде**: лендинг → корень `/`, игра → `/play/`
+- [x] 5. **Перестановка путей на проде** (deploy v2: лендинг корень + игра /play/ + killer-SW корня; смоук 4/4 по 200, SW-scope только /play/, Метрика жива): лендинг → корень `/`, игра → `/play/`
   (SEO-правильно). nginx: `/` — лендинг-статик, `/play/` — игра,
   SW: перерегистрация на /play/, старый SW корня — самоликвидация (unregister при
   загрузке новой версии). deploy-pozerkalam.sh расширить: билд лендинга + игра в
   /play/ + смоук обоих. Пересчитать пути манифеста/иконок/SW под /play/.
-- [ ] 6. **Финал**: полная регрессия (18 демо), Lighthouse лендинга и /play/,
+- [x] 6. **Финал** (docs/PUBLISH.md — ЯИ/BotFather/VK; Lighthouse лендинга 100/100, /play/ ранее 92; регрессия 0): полная регрессия (18 демо), Lighthouse лендинга и /play/,
   ROADMAP: M4 «код готов, ZIP собран — подача за пользователем», M5 «iframe
   проверен — регистрация за пользователем», M6 [x]; инструкции публикации
   (ЯИ-кабинет, BotFather, VK) в docs/PUBLISH.md; CLAUDE.md: ads-слой, билды,
