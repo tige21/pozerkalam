@@ -1,2 +1,4 @@
 .playwright-mcp/
 .claude/
+.deploy.env
+build/

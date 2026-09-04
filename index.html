@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#1b2735">
+<link rel="icon" type="image/png" href="/icon-192.png">
 <title>По зеркалам — тренажёр манёвров и парковки</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b0f14'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%239fd0ff' stroke-width='3'/%3E%3Cpath d='M16 16v9M16 16 8.2 11.5M16 16l7.8-4.5' stroke='%239fd0ff' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>
@@ -2693,6 +2696,8 @@ let selWarn='', selWarnT=0, selBlockT=0;
 /* короткое уведомление о смене настройки — гаснет быстрее подсказки, чтобы не перебивать урок */
 let note='', noteT=0;
 function toast(msg,t){ note=msg; noteT=t||1.4; }
+/* воронка: уходит в Метрику, если деплой вставил счётчик; в репозитории — no-op */
+function track(goal){ try{ if(window.ym&&window.METRIKA_ID) ym(window.METRIKA_ID,'reachGoal',goal); }catch(e){} }
 function shiftSel(step){
   const i=SEL_ORDER.indexOf(car.sel), j=clamp(i+step,0,SEL_ORDER.length-1);
   if(j===i) return;
@@ -2828,6 +2833,7 @@ function loadLevel(i){
   document.getElementById('lvlTask').textContent = def.task;
   document.getElementById('lvlTip').textContent  = '💡 ' + def.tip;
   document.getElementById('lvlIdx').textContent  = 'уровень ' + (game.li+1) + ' / ' + LEVELS.length;
+  track('level-start');
 }
 function restart(){
   if(demo) stopDemo();
@@ -3220,6 +3226,7 @@ const EXAM_TRAIN={rollback:19, stall:19, 'handbrake-drive':19, collision:21,
 function examFail(why){
   if(!examActive()) return;
   exam.done=true; exam.failed=true; exam.failWhy=why;
+  track('exam-fail');
   console.warn('[exam] НЕ СДАН — '+why);
   game.done=true;
   if(demo) stopDemo();
@@ -3310,6 +3317,7 @@ function examTeardown(){
 function examPass(){
   if(!examActive()) return;
   exam.done=true; exam.failed=false;
+  track('exam-pass');
   game.done=true;
   if(demo) stopDemo();
   game.prog = progExam(true);
@@ -5082,6 +5090,7 @@ function startDemo(){
   const d=DEMOS[game.li]; if(!d) return;
   /* демо водит АКПП-вводом и откалибровано под неё — на МКПП временно переключаем коробку */
   if(mtOn()){ demoBox=opt.gearbox; opt.gearbox='AT'; }
+  track('demo-start');
   restart(); hideOv();
   if(d.start) setBody(d.start.u, d.start.v, d.start.th);
   const s0=d.segs[0];
@@ -5740,6 +5749,7 @@ function buildMenu(){
   h('Прочее');
   add('Коробка: '+(mtOn()?'механика':'автомат'), ()=>{
     opt.gearbox = mtOn() ? 'AT' : 'MT';
+    track('mt-'+opt.gearbox.toLowerCase());
     try{ localStorage.setItem('trainer_gearbox', opt.gearbox); }catch(e){}
     restart();
     toast(mtOn() ? 'МКПП: левый Shift — сцепление, ,/. — передачи, Y — завестись'
@@ -5964,6 +5974,7 @@ function parkBeep(dt){
 }
 function win(){
   game.done=true;
+  track('win');
   if(demo) stopDemo();
   game.prog = precDef()
     ? progAdd(level.def.name, game.t, game.hits, precErr(), opt.refs===0)
@@ -5979,6 +5990,8 @@ loadCustomLevels();
 loadLevel(0);
 showOv(startHTML());
 requestAnimationFrame(frame);
+/* PWA: офлайн и мгновенный повторный вход; с file:// и без https молча пропускается */
+try{ if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js'); }catch(e){}
 </script>
 </body>
 </html>

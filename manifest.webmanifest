@@ -1,0 +1,16 @@
+{
+  "name": "По зеркалам — тренажёр манёвров",
+  "short_name": "По зеркалам",
+  "description": "Тренажёр парковки и подготовки к практическому экзамену: 27 уровней, экзамен-режим, МКПП",
+  "lang": "ru",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#0d141d",
+  "theme_color": "#1b2735",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

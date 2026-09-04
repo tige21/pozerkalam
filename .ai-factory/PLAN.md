@@ -14,7 +14,7 @@ Created: 2026-09-04
   Сейчас домен смотрит на парковку регистратора (95.163.244.138) — запись не применена.
 - [x] P2. **SSH**: хост в `~/.ssh/config` (например `Host vdsina` → root@83.217.215.66,
   ключ; пароль сменён после засветки на скриншоте).
-- [ ] P3. **Метрика**: создать счётчик для pozerkalam.space на metrika.yandex.ru,
+- [x] P3. **Метрика** (счётчик 112294388 создан, ID в .deploy.env): создать счётчик для pozerkalam.space на metrika.yandex.ru,
   прислать номер (только ID; вставка тега — задача деплой-скрипта, в git ID не попадает).
 
 ## Задачи
@@ -38,19 +38,19 @@ Created: 2026-09-04
   https://yandex.ru https://*.yandex.net https://playhop.com` (задел под Яндекс Игры);
   X-Content-Type-Options, Referrer-Policy=strict-origin-when-cross-origin.
   Смоук: securityheaders-подобная проверка curl'ом всех заголовков.
-- [ ] 5. **Track-хуки в игре** (правка index.html + коммит). Обёртка
+- [x] 5. **Track-хуки в игре** (7 точек: level-start/win/exam-pass/exam-fail/mt-*/demo-start; регрессия чиста) (правка index.html + коммит). Обёртка
   `track(goal, params?)` — no-op, если счётчик не вставлен (репозиторий остаётся
   zero-dependency); вызовы: `level-start` (loadLevel), `win` (win), `exam-pass` /
   `exam-fail` (examPass/examFail), `mt-on` (тумблер КПП), `demo-start` (startDemo).
   Смоук: headless-регрессия 18 демо без warn'ов, track молчит без счётчика.
-- [ ] 6. **Деплой-скрипт `deploy-pozerkalam.sh`** (новый; старый 62yun-скрипт не трогаем —
+- [x] 6. **Деплой-скрипт `deploy-pozerkalam.sh`** (минификация 405→301 КБ, вставка Метрики, CSP-хэши, SW-версия, смоук; прод проверен браузером: ym работает, 0 ошибок) (новый; старый 62yun-скрипт не трогаем —
   сервер остаётся зеркалом). Конвейер: (а) минификация артефакта
   (`npx html-minifier-terser` с minifyJS/minifyCSS, ~400→~230 КБ; исходник в git
   остаётся единым читаемым файлом); (б) вставка тега Метрики с ID из локального
   `.deploy.env` (в .gitignore); (в) пересчёт CSP-хэша и обновление nginx-конфига;
   (г) scp + установка + reload; (д) смоук: https 200, размер, совпадение sha256,
   наличие счётчика в отдаче, заголовки на месте.
-- [ ] 7. **PWA.** `manifest.webmanifest` (имя «По зеркалам», иконки 192/512 — сгенерить
+- [x] 7. **PWA.** (manifest + иконки 192/512 канвой + sw.js network-first; SW controlling на проде) `manifest.webmanifest` (имя «По зеркалам», иконки 192/512 — сгенерить
   простой знак «два зеркала» ImageMagick'ом/канвой), `sw.js` — precache index с
   версией = sha256 артефакта, которую вписывает деплой-скрипт (без версии прод
   залипнет в старом кэше), network-first для index + мгновенная активация
