@@ -2718,6 +2718,19 @@ function adsRewarded(onReward){
    Яндекс Игр, п. 4.7); звук гаснет сам — engineSound читает paused. Снимая паузу, не будим игру
    под открытым оверлеем: реклама с «Повторить» приходит уже после hideOv */
 window.adsPause=function(on){ paused = !!on || document.body.classList.contains('ov'); };
+/* ВКонтакте: мини-приложение обязано послать VKWebAppInit — без него мобильный клиент держит
+   экран загрузки, а площадка не считает приложение готовым. Библиотека vk-bridge не подключается
+   (zero-dependency, CSP script-src 'self'): шлём событие тем же протоколом, и только когда запущены
+   с параметрами площадки vk_* — в Яндекс Играх и на своём домене оно не уходит */
+(function(){
+  try{
+    if(!/[?&]vk_(app_id|platform)=/.test(location.search)) return;
+    const w=window, params={};
+    if(w.AndroidBridge && typeof w.AndroidBridge.VKWebAppInit==='function') w.AndroidBridge.VKWebAppInit(JSON.stringify(params));
+    else if(w.webkit && w.webkit.messageHandlers && w.webkit.messageHandlers.VKWebAppInit) w.webkit.messageHandlers.VKWebAppInit.postMessage(params);
+    else if(w.parent!==w) w.parent.postMessage({handler:'VKWebAppInit', params, type:'vk-connect', connectVersion:'2.15.0'}, '*');
+  }catch(e){}
+})();
 function shiftSel(step){
   const i=SEL_ORDER.indexOf(car.sel), j=clamp(i+step,0,SEL_ORDER.length-1);
   if(j===i) return;

@@ -30,6 +30,8 @@
 
 ## VK Mini Apps / VK Play (M5)
 
+Шаги кабинета, материалы и примечание про Одноклассники/VK Play (CSP) — `docs/store/vk.md`. В игре есть шим `VKWebAppInit`.
+
 1. https://dev.vk.com → «Создать приложение» → тип «Встраиваемое приложение».
 2. URL приложения: `https://pozerkalam.space/play/` (iframe-доступ уже разрешён
    CSP: vk.com и *.vk.com).
