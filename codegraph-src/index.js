@@ -585,10 +585,14 @@ function shadeCol(col, n, d, y){
 function pushFace(v, n, col){
   const cx=(v[0].x+v[2].x)*0.5, cy=(v[0].y+v[2].y)*0.5, cz=(v[0].z+v[2].z)*0.5;
   if((cam.pos.x-cx)*n.x + (cam.pos.y-cy)*n.y + (cam.pos.z-cz)*n.z <= 0) return;
-  const cp=[]; let d=0, vis=false;
-  for(let i=0;i<v.length;i++){ const c=toCam(v[i]); cp.push(c); d+=c.d; if(c.d>NEAR) vis=true; }
+  const cp=[]; let d=0, vis=false, behind=false;
+  for(let i=0;i<v.length;i++){ const c=toCam(v[i]); cp.push(c); d+=c.d; if(c.d>NEAR) vis=true; else behind=true; }
   if(!vis) return;
-  faces.push({cp, d:d/v.length, col:shadeCol(col,n,Math.max(d/v.length,1),cy)});
+  let depth=d/v.length;
+  /* грань, пересекающая плоскость камеры (стена вдоль борта из салона): среднее по всем вершинам
+     уходит к нулю и грань ложилась ПОВЕРХ салона. Глубина — по видимой, отсечённой части */
+  if(behind){ const cc=clipNear(cp); let s=0; for(const c of cc) s+=c.d; depth=cc.length?s/cc.length:depth; }
+  faces.push({cp, d:depth, col:shadeCol(col,n,Math.max(d/v.length,1),cy)});
 }
 /* центр в (u, y, v); hw — полуширина поперёк, hl — полудлина вдоль, hh — полувысота */
 function pushBox(u, y, v, hw, hh, hl, yaw, col){
@@ -4112,13 +4116,17 @@ function drawSceneInto(o){
   if(o.guides) drawGuides();
   if(curPhase) drawMarks(curPhase._marks, curS, !!o.labels, !!(demo&&demo.say>0));
   emitObstacles(o.maxD);
+  /* из салона мир и салон — два прохода: внутри кузова ничто снаружи не может быть ближе
+     салонной обшивки, а один общий сорт по средней глубине пускал длинные стены поверх салона */
+  const inside = !o.noSelf && camInsideCabin();
+  if(inside) flushFaces();
   /* в салонное зеркало смотрят СКВОЗЬ заднее стекло: камера стоит внутри кузова,
      и без этого исключения в нём виден только собственный салон — чёрный прямоугольник */
   if(!o.noSelf){
     const c=bodyPos();
     emitCarMesh(c.u,c.v,car.th,[206,214,226],car.steer,
                 {brake:input.back, rev:car.sel==='R'});
-    if(camInsideCabin()) emitInterior(c.u,c.v,car.th);
+    if(inside) emitInterior(c.u,c.v,car.th);
     if(opt.refs>=1) emitCornerPosts();
   }
   flushFaces();
