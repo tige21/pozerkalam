@@ -1153,7 +1153,7 @@ const LEVELS = [
      hint:'Едь вперёд по полосе вдоль ряда машин — до голубой стоп-линии впереди.', marks:['ghost','stop']},
     /* верхняя граница u: за бордюром (u>4.7) машина НЕ в кармане — без неё фаза хвалила
        перелезшего через бордюр, и ученик стоял там до таймаута */
-    {when:s=>s.u>2.6&&s.u<4.7&&Math.abs(deg(angNorm(s.th)))<14,
+    {when:s=>s.u>2.6&&s.u<4.7&&Math.abs(s.v)<4&&Math.abs(deg(angNorm(s.th)))<6,
      icon:'🅿', act:'Выровняй руль и остановись', move:'stop', wheel:'straight',
      goal:{text:'зачёт по полной остановке'},
      why:'Ты в кармане. Подровняйся вперёд/назад, чтобы зазоры спереди и сзади были примерно равными, и остановись полностью.',
@@ -1179,12 +1179,12 @@ const LEVELS = [
      hint:'Так держать: назад с полным ПРАВЫМ рулём до угла ~45°.', marks:['a45'], mirror:'right'},
     /* порог из демо (dist:0.5): прямой отрезок здесь — полметра, а не до жёлтой линии;
        старый текст посылал вглубь и задний угол цеплял бордюр */
-    {when:s=>s.gear<0&&s.u<1.95,
+    {when:s=>s.gear<0&&s.u<1.7&&deg(angNorm(s.th))>-52,
      icon:'⬇', act:'Руль ПРЯМО, сдай назад полметра', move:'rev', wheel:'straight',
      goal:{text:'~0,5 м — до команды «руль влево»'},
      why:'Есть 45°. Выровняй руль и сдай назад примерно полметра — подсказка сама сменится на «руль ВЛЕВО», это и есть точка перекладки.',
      hint:'Угол 45°: выровняй руль ПРЯМО и сдай назад около полуметра — до команды «руль влево».', marks:['kerb03'], mirror:'right'},
-    {when:s=>s.gear<0&&Math.abs(deg(angNorm(s.th)))>12,
+    {when:s=>s.gear<0&&Math.abs(deg(angNorm(s.th)))>6,
      icon:'⬇', act:'Руль ВЛЕВО до упора, назад до угла 0°', move:'rev', wheel:'lockL',
      goal:{metric:'ang',target:0,dir:'down'},
      hint:'Теперь руль ВЛЕВО до упора и назад — пока «угол к цели» не упадёт до нуля.', marks:['kerb03'], mirror:'right'},
@@ -1192,10 +1192,16 @@ const LEVELS = [
      icon:'⬇', act:'Доводи угол до нуля, потом руль прямо', move:'rev',
      goal:{metric:'ang',target:0,dir:'down'},
      hint:'Доводи «угол к цели» до нуля, потом руль прямо.', marks:['kerb03']},
-    {when:s=>Math.abs(deg(angNorm(s.th)))>12,
-     icon:'↕', act:'Выровняйся параллельно ряду', wheel:'straight',
+    /* остаточный угол после дуг: «руль прямо» его не убирает — нужен доворот вперёд в сторону оси;
+       две фазы по знаку угла, чип ведёт к 0° и сам гасит частичный руль */
+    {when:s=>deg(angNorm(s.th))>6,
+     icon:'⬆', act:'Подровняйся: вперёд, руль ВЛЕВО — до угла 0°', move:'fwd', wheel:'left',
      goal:{metric:'ang',target:0,dir:'down'},
-     hint:'Выровняй машину параллельно ряду (руль прямо).', marks:['ghost','stop']},
+     hint:'Нос смотрит от ряда: вперёд с рулём ВЛЕВО, пока «угол к цели» не станет 0, потом руль прямо.', marks:['ghost','stop']},
+    {when:s=>deg(angNorm(s.th))<-6,
+     icon:'⬆', act:'Подровняйся: вперёд, руль ВПРАВО — до угла 0°', move:'fwd', wheel:'right',
+     goal:{metric:'ang',target:0,dir:'up'},
+     hint:'Нос смотрит к ряду: вперёд с рулём ВПРАВО, пока «угол к цели» не станет 0, потом руль прямо.', marks:['ghost','stop']},
     {when:s=>Math.abs(s.u-1.1)>0.9,
      icon:'↕', act:'Встань в 0,6–1,0 м сбоку от ряда',
      goal:{text:'0,8 м до машин — призрак'},
@@ -1623,7 +1629,7 @@ const LEVELS = [
      goal:{text:'стоп у голубой линии'},
      why:'Держи до ряда машин слева 0,6–1,0 м. Голубая линия — место, где твоё левое зеркало поравняется с зеркалом передней машины.',
      hint:'Едь вперёд по полосе вдоль ряда машин — до голубой стоп-линии впереди.', marks:['ghost','stop']},
-    {when:s=>s.u<-2.6&&s.u>-4.7&&Math.abs(deg(angNorm(s.th)))<14,
+    {when:s=>s.u<-2.6&&s.u>-4.7&&Math.abs(s.v)<4&&Math.abs(deg(angNorm(s.th)))<6,
      icon:'🅿', act:'Выровняй руль и остановись', move:'stop', wheel:'straight',
      goal:{text:'зачёт по полной остановке'},
      why:'Ты в кармане. Подровняйся вперёд/назад, чтобы зазоры спереди и сзади были примерно равными, и остановись полностью.',
@@ -1646,12 +1652,12 @@ const LEVELS = [
      icon:'⬇', act:'Так держать: назад до угла 45°', move:'rev', wheel:'lockL',
      goal:{metric:'ang',target:45,dir:'up'},
      hint:'Так держать: назад с полным ЛЕВЫМ рулём до угла ~45°.', marks:['a45'], mirror:'left'},
-    {when:s=>s.gear<0&&s.u>-1.95,
+    {when:s=>s.gear<0&&s.u>-1.7&&deg(angNorm(s.th))<52,
      icon:'⬇', act:'Руль ПРЯМО, сдай назад полметра', move:'rev', wheel:'straight',
      goal:{text:'~0,5 м — до команды «руль вправо»'},
      why:'Есть 45°. Выровняй руль и сдай назад примерно полметра — подсказка сама сменится на «руль ВПРАВО», это и есть точка перекладки.',
      hint:'Угол 45°: выровняй руль ПРЯМО и сдай назад около полуметра — до команды «руль вправо».', marks:['kerb03'], mirror:'left'},
-    {when:s=>s.gear<0&&Math.abs(deg(angNorm(s.th)))>12,
+    {when:s=>s.gear<0&&Math.abs(deg(angNorm(s.th)))>6,
      icon:'⬇', act:'Руль ВПРАВО до упора, назад до угла 0°', move:'rev', wheel:'lockR',
      goal:{metric:'ang',target:0,dir:'down'},
      hint:'Теперь руль ВПРАВО до упора и назад — пока «угол к цели» не упадёт до нуля.', marks:['kerb03'], mirror:'left'},
@@ -1659,10 +1665,16 @@ const LEVELS = [
      icon:'⬇', act:'Доводи до параллели, потом руль прямо', move:'rev',
      goal:{metric:'ang',target:0,dir:'down'},
      hint:'Доводи до параллели, потом выровняй руль.', marks:['kerb03']},
-    {when:s=>Math.abs(deg(angNorm(s.th)))>12,
-     icon:'↕', act:'Выровняйся параллельно ряду', wheel:'straight',
+    /* остаточный угол после дуг: «руль прямо» его не убирает — нужен доворот вперёд в сторону оси;
+       две фазы по знаку угла, чип ведёт к 0° и сам гасит частичный руль */
+    {when:s=>deg(angNorm(s.th))>6,
+     icon:'⬆', act:'Подровняйся: вперёд, руль ВЛЕВО — до угла 0°', move:'fwd', wheel:'left',
      goal:{metric:'ang',target:0,dir:'down'},
-     hint:'Выровняй машину параллельно ряду (руль прямо).', marks:['ghost','stop']},
+     hint:'Нос смотрит от ряда: вперёд с рулём ВЛЕВО, пока «угол к цели» не станет 0, потом руль прямо.', marks:['ghost','stop']},
+    {when:s=>deg(angNorm(s.th))<-6,
+     icon:'⬆', act:'Подровняйся: вперёд, руль ВПРАВО — до угла 0°', move:'fwd', wheel:'right',
+     goal:{metric:'ang',target:0,dir:'up'},
+     hint:'Нос смотрит к ряду: вперёд с рулём ВПРАВО, пока «угол к цели» не станет 0, потом руль прямо.', marks:['ghost','stop']},
     {when:s=>Math.abs(s.u+1.1)>0.9,
      icon:'↕', act:'Встань в 0,6–1,0 м сбоку от ряда',
      goal:{text:'0,8 м до машин — призрак'},
@@ -1829,13 +1841,15 @@ const LEVELS = [
      icon:'⬇', act:'Корма вышла: руль ВЛЕВО до упора', move:'rev', wheel:'lockL',
      goal:{metric:'ang',target:0,dir:'down'},
      hint:'Корма вышла: руль ВЛЕВО до упора — пока «угол к цели» не упадёт до нуля.', mirror:'left'},
+    /* бейдж D, а не R: с «выравнивай руль» на заднем ходу ученик так и ехал задом вдоль улицы
+       до стены — переход в D никто не называл, а фаза «D — в зону» ждала уже включённой D */
     {when:s=>s.gear<0,
-     icon:'⬇', act:'Почти вдоль: выравнивай руль', move:'rev', wheel:'straight',
+     icon:'⬆', act:'Почти вдоль: руль прямо, стоп — и включай D', move:'fwd', wheel:'straight',
      goal:{metric:'ang',target:0,dir:'down'},
-     hint:'Почти вдоль улицы: выравнивай руль.', mirror:'left'},
-    {icon:'⬆', act:'D — и в зелёную зону', move:'fwd',
-     goal:{text:'зелёная зона'},
-     hint:'Включай D и выезжай в зелёную зону.'}
+     hint:'Почти вдоль улицы: выровняй руль, остановись и включи D.', mirror:'left'},
+    {icon:'⬆', act:'D — в зелёную зону и остановись', move:'fwd',
+     goal:{text:'стоп в зоне'},
+     hint:'Включай D, выезжай в зелёную зону и остановись в ней.'}
   ] },
 
 { name:'11 · Карман вплотную между двумя',
@@ -2399,7 +2413,7 @@ const LEVELS = [
      icon:'⬆', act:'К перекрёстку, держись правее', move:'fwd', blinker:'R',
      goal:{text:'до перекрёстка'},
      hint:'Подъезжай к перекрёстку, держась правее своей полосы.', marks:['apex1']},
-    {when:s=>s.u<3.2&&s.v<3.2,
+    {when:s=>s.u<8&&deg(angNorm(s.th))<80,   /* до 80°, а не «пока в квадрате»: быстрый выезд из квадрата оставлял 30° */
      icon:'↱', act:'Направо по малой дуге', wheel:'right',
      goal:{metric:'ang',target:90,dir:'up'},
      why:'Правый поворот — короткий: крути к апексу у своего края. Вынесло к осевой — начал крутить поздно.',
@@ -2413,7 +2427,7 @@ const LEVELS = [
      goal:{text:'до перекрёстка'},
      why:'Перед левым смещаются к осевой: так дуга площе и выход точнее на свою полосу.',
      hint:'Подъезжай ко второму перекрёстку, прижимаясь к осевой.', marks:['apex2']},
-    {when:s=>s.v<3.4,
+    {when:s=>deg(angNorm(s.th))>12,   /* до курса 12°, а не «пока v<3.4»: выезд из окна оставлял 30° */
      icon:'↰', act:'Налево от центра, выходи на свою', wheel:'left',
      goal:{metric:'ang',target:0,dir:'down'},
      why:'Центр перекрёстка остаётся слева от борта; выход — сразу на свою (восточную) полосу, ни метра по встречной.',
@@ -2474,14 +2488,17 @@ const LEVELS = [
      icon:'⬆', act:'До перекрёстка; можно докрутить руль стоя', move:'fwd', blinker:'L',
      goal:{text:'до входа в перекрёсток'},
      hint:'Доезжай до входа в перекрёсток; руль влево можно выкрутить на месте.', marks:['edge','ctr']},
-    {when:s=>{const a=(deg(angNorm(s.th))+360)%360; return a<160&&s.v>-6;},
+    /* левый разворот ведёт курс в МИНУС (0 → −180): условие по знаковому курсу, а не по 0…360 —
+       старое a<160 не срабатывало ни на одном градусе левого разворота. Чип — угол к оси цели,
+       он падает к нулю, поэтому target 0 / dir down */
+    {when:s=>deg(angNorm(s.th))>-160&&s.v>-6,
      icon:'↺', act:'Руль ВЛЕВО до упора — по дуге', wheel:'lockL',
-     goal:{metric:'ang',target:180,dir:'up'},
+     goal:{metric:'ang',target:0,dir:'down'},
      why:'Веди дугу, пока центр перекрёстка остаётся слева от борта. «Угол к цели» дойдёт до нуля — разворот закончен.',
      hint:'Полный левый — и веди по дуге, центр остаётся слева.', marks:['ctr','zone']},
     {when:s=>s.v>-11.2,
-     icon:'⬇', act:'Выходи в свою полосу и вперёд к зоне', wheel:'straight',
-     goal:{metric:'ang',target:180,dir:'up'},
+     icon:'⬇', act:'Выходи в свою полосу и вперёд к зоне', wheel:'straight', move:'fwd',
+     goal:{metric:'ang',target:0,dir:'down'},
      hint:'Выравнивай руль, выходи в свою полосу и веди к зелёной зоне.', marks:['zone']},
     {icon:'🅿', act:'Останови машину в зоне', move:'stop',
      goal:{text:'стоп в зоне + P'},
@@ -2596,7 +2613,7 @@ const LEVELS = [
      goal:{text:'окно чистое — тогда выезжай'},
      why:'Уступить — значит не заставить её даже притормозить. Сомневаешься, успеешь ли, — значит не успеешь: стой.',
      hint:'Стой и пропускай машину слева; выезжай только в чистое окно.', marks:['look'], mirror:'left'},
-    {when:s=>s.v<-1.2,
+    {when:s=>s.u<8&&deg(angNorm(s.th))<75,   /* до 75°, а не «пока v<-1.2»: окно в 3 м проскакивалось за секунду */
      icon:'↱', act:'Направо — и сразу разгоняйся', wheel:'right',
      goal:{metric:'ang',target:90,dir:'up'},
      hint:'Поворачивай направо и разгоняйся по своей полосе.', marks:['zone']},
@@ -2869,6 +2886,7 @@ function loadLevel(i){
   track('level-start');
 }
 function restart(){
+  missFwd=null;
   if(demo) stopDemo();
   if(tut) tut.i=0;
   curPhase=null; phaseCand=null; phaseHold=0;
@@ -3172,10 +3190,12 @@ function goalPoseOk(){
   const g=level.goal; if(!g) return false;
   if(g.tol!==undefined && Math.abs(angNorm(car.th-g.th))>g.tol) return false;
   const gf=fuv(g.th), gr=ruv(g.th), c=bodyPos();
+  /* допуск 6 см — ширина линии разметки: при 2 см ученик стоял ровно в кармане с «борт вылез
+     на 0,0 м» и ещё минуту шаффлил по сантиметру, а живой игрок в таком месте считает, что встал */
   for(const p of carCorners(c.u,c.v,car.th)){
     const du=p.u-g.u, dv=p.v-g.v;
-    if(Math.abs(du*gr.u+dv*gr.v) > g.w/2+0.02) return false;
-    if(Math.abs(du*gf.u+dv*gf.v) > g.l/2+0.02) return false;
+    if(Math.abs(du*gr.u+dv*gr.v) > g.w/2+0.06) return false;
+    if(Math.abs(du*gf.u+dv*gf.v) > g.l/2+0.06) return false;
   }
   return true;
 }
@@ -3465,6 +3485,7 @@ function goalReached(){
   return goalPoseOk() && Math.abs(car.vel) < 0.12;
 }
 /* почему стоянка в зоне не засчитана: без этого игрок стоит в цели и не понимает, чего ждут */
+let missFwd=null;   /* гистерезис совета «вперёд/назад» в тесном кармане; сброс в restart */
 function goalMiss(){
   if(precDef()) return precShown && !game.done ? precReport() : '';
   const g=level.goal; if(!g || game.done) return '';
@@ -3493,6 +3514,20 @@ function goalMiss(){
     }
     const aligned=Math.cos(angNorm(car.th-g.th))>=0;
     const sideTxt=Math.abs(ovLat)>0.02 ? ((ovLat>0)===aligned?', забирая левее':', забирая правее') : ', выравниваясь';
+    /* углы кузова вылезают вбок из-за перекоса, а не смещения: в кармане 2,3 м машина 1,8 м
+       не помещается уже при 7° — совет должен звать выравнивать угол, а не «вкатываться» */
+    if(da>4 && Math.abs(ovLat)>0.02 && Math.abs(ovLat)>=Math.abs(ovLon))
+      return 'Почти: перекос '+da+'° — подровняй угол короткими ходами туда, где есть место (спереди '
+        +lastClear.front.toFixed(1)+' м, сзади '+lastClear.rear.toFixed(1)+' м).';
+    /* тесно с обеих сторон — гнать туда, где места больше, и не менять совет на равных зазорах:
+       «сзади 0,4 — подай вперёд» при 0,1 м спереди чередовалось с обратным, и ученик только
+       щёлкал селектором на месте */
+    if(lastClear.rear<0.4 && lastClear.front<0.4){
+      if(missFwd===null || lastClear.front>lastClear.rear+0.08 || lastClear.rear>lastClear.front+0.08)
+        missFwd=lastClear.front>=lastClear.rear;
+      return 'Почти: тесно с обеих сторон (спереди '+lastClear.front.toFixed(1)+' м, сзади '+lastClear.rear.toFixed(1)
+        +' м) — '+(missFwd?'подай вперёд':'сдай назад')+' на сколько есть'+sideTxt+'.';
+    }
     if(lastClear.rear<0.4)  return 'Почти: сзади лишь '+lastClear.rear.toFixed(1)+' м — подай вперёд'+sideTxt+'.';
     if(lastClear.front<0.4) return 'Почти: спереди лишь '+lastClear.front.toFixed(1)+' м — сдай назад'+sideTxt+'.';
     if(Math.abs(ovLat)>Math.abs(ovLon))
