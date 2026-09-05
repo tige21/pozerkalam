@@ -76,7 +76,7 @@ function learnerStart(){
   const waitRe=/пропусти|пропускай|стой и|жди|уступи/i;
   const slowRe=/крип|плавно|полз|медленн|5–7|сбавь|малой дуге/i;
   const hitRe=/^⚠|задел/i;
-  const alignRe=/доверни|подровняй|выровняйся параллельно|выровняй машину/i;
+  const alignRe=/доверни|подровняй|выровняйся параллельно|выровняй машину|качай/i;
   const revWords=/назад|задним ходом|включи R|включи задний/i;
 
   const tick=setInterval(()=>{
@@ -129,9 +129,9 @@ function learnerStart(){
         else if(!alignFwd && re<0.15 && fr>re) alignFwd=true;
         const needSel = alignFwd ? 'D' : 'R';
         const dir = (a>0 ? -1 : 1) * (alignFwd ? 1 : -1);
-        steerTo(dir,1);   /* в упор: в тесном кармане каждый ход — 15 см, и 0,7 руля давал по 1,5° за цикл */
+        /* руль крутим на ходу: ждать упора стоя — 3,6 с на каждый 15-сантиметровый ход, и 120 с не хватало */
+        steerTo(dir,0.85);
         if(car.sel!==needSel){ brake(); if(tPhase>0.4 && stopped) tapKey('Enter'); return; }
-        if(steerErr>rad(2)){ brake(); return; }
         if((alignFwd && fr<0.12) || (!alignFwd && re<0.12)){ brake(); return; }
         drive(0.5); return;
       }
