@@ -1,0 +1,9 @@
+git:
+  enabled: true
+  base_branch: main
+  create_branches: false
+  branch_prefix: feature/
+
+language:
+  ui: ru
+  artifacts: ru
