@@ -22,7 +22,7 @@ function learnerStart(){
   const press=(k,on)=>{ input[k]=on; };
   const tapKey=(code)=>pressKey(code);
   const card=document.getElementById('coach'), angEl=document.getElementById('angVal');
-  let key='', tPhase=0, partialDone=false, recover=null, steerErr=0, hitStreak=0, alignFwd=null;
+  let key='', tPhase=0, partialDone=false, recover=null, steerErr=0, hitStreak=0, alignFwd=null, zoneAhead=null, nudge={dir:0,t:-99};
   const dbg=(b)=>{ window.learnerLast={branch:b, t:+game.t.toFixed(1)}; };
 
   const read=()=>{
@@ -58,9 +58,9 @@ function learnerStart(){
     const back = car.gear>=0 ? car.vel>lim : car.vel<-lim;
     press('back',back); press('fwd',!back);
   };
-  const aimZone=()=>{
+  const aimZone=(aheadForced)=>{
     const c0=bodyPos(), g=level.goal, f=fuv(g.th), back=car.gear<0;
-    const ahead=Math.abs(angNorm(Math.atan2(g.u-c0.u, g.v-c0.v)-car.th))<rad(90);
+    const ahead=aheadForced!==undefined ? aheadForced : Math.abs(angNorm(Math.atan2(g.u-c0.u, g.v-c0.v)-car.th))<rad(90);
     const k=ahead?1.5:-1.5, tu=g.u+f.u*k, tv=g.v+f.v*k;
     const err=angNorm(Math.atan2(tu-c0.u, tv-c0.v)-car.th), e=back?-err:err;
     /* усиление e/12° с потолком 0,8 руля: после поворота до зоны 6 м, а сместиться надо на метр */
@@ -91,7 +91,7 @@ function learnerStart(){
     else tPhase+=0.1;
     /* ⚙-уведомления (toast) — не команды: газ/тормоз оставляем, руль — прямо. Зажатая клавиша
        разворачивала машину на 180°, а «отпущенный» руль на 3 с тоста уводил с маршрута дугой */
-    if(c.full.startsWith('⚙')){ center(); return; }
+    if(c.full.startsWith('⚙')){ center(); if(Math.abs(car.vel)>1.9) brake(); return; }
     const stopped=Math.abs(car.vel)<0.1;
 
     /* отъезд после касания: сменить направление и отползти на полметра, дальше снова по карточке */
@@ -142,6 +142,7 @@ function learnerStart(){
        ползком по оси зоны. Рядом с зоной — честно тормозим: стоя карточка сменится на goalMiss с
        адресным советом (доверни / подай вперёд), и каждый такой ход двигает позу к зачёту */
     const toZone = wantStop && /зон[а-яё]*/i.test(txt) && level.goal && !goalPoseOk() && goalMiss()==='';
+    if(!toZone) zoneAhead=null;
     const wantWait=!wantStop && waitRe.test(txt);
     const wantGo=!wantStop && !wantWait && (goRe.test(txt) || c.gear==='D' || c.gear==='R');
 
@@ -187,8 +188,17 @@ function learnerStart(){
     /* «забирая левее/правее» на карточке goalMiss — руль держим в ту сторону весь ход: вперёд-назад
        с одним и тем же рулём сдвигает машину вбок (шаффл), а «доворот и обратно» лишь качал её на месте.
        «Прижмись правее» на ходу — короткий доворот и обратно: смещение на полполосы */
-    else if(/правее/i.test(txt)){ if(c.full.startsWith('◎')) steerTo(1,0.6); else if(tPhase<1.2) steerTo(1,0.6); else if(tPhase<2.4) steerTo(-1,0.6); else center(); }
-    else if(/левее|к осевой/i.test(txt)){ if(c.full.startsWith('◎')) steerTo(-1,0.6); else if(tPhase<1.2) steerTo(-1,0.6); else if(tPhase<2.4) steerTo(1,0.6); else center(); }
+    else if(/правее|левее|к осевой/i.test(txt)){
+      const dir=/правее/i.test(txt)?1:-1;
+      if(c.full.startsWith('◎')) steerTo(dir,0.6);
+      else {
+        /* смещение — один раз на 8 с: фазы «прижмись правее» и «до перекрёстка» чередуются на границе
+           u, и каждое возвращение текста перезапускало доворот — машина уходила на 45° в поперечную улицу */
+        if(nudge.dir!==dir || game.t-nudge.t>8){ nudge={dir, t:game.t}; }
+        const dt=game.t-nudge.t;
+        if(dt<1.2) steerTo(dir,0.6); else if(dt<2.4) steerTo(-dir,0.6); else center();
+      }
+    }
     else hands();
 
     /* селектор АКПП: бейдж карточки — целевая передача; переключение только стоя и с тормозом,
@@ -215,9 +225,11 @@ function learnerStart(){
     /* «останови в зоне», а зоны под колёсами нет (goalMiss молчит — до неё больше метра):
        подкатываемся к ней ползком, целясь по оси, и только потом тормозим */
     if(toZone){
-      dbg('toZone'); aimZone();
-      const c0=bodyPos(), g=level.goal, ahead=Math.abs(angNorm(Math.atan2(g.u-c0.u, g.v-c0.v)-car.th))<rad(90);
-      const needSel=ahead?'D':'R';
+      dbg('toZone');
+      const c0=bodyPos(), g=level.goal, rel=Math.abs(angNorm(Math.atan2(g.u-c0.u, g.v-c0.v)-car.th));
+      if(zoneAhead===null || rel<rad(75) || rel>rad(105)) zoneAhead = rel<rad(90);
+      aimZone(zoneAhead);
+      const needSel=zoneAhead?'D':'R';
       if(car.sel!==needSel){ brake(); if(tPhase>0.4 && stopped) tapKey('Enter'); return; }
       drive(1.2); return;
     }
@@ -234,7 +246,8 @@ function learnerStart(){
          вглубь перекрёстка, и разворот упирался в границу уровня */
       const parking = car.sel==='R' || slow || c.wheel==='lockL' || c.wheel==='lockR';
       if(parking && steerErr>rad(2)){ dbg('turnStanding'); brake(); return; }
-      let lim = car.sel==='R' ? (slow?1.2:1.6) : ((slow||approach)?1.9:3.4);
+      const turning = !!c.wheel && c.wheel!=='straight';
+      let lim = car.sel==='R' ? (slow?1.2:1.6) : ((slow||approach||turning)?1.9:3.4);
       if(nearZone) lim=Math.min(lim, zoneDist<4 ? 0.8 : 1.4);
       if(c.angLeft!==null && c.angLeft<=10 && !c.goalDone) lim=Math.min(lim,0.7);
       dbg('go'); drive(lim);
