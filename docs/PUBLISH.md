@@ -20,6 +20,8 @@
 
 ## Telegram Mini App (M5)
 
+Пошаговый диалог с BotFather, тексты и фото 640×360 — `docs/store/telegram.md`, `docs/store/telegram/`.
+
 1. @BotFather → `/newbot` → имя `ПоЗеркалам`, юзернейм вида `pozerkalam_bot`.
 2. `/newapp` → выбрать бота → Web App URL: `https://pozerkalam.space/play/`,
    короткое имя `play`. Иконка — icon-512.png из репо.
