@@ -84,13 +84,14 @@ function learnerStart(){
     const c=read(); let txt=c.txt;
     /* карточки goalMiss/P-заметки дописывают «Дальше: <действие фазы>» — команда именно там
        (goalMiss кладёт всю фразу в .cm, поэтому без оглядки на тип карточки) */
-    { const m=/Дальше:\s*(.+)$/.exec(txt); if(m) txt=m[1].trim(); }
+    let pre='';
+    { const m=/^(.*?)Дальше:\s*(.+)$/.exec(txt); if(m){ pre=m[1]; txt=m[2].trim(); } }
     const k=txt+'|'+c.wheel+'|'+c.gear;
     if(k!==key){ key=k; tPhase=0; partialDone=false; if(hitRe.test(txt)) hitStreak++; else if(c.phaseCard) hitStreak=0; }
     else tPhase+=0.1;
-    /* ⚙-уведомления (toast) — не команды: газ/тормоз оставляем, но руль отпускаем —
-       зажатая на 3 с клавиша руля разворачивала машину на 180° под тостом «встречная» */
-    if(c.full.startsWith('⚙')){ hands(); return; }
+    /* ⚙-уведомления (toast) — не команды: газ/тормоз оставляем, руль — прямо. Зажатая клавиша
+       разворачивала машину на 180°, а «отпущенный» руль на 3 с тоста уводил с маршрута дугой */
+    if(c.full.startsWith('⚙')){ center(); return; }
     const stopped=Math.abs(car.vel)<0.1;
 
     /* отъезд после касания: сменить направление и отползти на полметра, дальше снова по карточке */
@@ -113,7 +114,9 @@ function learnerStart(){
 
     /* «доверни и подровняйся»: карточка называет цель, руль и направление — с панели.
        Едем туда, где больше места; руль против знака угла вперёд, по знаку — назад */
-    if(alignRe.test(txt) && !c.wheel && !c.gear && !mtOn()){
+    /* «доверни и подровняйся. Дальше: останови в зоне» — доворот важнее «останови»: стоя в центре зоны
+       под 22° прицел в зону только щёлкал D/R, а угол правит доворот по панели */
+    if((alignRe.test(txt) || alignRe.test(pre)) && !c.wheel && !c.gear && !mtOn()){
       const a=readAng();
       if(a!==null){
         dbg('align');
@@ -135,9 +138,10 @@ function learnerStart(){
     } else alignFwd=null;
 
     const wantStop=stopRe.test(txt) && !/трогайся|газ —/i.test(txt);
-    /* «останови в зоне», а зоны под колёсами нет (goalMiss молчит — до неё больше метра):
-       не P, а докатиться ползком, целясь по оси зоны */
-    const toZone = wantStop && /зон[а-я]*\b/i.test(txt) && level.goal && !goalPoseOk() && goalMiss()==='';
+    /* «останови в зоне», а до зоны ещё больше метра (goalMiss молчит): не P и не стоп, а докатиться
+       ползком по оси зоны. Рядом с зоной — честно тормозим: стоя карточка сменится на goalMiss с
+       адресным советом (доверни / подай вперёд), и каждый такой ход двигает позу к зачёту */
+    const toZone = wantStop && /зон[а-яё]*/i.test(txt) && level.goal && !goalPoseOk() && goalMiss()==='';
     const wantWait=!wantStop && waitRe.test(txt);
     const wantGo=!wantStop && !wantWait && (goRe.test(txt) || c.gear==='D' || c.gear==='R');
 
@@ -166,6 +170,8 @@ function learnerStart(){
     /* руль: пиктограмма важнее текста. Считаем раньше селектора: руль крутим и пока стоим */
     if(c.wheel==='lockL') steerTo(-1,1);
     else if(c.wheel==='lockR') steerTo(1,1);
+    /* «руль прямо» + «к зоне»: прямо — это дефолт, цель — зона; после разворота она на метр в стороне */
+    else if(c.wheel==='straight' && /зон[а-яё]*/i.test(txt) && level.goal) aimZone();
     else if(c.wheel==='straight') center();
     else if(c.wheel==='left' || c.wheel==='right'){
       /* частичный руль: держим до отметки «цель достигнута» на чипе, потом выравниваем */
@@ -176,13 +182,13 @@ function learnerStart(){
     }
     else if(/руль ВЛЕВО|влево до упора|полный левый/i.test(txt)) steerTo(-1,1);
     else if(/руль ВПРАВО|вправо до упора|полный правый/i.test(txt)) steerTo(1,1);
-    else if(/зон[а-я]*\b/i.test(txt) && level.goal) aimZone();   /* «прямо до зоны» — сначала зона, потом «прямо» */
+    else if(/зон[а-яё]*/i.test(txt) && level.goal) aimZone();   /* «прямо до зоны» — сначала зона, потом «прямо» */
     else if(/руль прямо|выровняй руль|выравнивай руль|руль ПРЯМО|по прямой|^прямо/i.test(txt)) center();
     /* «забирая левее/правее» на карточке goalMiss — руль держим в ту сторону весь ход: вперёд-назад
        с одним и тем же рулём сдвигает машину вбок (шаффл), а «доворот и обратно» лишь качал её на месте.
        «Прижмись правее» на ходу — короткий доворот и обратно: смещение на полполосы */
-    else if(/правее/i.test(txt)){ if(c.full.startsWith('◎')) steerTo(1,0.6); else if(tPhase<0.8) steerTo(1,0.35); else if(tPhase<1.6) steerTo(-1,0.35); else center(); }
-    else if(/левее|к осевой/i.test(txt)){ if(c.full.startsWith('◎')) steerTo(-1,0.6); else if(tPhase<0.8) steerTo(-1,0.35); else if(tPhase<1.6) steerTo(1,0.35); else center(); }
+    else if(/правее/i.test(txt)){ if(c.full.startsWith('◎')) steerTo(1,0.6); else if(tPhase<1.2) steerTo(1,0.6); else if(tPhase<2.4) steerTo(-1,0.6); else center(); }
+    else if(/левее|к осевой/i.test(txt)){ if(c.full.startsWith('◎')) steerTo(-1,0.6); else if(tPhase<1.2) steerTo(-1,0.6); else if(tPhase<2.4) steerTo(1,0.6); else center(); }
     else hands();
 
     /* селектор АКПП: бейдж карточки — целевая передача; переключение только стоя и с тормозом,
@@ -194,7 +200,8 @@ function learnerStart(){
       const wantR = c.gear==='R' || (c.gear!=='D' && revWords.test(txt)) || /включи R|включи задний/i.test(c.full);
       /* из P в D не лезем, если дальше велено стоять: «останови в зоне + P» → P → P-заметка
          «включи передачу … Дальше: останови» → D → … — ученик щёлкал P/D по кругу */
-      const wantD = !wantR && (c.gear==='D' || toZone
+      /* toZone сам выбирает D/R по положению зоны; здесь только вывод из P */
+      const wantD = !wantR && (c.gear==='D' || (toZone && car.sel==='P')
         || (!wantStop && (/включи передачу|включи D|тапни D/i.test(c.full) || (wantGo && !revWords.test(txt)))));
       if(wantR && car.sel!=='R'){ dbg('shiftR'); brake(); if(tPhase>0.4 && stopped) tapKey('Enter'); return; }
       if(wantD && car.sel!=='D'){ dbg('shiftD'); brake(); if(tPhase>0.4 && (car.sel==='P' || stopped)) tapKey('Enter'); return; }
@@ -218,14 +225,17 @@ function learnerStart(){
     else if(wantWait){ dbg('wait'); const near=actorNear(); press('fwd',!near); press('back',near); }
     /* «в зелёную зону» без слова «остановись»: в зоне — стоп, рядом с ней — ползком.
        Зона нарисована на асфальте, игрок видит, что уже в ней; ученик без этого ехал сквозь неё в стену */
-    else if(wantGo && /зон[а-я]*\b/i.test(txt) && level.goal && goalPoseOk()){ dbg('inZone'); center(); brake(); }
+    else if(wantGo && /зон[а-яё]*/i.test(txt) && level.goal && goalPoseOk()){ dbg('inZone'); center(); brake(); }
     else if(wantGo){
       const slow=slowRe.test(txt), approach=/стоп|лини|вровень|перекрёст|переход/i.test(c.goalText+' '+txt);
-      const nearZone=/зон[а-я]*\b/i.test(txt) && level.goal && goalMiss()!=='';
-      const parking = car.sel==='R' || slow;
+      const zoneDist = (/зон[а-яё]*/i.test(txt) && level.goal) ? Math.hypot(level.goal.u-bodyPos().u, level.goal.v-bodyPos().v) : 1e9;
+      const nearZone = zoneDist<8;   /* с 3,4 м/с тормозной путь ~1,5 м — на зону 5,6 м проскакивали насквозь */
+      /* руль «до упора» в D тоже крутим стоя: на 3,4 м/с за 0,9 с намотки машина уезжала на 3 м
+         вглубь перекрёстка, и разворот упирался в границу уровня */
+      const parking = car.sel==='R' || slow || c.wheel==='lockL' || c.wheel==='lockR';
       if(parking && steerErr>rad(2)){ dbg('turnStanding'); brake(); return; }
       let lim = car.sel==='R' ? (slow?1.2:1.6) : ((slow||approach)?1.9:3.4);
-      if(nearZone) lim=Math.min(lim,1.0);
+      if(nearZone) lim=Math.min(lim, zoneDist<4 ? 0.8 : 1.4);
       if(c.angLeft!==null && c.angLeft<=10 && !c.goalDone) lim=Math.min(lim,0.7);
       dbg('go'); drive(lim);
     } else { dbg('idle'); press('fwd',false); press('back',false); }
