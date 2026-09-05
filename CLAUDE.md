@@ -4,12 +4,55 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A browser car-maneuvering trainer (parking simulator) — one self-contained file, `index.html` (~5700 lines): CSS, HTML UI, and a single `<script>` with zero dependencies, no build step, no package.json, not a git repo. All UI text and code comments are in Russian — keep new text and comments in Russian. Testing harness: the headless demo regression (`computeIdealPath` runs on every `loadLevel` — intercept `console.warn` over all `DEMOS` keys, zero timeouts = green) plus `learner.js` (см. ниже) for the teaching texts.
+A browser car-maneuvering trainer (parking simulator) — one self-contained file, `index.html` (~5700 lines): CSS, HTML UI, and a single `<script>` with zero dependencies, no build step, no package.json; git-репозиторий на `main` без feature-веток (плюс генерат `codegraph-src/index.js` для индекса — см. Code Search). All UI text and code comments are in Russian — keep new text and comments in Russian. Testing harness: the headless demo regression (`computeIdealPath` runs on every `loadLevel` — intercept `console.warn` over all `DEMOS` keys, zero timeouts = green) plus `learner.js` (см. ниже) for the teaching texts.
 
 ## Commands
 
 - Run locally: `open index.html` (or any static server). Everything works from `file://`.
 - Deploy: `./deploy-62yun.sh` — scp's `index.html` to the `assistant-box` SSH host (from `~/.ssh/config`), installs it to `/var/www/car-trainer/index.html`, reloads nginx, then verifies the served file byte-for-byte against the local one. Live URL: http://194.5.65.182/ (vhost answers only by IP; other domains on that server must not be touched).
+- Флоу задач: `/aif-plan → /aif-implement → /aif-verify → /aif-commit` (`.ai-factory/config.yaml`; планы в `.ai-factory/plans/`), каждая фаза плана — задача на доске Vikunja (см. Task Board). Одноразово после клона: `git config core.hooksPath .githooks`.
+
+## Task Board — Vikunja (MANDATORY)
+
+**Канбан-доска — источник правды по порядку работ.** Board: `http://194.5.65.182:3456`, проект **«По зеркалам» (id=3)**; kanban view 12, бакеты To-Do=7 / Doing=8 / Done=9. Инстанс общий с проектом spark (id=2) — чужой проект не трогать. Креды агента: `~/.config/pozerkalam-vikunja.env` (URL/user/pass/project id/view/bucket id; НИКОГДА не коммитить). Сессии без этого файла пропускают синк — тогда сказать в ответе, что доска не сверялась.
+
+**ВСЕГДА перед началом любой нетривиальной работы** (фича, фикс, план, рефакторинг):
+1. Свериться с открытыми задачами доски: приоритеты P0→P1→P2→Backlog, задачу с открытыми `[ждёт: #N]` блокерами не начинать. SessionStart-хук (`~/.claude/hooks/vikunja-board.sh <env-файл>`, зарегистрирован в нетрекаемом `.claude/settings.local.json`) сам инжектит верх доски в контекст; если хук не сработал — дёрнуть скрипт или API вручную (рецепт ниже). Правило ветко-независимо: канонические носители — хуки + память агента (`kanban-rules`), эта секция — справочная копия для людей.
+2. Если запрошенная работа совпадает с задачей доски — вести её как эту задачу: взял в работу → перенести в Doing; по завершении закрыть `done:true` **полным payload** (уходит в Done автоматически).
+
+**ВСЕГДА при появлении новой работы** — новая фича/баг, задача из /aif-plan, значимая находка /aif-verify, идея в бэклог — в том же ходе завести задачу на доске:
+- приоритет по потребности: P0=priority 4 (разблокирует всё / жжёт юзеров) · P1=3 (путь к деньгам) · P2=2 (рост) · Backlog=1; label_id: P0=1, P1=2, P2=3, Backlog=4;
+- связи с блокерами: `PUT /tasks/{id}/relations` с `{"other_task_id":<блокер>,"relation_kind":"blocked"}`;
+- план из /aif-plan зеркалится как одна задача на фазу (или одна задача со ссылкой на файл плана) — не дублировать все чекбоксы.
+
+**Ловушка:** `POST /tasks/{id}` — REPLACE, не PATCH: поле, отсутствующее в payload, обнуляется (description, priority). Обновлять только полным payload (GET → правка JSON → POST целиком); после массового апдейта перечитать 1–2 задачи.
+
+```bash
+source ~/.config/pozerkalam-vikunja.env
+T=$(curl -s -X POST $VIKUNJA_URL/api/v1/login -H 'Content-Type: application/json' -d "{\"username\":\"$VIKUNJA_USER\",\"password\":\"$VIKUNJA_PASS\"}" | jq -r .token)
+curl -s "$VIKUNJA_URL/api/v1/projects/$VIKUNJA_PROJECT_ID/tasks?per_page=50" -H "Authorization: Bearer $T"          # список
+curl -s -X PUT "$VIKUNJA_URL/api/v1/projects/$VIKUNJA_PROJECT_ID/tasks" -H "Authorization: Bearer $T" \
+  -H 'Content-Type: application/json' -d '{"title":"...","description":"<p><b>Источник:</b> …</p>","priority":3}'   # создать
+curl -s -X PUT "$VIKUNJA_URL/api/v1/tasks/<id>/labels" -H "Authorization: Bearer $T" \
+  -H 'Content-Type: application/json' -d '{"label_id":2}'                                                            # label
+curl -s -X POST "$VIKUNJA_URL/api/v1/projects/$VIKUNJA_PROJECT_ID/views/$VIKUNJA_VIEW_KANBAN/buckets/$VIKUNJA_BUCKET_DOING/tasks" \
+  -H "Authorization: Bearer $T" -H 'Content-Type: application/json' -d '{"task_id":<id>}'                             # в Doing
+curl -s "$VIKUNJA_URL/api/v1/tasks/<id>" -H "Authorization: Bearer $T" | jq '.done=true' | curl -s -X POST \
+  "$VIKUNJA_URL/api/v1/tasks/<id>" -H "Authorization: Bearer $T" -H 'Content-Type: application/json' -d @-           # закрыть (полный payload)
+```
+
+## Code Search — codegraph
+
+Индекс `.codegraph/` живёт локально (gitignored; глобальный Stop-хук гоняет `codegraph sync`). codegraph **не читает `.html`** и пропускает gitignored-файлы, поэтому игра индексируется через **трекаемое зеркало `codegraph-src/index.js`**: содержимое `<script>` из `index.html` с построчным паддингом — `index.js:N` == `index.html:N`, строки вне скрипта пустые. Собирает `tools/mirror-script.sh` (`--check` — при дрейфе exit 1); пересборка автоматическая: `.githooks/pre-commit` (одноразово включить `git config core.hooksPath .githooks`) и Stop-хук в `.claude/settings.local.json`. **Править только `index.html`** — зеркало генерат, в диффах скрыто через `.gitattributes -diff`.
+
+| Намерение | Инструмент |
+|---|---|
+| «как работает X» / архитектура / трассировка потока / обзор области | `codegraph_explore` — один вызов, исходник символов по файлам |
+| где символ X | `codegraph_search` |
+| радиус поражения перед правкой | `codegraph_impact` / `codegraph_callers` / `codegraph_callees` |
+| точный литерал / regex | `Grep` по `index.html` |
+
+Найденную в зеркале строку открывать в `index.html` с тем же номером. Serena к inline-HTML неприменима (LSP не видит скрипт внутри `.html`). Субагентам без MCP — CLI: `codegraph query|callers|impact <symbol>`; команду вписывать в prompt при спавне. После большого rebase — `codegraph sync` (или `codegraph init` для полной пересборки).
 
 ## Architecture of index.html
 

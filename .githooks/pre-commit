@@ -1,0 +1,10 @@
+#!/bin/bash
+# Пересобирает codegraph-src/index.js из index.html перед коммитом, чтобы зеркало
+# никогда не расходилось с исходником. Включение (одноразово): git config core.hooksPath .githooks
+set -e
+cd "$(git rev-parse --show-toplevel)"
+if git diff --cached --quiet -- index.html; then
+  exit 0
+fi
+tools/mirror-script.sh
+git add codegraph-src/index.js
