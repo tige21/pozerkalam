@@ -3441,8 +3441,11 @@ function violationsTick(dt){
   for(const tz of (c.turnZones||[])){
     if(tz._fired) continue;
     /* dir — курс входа: на экзаменационном кресте одна зона ловит правый проход,
-       другая — левый, и без фильтра обе срабатывали бы на первом же проезде */
-    if(tz.dir!==undefined && Math.abs(angNorm(car.th-tz.dir))>rad(50)) continue;
+       другая — левый, и без фильтра обе срабатывали бы на первом же проезде.
+       Фильтр только ДО входа: внутри зоны курс уходит от dir на 90°, и проверка на каждом
+       кадре выбрасывала зону раньше выхода — на экзамене поворот без поворотника не стоил
+       ни балла, а зона навсегда оставалась «внутри» */
+    if(!tz._inZone && tz.dir!==undefined && Math.abs(angNorm(car.th-tz.dir))>rad(50)) continue;
     const tf=fuv(tz.yaw||0), tr=ruv(tz.yaw||0);
     const s=(b.u-tz.u)*tf.u+(b.v-tz.v)*tf.v;
     const x=(b.u-tz.u)*tr.u+(b.v-tz.v)*tr.v;
@@ -3450,9 +3453,12 @@ function violationsTick(dt){
     if(inside && !tz._inZone){ tz._inZone=true; tz._th0=car.th; tz._blinkOk=(car.blink===tz.blink); }
     if(inside && car.blink===tz.blink) tz._blinkOk=true;
     if(!inside && tz._inZone){
-      if(Math.abs(angNorm(car.th-tz._th0))>rad(25) && !tz._blinkOk)
+      const turned=Math.abs(angNorm(car.th-tz._th0));
+      console.warn('[FIX:no-blinker] выход из зоны: поворот '+Math.round(deg(turned))+'°, поворотник '
+        +(tz._blinkOk?'был':'не был')+' ('+tz.blink+')');
+      if(turned>rad(25) && !tz._blinkOk)
         vio('no-blinker','Манёвр без поворотника ('+(tz.blink==='L'?'левый':'правый')+' — Q/E)');
-      tz._fired=Math.abs(angNorm(car.th-tz._th0))>rad(25);
+      tz._fired=turned>rad(25);
       tz._inZone=false;
     }
   }
