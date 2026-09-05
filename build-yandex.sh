@@ -3,6 +3,8 @@
 # Отличия от веб-билда: без Метрики, без PWA (SW/manifest — в iframe площадки они
 # мусор и unhandled rejection), с Games SDK (/sdk.js отдаёт площадка) и адаптером
 # window.ADS + облачные сейвы trainer_* через player.setData/getData.
+# Реклама зовётся с callbacks: onOpen/onClose → window.adsPause — п. 4.7 требований ЯИ
+# (игра и звук на паузе во время полноэкранной рекламы).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -24,9 +26,10 @@ adapter = (
  '<script src="/sdk.js"></script>'
  '<script>YaGames.init().then(function(ysdk){'
  'window.ysdk=ysdk;'
+ 'var P=function(on){if(window.adsPause)window.adsPause(on)};'
  'window.ADS={'
- 'interstitial:function(){try{ysdk.adv.showFullscreenAdv({})}catch(e){}},'
- 'rewarded:function(cb){try{ysdk.adv.showRewardedVideo({callbacks:{onRewarded:cb}})}catch(e){}}'
+ 'interstitial:function(){try{ysdk.adv.showFullscreenAdv({callbacks:{onOpen:function(){P(true)},onClose:function(){P(false)},onError:function(){P(false)}}})}catch(e){P(false)}},'
+ 'rewarded:function(cb){try{ysdk.adv.showRewardedVideo({callbacks:{onOpen:function(){P(true)},onRewarded:cb,onClose:function(){P(false)},onError:function(){P(false)}}})}catch(e){P(false)}}'
  '};'
  'ysdk.getPlayer().then(function(p){'
  'p.getData().then(function(d){'

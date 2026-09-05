@@ -2714,6 +2714,10 @@ function adsRewarded(onReward){
   if(window.ADS&&window.ADS.rewarded){ try{ window.ADS.rewarded(onReward); }catch(e){} }
   else onReward();   /* веб: награда без рекламы */
 }
+/* площадка требует ставить игру и звук на паузу на время полноэкранной рекламы (требования
+   Яндекс Игр, п. 4.7); звук гаснет сам — engineSound читает paused. Снимая паузу, не будим игру
+   под открытым оверлеем: реклама с «Повторить» приходит уже после hideOv */
+window.adsPause=function(on){ paused = !!on || document.body.classList.contains('ov'); };
 function shiftSel(step){
   const i=SEL_ORDER.indexOf(car.sel), j=clamp(i+step,0,SEL_ORDER.length-1);
   if(j===i) return;
