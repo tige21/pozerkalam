@@ -713,7 +713,7 @@ function flushFaces(){
       const g=ctx.createLinearGradient((s0.x+s3.x)*0.5,(s0.y+s3.y)*0.5,(s1.x+s2.x)*0.5,(s1.y+s2.y)*0.5);
       g.addColorStop(0,f.col); g.addColorStop(1,f.col2); fill=g;
     }
-    ctx.fillStyle=fill; ctx.strokeStyle=f.col; ctx.fill(); ctx.stroke();
+    ctx.fillStyle=fill; ctx.strokeStyle=fill; ctx.fill(); ctx.stroke();
     if(f.grain) grainFace(f);
   }
   faces.length = 0;
@@ -970,7 +970,7 @@ const CAB = { FLOOR:[64,68,76], DOOR:[148,154,164], DOORTOP:[168,174,184], HEAD:
               RAIL:[192,196,204], DASH:[62,66,74], TRIM:[134,140,150], SEAT:[108,102,100],
               PILL:[208,212,220], PILLAR:[172,178,190], SILL:[250,252,255], DARK:[82,88,98] };
 const MO = { rubber:{mat:'rubber'}, cloth:{mat:'cloth'}, leather:{mat:'leather'}, softtouch:{mat:'softtouch'},
-             satin:{mat:'satin'}, pillar:{mat:'cloth',sides:6}, rim:{mat:'leather',sides:6}, round:{mat:'matte',sides:8} };
+             satin:{mat:'satin'}, pillar:{mat:'cloth',sides:6}, round:{mat:'matte',sides:8}, stalk:{mat:'matte',sides:6} };
 function cabinCtx(u,v,th){
   const F=fwd(th), R=rgt(th), cx=-u, cz=v;
   const P=(lat,y,z)=>({x:cx+R.x*lat+F.x*z, y:y, z:cz+R.z*lat+F.z*z});
@@ -1118,10 +1118,10 @@ function emitDash(K){
      нельзя нажимать одновременно лучше любой подписи */
   box(-0.30,0.468,0.34, 0.045,0.012,0.085, [40,44,50]);
   box(-0.45,0.482,0.36, 0.055,0.012,0.070, [40,44,50]);
-  pushBar(K.P,[0.10,0.60,-0.16],[0.13,0.73,-0.32],0.022,[52,56,64]);    /* ручник */
+  pushBar(K.P,[0.10,0.60,-0.16],[0.13,0.73,-0.32],0.022,[52,56,64],1,0,MO.round);    /* ручник */
   box(0.135,0.745,-0.335, 0.028,0.022,0.030, [30,33,38]);
   for(const sg of [-1,1])                                               /* подрулевые рычаги */
-    pushBar(K.P,[-0.36+sg*0.05,0.875,0.525],[-0.36+sg*0.20,0.855,0.490],0.014,[46,50,58]);
+    pushBar(K.P,[-0.36+sg*0.05,0.875,0.525],[-0.36+sg*0.20,0.855,0.490],0.014,[46,50,58],1,0,MO.stalk);
 }
 /* щиток: шкала и стрелка скорости там, куда водитель смотрит вниз,
    чтобы не отрывать взгляд от дороги на HUD у края экрана */
@@ -1152,7 +1152,7 @@ function emitSelector(K){
   box(0, 0.72, 0.02-cur*0.075, 0.030,0.055,0.030, [150,156,166]);       /* рычаг на тоннеле */
 }
 function emitWheel(K){
-  const {P,box}=K;
+  const {P,D}=K;
   /* руль: наклонён к водителю, крутится вместе с рулевым валом.
      Метка «12 часов» — по ней считаются обороты, без неё угол руля не прочитать */
   /* центр 0,90, не 1,01: верх обода на 1,195 стоял выше линии капота (−8,9° от глаза) и закрывал
@@ -1160,34 +1160,74 @@ function emitWheel(K){
   const WC=[-0.36,0.90,0.50], tilt=rad(24), Rw=0.185, ang=car.steer*CAR.steerRatio;
   const ax=[0,Math.sin(tilt),-Math.cos(tilt)];
   const b1=[1,0,0], b2=cross3(ax,b1);
-  const at3=(a,k)=>[WC[0]+(b1[0]*Math.cos(a)+b2[0]*Math.sin(a))*Rw*k,
-                    WC[1]+(b1[1]*Math.cos(a)+b2[1]*Math.sin(a))*Rw*k,
-                    WC[2]+(b1[2]*Math.cos(a)+b2[2]*Math.sin(a))*Rw*k];
-  const rim=(a)=>at3(a,1);
+  const add=(a,b,k)=>[a[0]+b[0]*k, a[1]+b[1]*k, a[2]+b[2]*k];
+  const dirAt=(a)=>{ const c=Math.cos(a), s=Math.sin(a);
+    return [b1[0]*c+b2[0]*s, b1[1]*c+b2[1]*s, b1[2]*c+b2[2]*s]; };
+  const at3=(a,k)=>add(WC, dirAt(a), Rw*k);
+  const W=(p)=>P(p[0],p[1],p[2]), N=(n)=>D(n[0],n[1],n[2]);
   /* базис наклона даёт b2 «вниз», поэтому верх обода — это угол −90°:
      спицы уходят вниз и в стороны, а верх остаётся открытым — через него виден щиток */
   const TOP=-PI*0.5;
-  const NS=14;
-  for(let i=0;i<NS;i++) pushBar(P, rim(ang+i/NS*TAU), rim(ang+(i+1)/NS*TAU), 0.020, [58,63,72], 1, 0, MO.rim);
-  for(const k of [0,1,2]) pushBar(P, WC, rim(ang-TOP+k*TAU/3), 0.016, [118,124,134], 1, 0, MO.satin);
-  /* хваты на «10 и 2» — рабочее положение рук */
-  for(const s of [-1,1])
-    pushBar(P, rim(ang+TOP+s*rad(38)), rim(ang+TOP+s*rad(74)), 0.026, [70,76,88], 1, 0, MO.rim);
-  /* метка «12 часов» на ободе и неподвижная риска на кожухе колонки: обороты руля
-     читаются только по ПАРЕ меток — одна крутится, вторая стоит. На упоре метка краснеет */
+  /* обод — тор: 24 сегмента по кольцу × 6 граней по трубке, нормали у рёбер радиальные от оси
+     трубки, грани — градиент между ними, и обод читается круглым с бликом кожи. Хваты на «10 и 2»
+     — та же трубка толще, радиус задан по вершине кольца, чтобы переход был без щели.
+     Раньше обод был 14 квадратных брусков и выглядел гайкой */
+  const NSEG=24, NT=6, RT=0.017, RG=0.022, RIM=[50,52,58];
+  const vr=(i)=>{ const rel=Math.abs(angNorm(i/NSEG*TAU-TOP)); return rel>rad(36)&&rel<rad(76) ? RG : RT; };
+  const tubeN=(th,ph)=>{ const r=dirAt(th), c=Math.cos(ph), s=Math.sin(ph);
+    return [r[0]*c+ax[0]*s, r[1]*c+ax[1]*s, r[2]*c+ax[2]*s]; };
+  const vtx=(i,j)=>{ const th=ang+i/NSEG*TAU; return add(at3(th,1), tubeN(th,j/NT*TAU), vr(i)); };
+  for(let i=0;i<NSEG;i++){
+    const thm=ang+(i+0.5)/NSEG*TAU, ref=W(at3(thm,1));
+    for(let j=0;j<NT;j++){
+      const v0=vtx(i,j), v1=vtx(i,j+1), v2=vtx(i+1,j+1), v3=vtx(i+1,j);
+      pushQuad(W(v0),W(v1),W(v2),W(v3), RIM, ref, 0,
+               {mat:'leather', n1:N(tubeN(thm,j/NT*TAU)), n2:N(tubeN(thm,(j+1)/NT*TAU))});
+    }
+  }
+  /* спицы — плоские сужающиеся планки от ступицы к внутренней стороне обода; начинаются
+     за краем ступицы и не доходят до трубки: painter's algorithm не рисует тела друг в друге */
+  const HUB=0.056, SPK=[128,134,144];
+  const spoke=(a)=>{
+    const r=dirAt(a), t=cross3(ax,r);
+    const R0=HUB+0.002, R1=Rw-RG-0.003, H=0.007;
+    const pt=(rr,ww,hh)=>W(add(add(add(WC,r,rr),t,ww),ax,hh));
+    const c=[[R0,-0.024],[R0,0.024],[R1,0.015],[R1,-0.015]];
+    const top=c.map(([rr,ww])=>pt(rr,ww,H)), bot=c.map(([rr,ww])=>pt(rr,ww,-H));
+    const ref=W(add(WC,r,(R0+R1)/2));
+    pushPoly(top, SPK, ref, 0, MO.satin); pushPoly(bot, SPK, ref, 0, MO.satin);
+    for(let i=0;i<4;i++){ const j=(i+1)%4; pushQuad(top[i],top[j],bot[j],bot[i], SPK, ref, 0, MO.satin); }
+  };
+  for(const k of [0,1,2]) spoke(ang-TOP+k*TAU/3);
+  /* ступица — 12-гранный цилиндр, подушка airbag стоит НА ней (bias, не пересечение) */
+  const ring=(rr,hh)=>{ const o=[]; for(let j=0;j<12;j++) o.push(W(add(add(WC,dirAt(j/12*TAU),rr),ax,hh))); return o; };
+  const refH=W(WC), HUBC=[122,128,138], PAD=[38,40,46];
+  const h0=ring(HUB,-0.012), h1=ring(HUB,0.022);
+  pushPoly(h1, HUBC, refH, 0, MO.satin);
+  for(let j=0;j<12;j++){ const k=(j+1)%12;
+    pushQuad(h0[j],h0[k],h1[k],h1[j], HUBC, refH, 0, {mat:'satin', n1:N(dirAt(j/12*TAU)), n2:N(dirAt(k/12*TAU))}); }
+  const p0=ring(0.046,0.022), p1=ring(0.046,0.040);
+  pushPoly(p1, PAD, refH, 0.01, MO.softtouch);
+  for(let j=0;j<12;j++){ const k=(j+1)%12;
+    pushQuad(p0[j],p0[k],p1[k],p1[j], PAD, refH, 0.01, {mat:'softtouch', n1:N(dirAt(j/12*TAU)), n2:N(dirAt(k/12*TAU))}); }
   emitLit(()=>{
-    pushBar(P, at3(ang+TOP,0.84), at3(ang+TOP,1.12), 0.017,
-            atLock() ? [255,88,68] : [255,214,64]);
+    const bd=(lat,y)=>W(add(add(add(WC,b1,lat),b2,y),ax,0.041));
+    pushQuad(bd(-0.011,-0.006), bd(0.011,-0.006), bd(0.011,0.006), bd(-0.011,0.006), [196,202,212], refH, 0.02);
+  });
+  /* метка «12 часов» лежит на трубке со стороны водителя, неподвижная риска на кожухе колонки —
+     за ободом: обороты руля читаются только по ПАРЕ меток, одна крутится, вторая стоит.
+     На упоре метка краснеет */
+  emitLit(()=>{
+    const mk=(k)=>add(at3(ang+TOP,k), ax, RT+0.004);
+    pushBar(P, mk(0.93), mk(1.07), 0.007, atLock() ? [255,88,68] : [255,214,64], 1, 0.03);
     /* риска двухслойная: одним цветом она пропадала бы то на светлом капоте,
        то на тёмной стене — тёмная подложка держит контраст на любом фоне */
-    pushBar(P, at3(TOP,1.06), at3(TOP,1.30), 0.020, [26,29,35]);
-    pushBar(P, at3(TOP,1.09), at3(TOP,1.27), 0.010, [236,244,255]);
+    pushBar(P, at3(TOP,1.14), at3(TOP,1.34), 0.020, [26,29,35]);
+    pushBar(P, at3(TOP,1.17), at3(TOP,1.31), 0.010, [236,244,255]);
   });
-  const hub=K.at(WC[0],WC[2]);
-  pushBox(hub.u, WC[1], hub.v, 0.058,0.038,0.046, K.th, [142,148,158], 0, MO.satin);
   /* кожух рулевой колонки: уходит от ступицы к торпедо вдоль оси вала */
   const SH=[WC[0]-ax[0]*0.16, WC[1]-ax[1]*0.16, WC[2]-ax[2]*0.16];
-  pushBar(P, WC, SH, 0.052, [58,63,72], 1, 0, MO.round);
+  pushBar(P, add(WC,ax,-0.012), SH, 0.052, [52,56,64], 1, 0, MO.round);
 }
 /* приборы и метки руля светятся сами, как подсветка приборки в машине: под общим
    затемнением салона шкала, стрелка и буквы передачи тонули в чёрном — то есть
