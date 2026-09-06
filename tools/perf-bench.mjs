@@ -7,6 +7,8 @@
      PW_DIR=/tmp/pw ARGS="--disable-gpu --disable-gpu-compositing" node tools/perf-bench.mjs   # программный Canvas
      PW_DIR=/tmp/pw OLD=4d3ea3d node tools/perf-bench.mjs                       # плюс та же сцена из коммита OLD
      BIN=/путь/к/Chromium W=2560 H=1440 DPR=2 — другой Chromium-браузер (временный профиль), размер окна.
+     SETTLE=12000 — подождать 12 с перед замером, чтобы регулятор качества (QUALITY/qTick) вышел на уровень.
+     FORCE_Q=3 ONLY=1 — зафиксировать уровень качества 3 и померить только сценарий «всё».
    Браузеры владельца (Яндекс и т.п.) не запускать — только Chrome/Chromium с временным профилем.
    Вывод: по строке JSON на сценарий; PAGEERR — в stderr. */
 import { createRequire } from 'node:module';
@@ -22,6 +24,9 @@ const BIN = process.env.BIN || '/Applications/Google Chrome.app/Contents/MacOS/G
 const ARGS = (process.env.ARGS || '').split(' ').filter(Boolean);
 const DPR = +(process.env.DPR || 2), W = +(process.env.W || 1440), H = +(process.env.H || 900);
 const OLD = process.env.OLD || '';
+const SETTLE = +(process.env.SETTLE || 0);   /* мс ожидания перед замером — дать регулятору качества выйти на уровень */
+const FORCE_Q = process.env.FORCE_Q === undefined ? null : +process.env.FORCE_Q;   /* зафиксировать уровень качества */
+const ONLY = !!process.env.ONLY;             /* только сценарий «всё» */
 
 let chromium;
 try { ({ chromium } = createRequire(path.join(PW_DIR, 'package.json'))('playwright-core')); }
@@ -37,15 +42,16 @@ async function load(url) {
   await page.goto(url);
   await page.evaluate(() => { for (const k of ['trainer_seen', 'trainer_hint', 'trainer_drive']) localStorage.setItem(k, '1'); localStorage.setItem('trainer_runs', '9'); localStorage.setItem('trainer_touch', '0'); });
   await page.goto(url + 'r'); await page.waitForTimeout(400);
-  await page.evaluate(() => { doAct('start'); pressKey('KeyV'); opt.fpYaw = 0; opt.fpPitch = rad(-2); });
-  await page.waitForTimeout(800);
+  await page.evaluate((fq) => { doAct('start'); pressKey('KeyV'); opt.fpYaw = 0; opt.fpPitch = rad(-2);
+    if (fq !== null && typeof qApply === 'function') { qApply(fq); qCoolT = 1e9; } }, FORCE_Q);
+  await page.waitForTimeout(800 + SETTLE);
 }
 async function measure(scene, label, setup) {
   if (setup) await page.evaluate(setup);
   await page.waitForTimeout(500);
   const r = await page.evaluate(() => new Promise(res => { const d = []; let last = performance.now(); const t0 = last;
     (function f() { const t = performance.now(); d.push(t - last); last = t; if (t - t0 < 3000) requestAnimationFrame(f); else { d.shift(); d.sort((a, b) => a - b);
-      res({ fps: +(d.length / ((last - t0) / 1000)).toFixed(0), jsMs: +frameCost.toFixed(1), p95: +d[Math.floor(d.length * 0.95)].toFixed(1), max: +d[d.length - 1].toFixed(1), dpr: +DPR.toFixed(2), px: canvas.width + 'x' + canvas.height }); } })(); }));
+      res({ fps: +(d.length / ((last - t0) / 1000)).toFixed(0), jsMs: +frameCost.toFixed(1), p95: +d[Math.floor(d.length * 0.95)].toFixed(1), max: +d[d.length - 1].toFixed(1), dpr: +DPR.toFixed(2), q: typeof qLevel === 'number' ? qLevel : null, px: canvas.width + 'x' + canvas.height }); } })(); }));
   const ops = await page.evaluate(() => { const P = CanvasRenderingContext2D.prototype, c = {}, keep = {};
     for (const m of ['fill', 'stroke', 'clip', 'createLinearGradient', 'drawImage', 'save', 'restore', 'fillRect', 'createPattern']) { keep[m] = P[m]; c[m] = 0; P[m] = function () { c[m]++; return keep[m].apply(this, arguments); }; }
     const ff = flushFaces; let passes = 0; flushFaces = function () { passes++; ff(); };
@@ -68,5 +74,5 @@ if (OLD) {
   await measure(OLD, 'всё');
 }
 await load('file://' + path.join(ROOT, 'index.html') + '?nocache=' + Date.now());
-for (const [label, setup] of SCENARIOS) await measure('HEAD', label, setup);
+for (const [label, setup] of (ONLY ? SCENARIOS.slice(0, 1) : SCENARIOS)) await measure('HEAD', label, setup);
 await browser.close();

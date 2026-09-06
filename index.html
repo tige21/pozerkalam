@@ -543,6 +543,9 @@ function pathCam(pts){
   let area=0;
   for(let i=0;i<n;i++){ const s=toScreen(c[i]); SPX[i]=s.x; SPY[i]=s.y; }
   for(let i=0;i<n;i++){ const j=(i+1)%n; area+=SPX[i]*SPY[j]-SPX[j]*SPY[i]; }
+  /* грань меньше половины пикселя не рисуем: у далёких машин таких сотни за кадр, и каждая —
+     полный вызов растеризатора ради ничего */
+  if(area<1 && area>-1) return false;
   const sg = area>0 ? -EXPAND : EXPAND;
   ctx.beginPath();
   for(let i=0;i<n;i++){
@@ -738,14 +741,15 @@ const GRAD_MIN_PX=40, GRAIN_AREA0=400, GRAIN_AREA1=800, GRAIN_MINIF0=1.3, GRAIN_
    плитки (без мип-уровней шум при уменьшении дрожит), а не по порогу, у которого оно мигало */
 function faceMode(f, s0, s1, s2, s3){
   if(VP.w!==W) return 'flat';
+  const q=QUALITY[qLevel];
   let mode='flat';
-  if(f.col2){
+  if(f.col2 && q.grad){
     const gx=(s1.x+s2.x-s0.x-s3.x)*0.5, gy=(s1.y+s2.y-s0.y-s3.y)*0.5;
     const ext=Math.max(Math.abs(s2.x-s0.x), Math.abs(s2.y-s0.y), Math.abs(s1.x-s3.x), Math.abs(s1.y-s3.y));
     if(gx*gx+gy*gy>=2.25 && ext>=GRAD_MIN_PX) mode='grad';
   }
   if(f.img) return mode+'+img';
-  if(f.grain){
+  if(f.grain && q.grain){
     const ux=s1.x-s0.x, uy=s1.y-s0.y, vx=s3.x-s0.x, vy=s3.y-s0.y;
     const area=Math.abs(ux*vy-uy*vx);
     const minif=Math.max(f.lu*GRAIN_PX/((Math.hypot(ux,uy)||1e-6)*DPR), f.lv*GRAIN_PX/((Math.hypot(vx,vy)||1e-6)*DPR));
@@ -3289,7 +3293,33 @@ const opt  = { guides:false, trails:false, sound:false, refs:2, marks:true, camM
                dist:9.0, fpYaw:0, fpPitch:rad(-2), fpFov:62, mirrors:true, prev3rd:CAM_CHASE,
                mirAdj:{left:{yaw:0,pitch:0}, right:{yaw:0,pitch:0}, center:{yaw:0,pitch:0}} };
 let level = null, paused = true, trails = null, trailT = 0;
-let dprCap = 2, dprCheckT = 0;
+let dprCap = 2;
+/* уровни качества — регулятор по РЕАЛЬНОМУ интервалу кадра (rAF), а не по JS-времени: растеризация
+   Canvas в JS не видна, и старый регулятор по frameCost держал Retina на машине, где программный
+   Canvas выдавал 13 fps. Порядок жертв: зерно (дороже всего, видно меньше всего) → DPR 1,5 →
+   градиенты → DPR 1,25 → 1,0. Храповик: уровень, на котором было медленно, больше не возвращается
+   до перезагрузки — иначе регулятор качался бы между «хорошо 5 с» и «плохо 1 с» */
+const QUALITY=[ {dpr:2,    grain:true,  grad:true},
+                {dpr:2,    grain:false, grad:true},
+                {dpr:1.5,  grain:false, grad:true},
+                {dpr:1.5,  grain:false, grad:false},
+                {dpr:1.25, grain:false, grad:false},
+                {dpr:1,    grain:false, grad:false} ];
+let qLevel=0, qBest=0, qBadT=0, qGoodT=0, qCoolT=0, frameGap=16;
+const Q_GAP_BAD=19, Q_GAP_GOOD=17.5, Q_BAD_HOLD=1.0, Q_GOOD_HOLD=6.0, Q_COOL=2.0;
+function qApply(level){
+  qLevel=level; qCoolT=Q_COOL; qBadT=0; qGoodT=0;
+  const d=QUALITY[level].dpr;
+  if(dprCap!==d){ dprCap=d; resize(); }
+}
+function qTick(dt){
+  if(qCoolT>0){ qCoolT-=dt; return; }
+  if(frameGap>Q_GAP_BAD){ qBadT+=dt; qGoodT=0;
+    if(qBadT>Q_BAD_HOLD && qLevel<QUALITY.length-1){ qBest=Math.max(qBest, qLevel+1); qApply(qLevel+1); } }
+  else if(frameGap<Q_GAP_GOOD && frameCost<6){ qGoodT+=dt; qBadT=0;
+    if(qGoodT>Q_GOOD_HOLD && qLevel>qBest) qApply(qLevel-1); }
+  else { qBadT=0; qGoodT=0; }
+}
 /* счётчик кадра по интервалу rAF, а не по JS-времени: растеризация Canvas в JS не видна */
 const PERF_ON=(()=>{ try{ return /[?&]perf=1/.test(location.search) || localStorage.getItem('trainer_perf')==='1'; }catch(e){ return false; } })();
 const perfGaps=[]; let perfT=0, perfLastTs=0, facesFrame=0;
@@ -6530,11 +6560,12 @@ function perfTick(dt){
   let sum=0; for(const x of g) sum+=x;
   const p95=g[Math.floor(g.length*0.95)], fps=1000/(sum/g.length);
   el.hidden=false;
-  setText(el, fps.toFixed(0)+' fps · p95 '+p95.toFixed(1)+' мс · js '+frameCost.toFixed(1)+' мс · dpr '+DPR.toFixed(2)+' · грани '+facesFrame);
+  setText(el, fps.toFixed(0)+' fps · p95 '+p95.toFixed(1)+' мс · js '+frameCost.toFixed(1)+' мс · dpr '+DPR.toFixed(2)+' · q'+qLevel+' · грани '+facesFrame);
 }
 function frame(ts){
   requestAnimationFrame(frame);
-  if(perfLastTs){ perfGaps.push(ts-perfLastTs); if(perfGaps.length>240) perfGaps.shift(); } perfLastTs=ts;
+  if(perfLastTs){ const gap=Math.min(100, ts-perfLastTs); perfGaps.push(gap); if(perfGaps.length>240) perfGaps.shift();
+    frameGap += (gap-frameGap)*0.1; } perfLastTs=ts;
   const now=ts/1000;
   let dt=last? Math.min(0.05, now-last) : 0.016; last=now;
   if(!paused && !game.done){
@@ -6574,15 +6605,7 @@ function frame(ts){
   if(PERF_ON) perfTick(dt);
   if(frameCost > 11) trailBudget = Math.max(70, trailBudget-10);
   else if(frameCost < 7) trailBudget = Math.min(TRAIL_MAX, trailBudget+4);
-  /* резкость снижаем только если устройство реально не тянет */
-  dprCheckT += dt;
-  if(dprCheckT > 2.5){
-    dprCheckT = 0;
-    if(frameCost > 15 && dprCap > 1.3){ dprCap = 1.3; resize(); }
-    else if(frameCost > 9 && dprCap > 2){ dprCap = 2; resize(); }
-    else if(frameCost < 4.5 && dprCap < 2.5){ dprCap = 2.5; resize(); }
-    else if(frameCost < 6 && dprCap < 2){ dprCap = 2; resize(); }
-  }
+  qTick(dt);
 }
 function parkBeep(dt){
   if(paused||!opt.sound||!AC) return;
