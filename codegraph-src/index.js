@@ -3665,6 +3665,17 @@ const input = {};
 const MT={ idle:850, max:5800, stallRpm:520,
   gears:{ '-1':{k:1.5, vmax:3.4}, '1':{k:1.6, vmax:6.5}, '2':{k:0.9, vmax:13.5} } };
 function mtOn(){ return opt.gearbox==='MT'; }
+/* одна точка переключения коробки — из меню и со стартового экрана: сохранить, перезапустить
+   уровень (селектор и сцепление стартуют из разных состояний), подсказать клавиши */
+function setGearbox(g){
+  opt.gearbox = g==='MT' ? 'MT' : 'AT';
+  track('mt-'+opt.gearbox.toLowerCase());
+  try{ localStorage.setItem('trainer_gearbox', opt.gearbox); }catch(e){}
+  restart();
+  toast(mtOn() ? 'МКПП: левый Shift — сцепление, ,/. — передачи, Y — завестись'
+               : 'АКПП: селектор P R N D, Enter — D ⇄ R', 4);
+}
+const gearboxBtnHTML=()=>'<button data-act="gearbox" class="ghost">Коробка: '+(mtOn()?'МЕХАНИКА':'автомат')+'</button>';
 function mtWarn(msg){ selWarn=msg; selWarnT=2.4; selBlockT=0.5; tone(200,0.14,0.05); }
 function mtShift(step){
   if(car.clu<0.85){ mtWarn('Выжми сцепление (левый Shift) — потом передача'); return; }
@@ -5244,6 +5255,7 @@ function doAct(a){
   if(a==='task'){ helpOpen=false; showTask(); return; }
   if(a==='demo'){ helpOpen=false; hideOv(); startDemo(); return; }
   if(a==='touch'){ setTouch(!MOB); showOv(helpOpen? helpHTML() : startHTML()); return; }
+  if(a==='gearbox'){ setGearbox(mtOn()?'AT':'MT'); showOv(helpOpen? helpHTML() : startHTML()); return; }
   if(a==='start'||a==='resume'){ hideOv();
     /* счётчик запусков: первые 3 «почему» в карточке раскрыто само, дальше — по «?» */
     if(a==='start' && !game.runCounted){ game.runCounted=true; runsCnt++;
@@ -5334,6 +5346,7 @@ function startHTML(){
     +'<h1>По зеркалам</h1>'
     +'<p style="margin:-4px 0 10px;color:#93a7bd">тренажёр манёвров и подготовки к экзамену</p>'
     +'<button data-act="start">Поехали</button>'
+    + gearboxBtnHTML()
     +'<p>Держи телефон горизонтально. Карточка сверху ведёт манёвр: действие + до какого показания. '
     +'Оранжевые стойки показывают, где реально габариты машины. '
     +'Линии траекторий (дуги колёс, путь демо) — в меню, если захочется подсмотреть.</p>'
@@ -5346,12 +5359,15 @@ function startHTML(){
   +'<h1>По зеркалам</h1>'
   +'<p style="margin:-4px 0 10px;color:#93a7bd">тренажёр манёвров и подготовки к экзамену</p>'
   +'<button data-act="start">Поехали</button>'
+  + gearboxBtnHTML()
   +readinessHTML()
   +'<ul class="startlist" style="text-align:left">'
   +'<li><b>Едешь так:</b> <span class="kbd">W</span> газ, <span class="kbd">S</span>/пробел тормоз, '
   +'<span class="kbd">A</span>/<span class="kbd">D</span> руль (сам не возвращается, '
   +'<span class="kbd">X</span> — в ноль).</li>'
-  +'<li><b>Коробка-автомат:</b> <span class="kbd">Enter</span> — D ⇄ R, из P выходи с зажатым тормозом.</li>'
+  +(mtOn()
+    ? '<li><b>Механика:</b> левый <span class="kbd">Shift</span> — сцепление, <span class="kbd">,</span>/<span class="kbd">.</span> — передачи R N 1 2, <span class="kbd">Y</span> — завестись, если заглох.</li>'
+    : '<li><b>Коробка-автомат:</b> <span class="kbd">Enter</span> — D ⇄ R, из P выходи с зажатым тормозом.</li>')
   +'<li><b>Карточка сверху ведёт манёвр:</b> действие + до какого показания. «?» объяснит почему.</li>'
   +'<li><b>Запутался:</b> <span class="kbd">H</span> — справка с физикой и всеми клавишами, '
   +'кнопка «демонстрация» покажет манёвр сама.</li>'
@@ -6488,14 +6504,7 @@ function buildMenu(){
     adsRewarded(()=>{ opt.guides=true;
       toast('Идеальная траектория включена — смотри зелёно-оранжевую линию', 3.5); });
   }, ()=>opt.guides);
-  add('Коробка: '+(mtOn()?'механика':'автомат'), ()=>{
-    opt.gearbox = mtOn() ? 'AT' : 'MT';
-    track('mt-'+opt.gearbox.toLowerCase());
-    try{ localStorage.setItem('trainer_gearbox', opt.gearbox); }catch(e){}
-    restart();
-    toast(mtOn() ? 'МКПП: левый Shift — сцепление, ,/. — передачи, Y — завестись'
-                 : 'АКПП: селектор P R N D, Enter — D ⇄ R', 4);
-  }, ()=>mtOn());
+  add('Коробка: '+(mtOn()?'механика':'автомат'), ()=>setGearbox(mtOn()?'AT':'MT'), ()=>mtOn());
   add('Звук', ()=>pressKey('KeyM'), ()=>opt.sound);
   add('Начать уровень заново', ()=>{ closeMenu(); pressKey('KeyR'); });
   add('Что делают кнопки', ()=>{ closeMenu(); setTimeout(showTouchHelp,120); });
