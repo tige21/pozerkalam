@@ -10,6 +10,7 @@
      SETTLE=12000 — подождать 12 с перед замером, чтобы регулятор качества (QUALITY/qTick) вышел на уровень.
      FORCE_Q=3 ONLY=1 — зафиксировать уровень качества 3 и померить только сценарий «всё».
      URL=https://pozerkalam.space/play/ — померить выложенную сборку вместо локального файла.
+     MOBILE=1 CPU=4 — эмуляция телефона (844×390 @3, тач) с процессором в 4 раза медленнее.
    Браузеры владельца (Яндекс и т.п.) не запускать — только Chrome/Chromium с временным профилем.
    Вывод: по строке JSON на сценарий; PAGEERR — в stderr. */
 import { createRequire } from 'node:module';
@@ -29,6 +30,8 @@ const SETTLE = +(process.env.SETTLE || 0);   /* мс ожидания перед
 const FORCE_Q = process.env.FORCE_Q === undefined ? null : +process.env.FORCE_Q;   /* зафиксировать уровень качества */
 const ONLY = !!process.env.ONLY;             /* только сценарий «всё» */
 const URL_OVERRIDE = process.env.URL || '';  /* померить прод: URL=https://pozerkalam.space/play/ */
+const MOBILE = !!process.env.MOBILE;         /* телефон: 844×390, DPR 3, тач, трекер touch */
+const CPU = +(process.env.CPU || 1);         /* замедление процессора через CDP (4 ≈ средний телефон) */
 
 let chromium;
 try { ({ chromium } = createRequire(path.join(PW_DIR, 'package.json'))('playwright-core')); }
@@ -36,13 +39,16 @@ catch (e) { console.error(`playwright-core не найден в ${PW_DIR}: mkdir
 if (!fs.existsSync(BIN)) { console.error('браузер не найден: ' + BIN); process.exit(2); }
 
 const browser = await chromium.launch({ executablePath: BIN, headless: false, args: ARGS });
-const context = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: DPR });
+const context = await browser.newContext(MOBILE
+  ? { viewport: { width: 844, height: 390 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true }
+  : { viewport: { width: W, height: H }, deviceScaleFactor: DPR });
 const page = await context.newPage();
+if (CPU > 1) { const cdp = await context.newCDPSession(page); await cdp.send('Emulation.setCPUThrottlingRate', { rate: CPU }); }
 page.on('pageerror', e => { if (!/ServiceWorker/.test(e.message)) console.error('PAGEERR', e.message); });
 
 async function load(url) {
   await page.goto(url);
-  await page.evaluate(() => { for (const k of ['trainer_seen', 'trainer_hint', 'trainer_drive']) localStorage.setItem(k, '1'); localStorage.setItem('trainer_runs', '9'); localStorage.setItem('trainer_touch', '0'); });
+  await page.evaluate((t) => { for (const k of ['trainer_seen', 'trainer_hint', 'trainer_drive']) localStorage.setItem(k, '1'); localStorage.setItem('trainer_runs', '9'); localStorage.setItem('trainer_touch', t); }, MOBILE ? '1' : '0');
   await page.goto(url + 'r'); await page.waitForTimeout(400);
   await page.evaluate((fq) => { doAct('start'); pressKey('KeyV'); opt.fpYaw = 0; opt.fpPitch = rad(-2);
     if (fq !== null && typeof qApply === 'function') { qApply(fq); qCoolT = 1e9; } }, FORCE_Q);

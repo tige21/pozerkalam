@@ -405,6 +405,8 @@
 
 
 
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -981,7 +983,8 @@ function emitCarBody(u,v,th,col){
   const camLat=du*r.u+dv*r.v, camZ=du*f.u+dv*f.v, camDist=Math.hypot(du,dv);
   /* вблизи борта заливаются градиентом по нормалям сечения (только боковые рёбра: у крыши и капота
      нормаль ещё наклонена по z, и сечения её не знают); дальше — плоские грани с материалом */
-  const smooth = camDist<16;
+  const Q=QUALITY[qLevel];
+  const smooth = Q.cars && camDist<16;
   const NW=(a,b)=>{ const lat=(a[0]+b[0])*0.5, y=(a[1]+b[1])*0.5, l=Math.hypot(lat,y)||1; return {x:R.x*lat/l, y:y/l, z:R.z*lat/l}; };
   for(let i=0;i+1<CAR_SECS.length;i++){
     const A=CAR_SECS[i], B=CAR_SECS[i+1];
@@ -995,7 +998,7 @@ function emitCarBody(u,v,th,col){
       else if(A.k==='pillar' && EDGE_SIDEGLASS.has(e)){ cc=pillar; mat=MO.plastic; }
       const side = e<=3 || (e>=7 && e<=10);
       /* дальше 40 м блик и отражение не видны, а pow на каждую грань — видны в JS-времени кадра */
-      const o = smooth && side ? {mat:mat.mat, n1:NW(A.nrm[e],B.nrm[e]), n2:NW(A.nrm[e2],B.nrm[e2])} : (camDist<40 ? mat : undefined);
+      const o = smooth && side ? {mat:mat.mat, n1:NW(A.nrm[e],B.nrm[e]), n2:NW(A.nrm[e2],B.nrm[e2])} : (Q.cars && camDist<40 ? mat : undefined);
       pushQuad(P(A.pts[e][0],A.pts[e][1],A.z), P(A.pts[e2][0],A.pts[e2][1],A.z),
                P(B.pts[e2][0],B.pts[e2][1],B.z), P(B.pts[e][0],B.pts[e][1],B.z), cc, ref, 0, o);
     }
@@ -1009,7 +1012,7 @@ function emitCarBody(u,v,th,col){
   /* из салона этой же машины накладки не рисуем: со сдвигом bias верх ручки пробивался бы
      сквозь карту двери */
   const camIn = Math.abs(camLat)<0.95 && Math.abs(camZ)<2.3 && cam.pos.y<1.6;
-  if(!camIn && camDist < 28){
+  if(!camIn && camDist < 28 && Q.detail){
     const seam=[34,36,40], handle=[40,44,50], arch=[30,32,36];
     for(const sg of [-1,1]){
       const out=P(sg*0.5,0.7,0);
@@ -1184,6 +1187,7 @@ function emitCabinShell(K){
         strip([[L-sg*A[0],A[1],-0.60],[L-sg*A[0],A[1],0.00],[L-sg*B[0],B[1],0.00],[L-sg*B[0],B[1],-0.60]], C.TRIM, ref, 1,
               t=>{ const nl=A[2]+(B[2]-A[2])*t, ny=A[3]+(B[3]-A[3])*t, l=Math.hypot(nl,ny)||1; return [-sg*nl/l, ny/l, 0]; },
               {mat:'leather', bias:DET}); } }
+    if(qDetail()){
     /* блок стеклоподъёмников — картинка четырёх клавиш на подлокотнике */
     quad([sg*0.755,0.846,-0.23],[sg*0.725,0.846,-0.23],[sg*0.725,0.846,-0.17],[sg*0.755,0.846,-0.17],[40,44,50],[sg*0.74,0,-0.20],DET*2,{img:switchCanvas()});
     pushBar(P,[sg*0.71,0.86,-0.06],[sg*0.71,0.86,0.24],0.015,[120,126,136],1,DET,MO.stalk); /* ручка-скоба */
@@ -1193,6 +1197,7 @@ function emitCabinShell(K){
     box(sg*0.76, 0.60, -0.02, 0.035,0.090,0.090, [70,74,82], DET, MO.softtouch);
     quad([sg*0.724,0.68,-0.10],[sg*0.724,0.68,0.06],[sg*0.724,0.52,0.06],[sg*0.724,0.52,-0.10],[46,48,54],[sg*0.9,0.6,0],DET*1.5,{img:grilleCanvas()});
     pushBar(P,[sg*0.80,0.93,0.70],[sg*0.78,0.93,0.70],0.018,[40,42,48],1,DET,{mat:'matte',sides:8}); /* твитер */
+    }
     box(sg*0.77, 0.50, 0.30,  0.030,0.060,0.16, C.DARK, DET, {mat:'matte',ao:0.6});      /* карман двери */
     /* ремень идёт от стойки B вниз к полу — в реальном салоне он всегда в кадре */
     pushBar(P,[sg*0.74,1.28,-0.31],[sg*0.56,0.62,-0.30],0.024,[52,56,66]);
@@ -1268,7 +1273,7 @@ function emitDash(K){
   pushBar(P,[-0.80,0.900,0.612],[0.80,0.900,0.612],0.005,STRIP,4,0.01,MO.stalk);     /* декоративная полоса */
   pushBar(P,[-0.80,0.893,0.617],[0.80,0.893,0.617],0.002,GAP,4,0.012);                 /* панельный зазор */
   /* бардачок: контур зазора на фасаде, ручка — сатиновая планка */
-  for(const [a,b] of [[[0.24,0.60],[0.70,0.60]],[[0.24,0.86],[0.70,0.86]],[[0.24,0.60],[0.24,0.86]],[[0.70,0.60],[0.70,0.86]]])
+  if(qDetail()) for(const [a,b] of [[[0.24,0.60],[0.70,0.60]],[[0.24,0.86],[0.70,0.86]],[[0.24,0.60],[0.24,0.86]],[[0.70,0.60],[0.70,0.86]]])
     pushBar(P,[a[0],a[1],0.617],[b[0],b[1],0.617],0.002,GAP,1,0.012);
   box(0.47,0.845,0.614, 0.045,0.006,0.005, STRIP, 0.02, MO.satin);
   /* щиток зажат между двумя границами: ниже — его закрывает ступица руля,
@@ -1303,6 +1308,7 @@ function emitDash(K){
     pushPoly(i1, [26,28,32], ref, 0.008);
     for(const dy of [-0.011,0,0.011]) box(lat, y+dy, z+0.006, ri*0.96, 0.0025, 0.003, [70,74,82], 0.014);
   };
+  if(qDetail()){
   for(const sg of [-1,1]){ vent(sg*0.58, 0.855, 0.042); vent(sg*0.115, 0.855, 0.034); }
   /* центральная консоль: экран, две ручки, ряд кнопок — всё ниже линии дороги, без подсветки */
   emitLit(()=>quad([-0.085,0.815,0.612],[0.085,0.815,0.612],[0.085,0.735,0.612],[-0.085,0.735,0.612],
@@ -1311,6 +1317,7 @@ function emitDash(K){
   pushBar(P,[-0.085,0.725,0.612],[0.085,0.725,0.612],0.004,[40,42,48],1,0.012);
   for(const sg of [-1,1]) pushBar(P,[sg*0.06,0.680,0.618],[sg*0.06,0.680,0.604],0.014,[62,66,74],1,0.012,MO.round);
   quad([-0.09,0.655,0.614],[0.09,0.655,0.614],[0.09,0.635,0.614],[-0.09,0.635,0.614],[48,50,56],[0,0.64,0.9],0.012,{img:buttonsCanvas()});
+  }
   /* педали: их видно, если опустить взгляд, и они объясняют, почему газ и тормоз
      нельзя нажимать одновременно лучше любой подписи */
   box(-0.30,0.468,0.34, 0.045,0.012,0.085, [40,44,50], 0, MO.rubber);
@@ -1441,7 +1448,7 @@ function emitWheel(K){
      трубки, грани — градиент между ними, и обод читается круглым с бликом кожи. Хваты на «10 и 2»
      — та же трубка толще, радиус задан по вершине кольца, чтобы переход был без щели.
      Раньше обод был 14 квадратных брусков и выглядел гайкой */
-  const NSEG=24, NT=6, RT=0.017, RG=0.022, RIM=[50,52,58];
+  const NSEG=qDetail()?24:12, NT=qDetail()?6:4, RT=0.017, RG=0.022, RIM=[50,52,58];
   const vr=(i)=>{ const rel=Math.abs(angNorm(i/NSEG*TAU-TOP)); return rel>rad(36)&&rel<rad(76) ? RG : RT; };
   const tubeN=(th,ph)=>{ const r=dirAt(th), c=Math.cos(ph), s=Math.sin(ph);
     return [r[0]*c+ax[0]*s, r[1]*c+ax[1]*s, r[2]*c+ax[2]*s]; };
@@ -3372,17 +3379,21 @@ let dprCap = 2;
    Canvas выдавал 13 fps. Порядок жертв: зерно (дороже всего, видно меньше всего) → DPR 1,5 →
    градиенты → DPR 1,25 → 1,0. Храповик: уровень, на котором было медленно, больше не возвращается
    до перезагрузки — иначе регулятор качался бы между «хорошо 5 с» и «плохо 1 с» */
-const QUALITY=[ {dpr:2,    grain:true,  grad:true},
-                {dpr:2,    grain:false, grad:true},
-                {dpr:1.5,  grain:false, grad:true},
-                {dpr:1.5,  grain:false, grad:false},
-                {dpr:1.25, grain:false, grad:false},
-                {dpr:1,    grain:false, grad:false},
+/* cars — материалы и гладкие борта машин (pow на грань), detail — мелкие детали салона и машин
+   (дефлекторы, кнопки, швы, ручки), maxD — дальность мира: на телефоне с медленным процессором кадр
+   упирается в JavaScript (3300 граней), и снижать надо число граней, а не только пиксели */
+const QUALITY=[ {dpr:2,    grain:true,  grad:true,  cars:true,  detail:true,  maxD:85},
+                {dpr:2,    grain:false, grad:true,  cars:true,  detail:true,  maxD:85},
+                {dpr:1.5,  grain:false, grad:true,  cars:true,  detail:true,  maxD:85},
+                {dpr:1.5,  grain:false, grad:false, cars:false, detail:true,  maxD:70},
+                {dpr:1.25, grain:false, grad:false, cars:false, detail:true,  maxD:70},
+                {dpr:1,    grain:false, grad:false, cars:false, detail:false, maxD:55},
                 /* ниже 1,0 — рендер в меньшем разрешении с растяжением браузером: на большом мониторе
                    с программным Canvas и DPR 1,0 (2560×1440) выходило 16 fps */
-                {dpr:0.8,  grain:false, grad:false},
-                {dpr:0.65, grain:false, grad:false},
-                {dpr:0.5,  grain:false, grad:false} ];
+                {dpr:0.8,  grain:false, grad:false, cars:false, detail:false, maxD:55},
+                {dpr:0.65, grain:false, grad:false, cars:false, detail:false, maxD:55},
+                {dpr:0.5,  grain:false, grad:false, cars:false, detail:false, maxD:55} ];
+function qDetail(){ return QUALITY[qLevel].detail; }
 const Q_SLOW_MIRRORS=5;    /* с этого уровня зеркала обновляются через кадр */
 /* первые секунды после загрузки кадры рваные (уровень, ресайз, прогрев) — регулятор молчит,
    иначе он опускал уровень и храповик навсегда запирал зерно на машине, которая тянет всё */
@@ -4823,7 +4834,7 @@ function render(dt){
     drawEditor();
     return;
   }
-  drawSceneInto({grid:true, trails:opt.trails, guides:opt.guides, maxD:85, labels:true});
+  drawSceneInto({grid:true, trails:opt.trails, guides:opt.guides, maxD:QUALITY[qLevel].maxD, labels:true});
   if(opt.mirrors){ const r=mirrorRects(), slow=qLevel>=Q_SLOW_MIRRORS, t=mirTurn++;
     const turn = slow && (t%2) ? null : MIR_KINDS[(slow ? t>>1 : t)%3];
     /* зеркало, чьё перетаскивание идёт сейчас, обновляется каждый кадр — иначе настройка «плывёт» */
