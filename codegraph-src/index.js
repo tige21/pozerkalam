@@ -3314,21 +3314,33 @@ const QUALITY=[ {dpr:2,    grain:true,  grad:true},
                 {dpr:1.5,  grain:false, grad:true},
                 {dpr:1.5,  grain:false, grad:false},
                 {dpr:1.25, grain:false, grad:false},
-                {dpr:1,    grain:false, grad:false} ];
+                {dpr:1,    grain:false, grad:false},
+                /* ниже 1,0 — рендер в меньшем разрешении с растяжением браузером: на большом мониторе
+                   с программным Canvas и DPR 1,0 (2560×1440) выходило 16 fps */
+                {dpr:0.8,  grain:false, grad:false},
+                {dpr:0.65, grain:false, grad:false},
+                {dpr:0.5,  grain:false, grad:false} ];
+const Q_SLOW_MIRRORS=5;    /* с этого уровня зеркала обновляются через кадр */
 /* первые секунды после загрузки кадры рваные (уровень, ресайз, прогрев) — регулятор молчит,
    иначе он опускал уровень и храповик навсегда запирал зерно на машине, которая тянет всё */
-let qLevel=0, qBest=0, qBadT=0, qGoodT=0, qCoolT=3.0, frameGap=16;
-const Q_GAP_BAD=19, Q_GAP_GOOD=17.5, Q_BAD_HOLD=1.0, Q_GOOD_HOLD=6.0, Q_COOL=2.0;
+let qLevel=0, qBest=0, qBadT=0, qGoodT=0, qCoolT=2.0, frameGap=16;
+const Q_GAP_BAD=19, Q_GAP_GOOD=17.5, Q_BAD_HOLD=0.6, Q_GOOD_HOLD=6.0, Q_COOL=1.2;
 function qApply(level){
   qLevel=level; qCoolT=Q_COOL; qBadT=0; qGoodT=0;
   const d=QUALITY[level].dpr;
   if(dprCap!==d){ dprCap=d; resize(); }
 }
-function qTick(dt){
-  if(qCoolT>0){ qCoolT-=dt; return; }
-  if(frameGap>Q_GAP_BAD){ qBadT+=dt; qGoodT=0;
-    if(qBadT>Q_BAD_HOLD && qLevel<QUALITY.length-1){ qBest=Math.max(qBest, qLevel+1); qApply(qLevel+1); } }
-  else if(frameGap<Q_GAP_GOOD && frameCost<6){ qGoodT+=dt; qBadT=0;
+/* таймеры регулятора идут по РЕАЛЬНОМУ времени кадра (rdt), не по dt физики: dt зажат 50 мс,
+   и при 16 fps лестница спускалась вдвое медленнее, чем шли секунды. При сильной просадке
+   шаг сразу на 2–3 ступени — ждать по ступени на 16 fps значит мучить игрока полминуты */
+function qTick(rdt){
+  if(qCoolT>0){ qCoolT-=rdt; return; }
+  if(frameGap>Q_GAP_BAD){ qBadT+=rdt; qGoodT=0;
+    if(qBadT>Q_BAD_HOLD && qLevel<QUALITY.length-1){
+      const step = frameGap>60 ? 3 : frameGap>35 ? 2 : 1;
+      const next=Math.min(QUALITY.length-1, qLevel+step);
+      qBest=Math.max(qBest, next); qApply(next); } }
+  else if(frameGap<Q_GAP_GOOD && frameCost<6){ qGoodT+=rdt; qBadT=0;
     if(qGoodT>Q_GOOD_HOLD && qLevel>qBest) qApply(qLevel-1); }
   else { qBadT=0; qGoodT=0; }
 }
@@ -4749,7 +4761,8 @@ function render(dt){
     return;
   }
   drawSceneInto({grid:true, trails:opt.trails, guides:opt.guides, maxD:85, labels:true});
-  if(opt.mirrors){ const r=mirrorRects(), turn=MIR_KINDS[mirTurn++%3];
+  if(opt.mirrors){ const r=mirrorRects(), slow=qLevel>=Q_SLOW_MIRRORS, t=mirTurn++;
+    const turn = slow && (t%2) ? null : MIR_KINDS[(slow ? t>>1 : t)%3];
     /* зеркало, чьё перетаскивание идёт сейчас, обновляется каждый кадр — иначе настройка «плывёт» */
     const live=mirDrag&&mirDrag.kind;
     renderMirror(r.center,'center', turn==='center'||live==='center');
@@ -6576,8 +6589,9 @@ function perfTick(dt){
 }
 function frame(ts){
   requestAnimationFrame(frame);
+  let rdt=0.016;
   if(perfLastTs){ const gap=Math.min(100, ts-perfLastTs); perfGaps.push(gap); if(perfGaps.length>240) perfGaps.shift();
-    frameGap += (gap-frameGap)*0.1; } perfLastTs=ts;
+    frameGap += (gap-frameGap)*0.1; rdt=Math.min(0.25, gap/1000); } perfLastTs=ts;
   const now=ts/1000;
   let dt=last? Math.min(0.05, now-last) : 0.016; last=now;
   if(!paused && !game.done){
@@ -6617,7 +6631,7 @@ function frame(ts){
   if(PERF_ON) perfTick(dt);
   if(frameCost > 11) trailBudget = Math.max(70, trailBudget-10);
   else if(frameCost < 7) trailBudget = Math.min(TRAIL_MAX, trailBudget+4);
-  qTick(dt);
+  qTick(rdt);
 }
 function parkBeep(dt){
   if(paused||!opt.sound||!AC) return;

@@ -9,6 +9,7 @@
      BIN=/путь/к/Chromium W=2560 H=1440 DPR=2 — другой Chromium-браузер (временный профиль), размер окна.
      SETTLE=12000 — подождать 12 с перед замером, чтобы регулятор качества (QUALITY/qTick) вышел на уровень.
      FORCE_Q=3 ONLY=1 — зафиксировать уровень качества 3 и померить только сценарий «всё».
+     URL=https://pozerkalam.space/play/ — померить выложенную сборку вместо локального файла.
    Браузеры владельца (Яндекс и т.п.) не запускать — только Chrome/Chromium с временным профилем.
    Вывод: по строке JSON на сценарий; PAGEERR — в stderr. */
 import { createRequire } from 'node:module';
@@ -27,6 +28,7 @@ const OLD = process.env.OLD || '';
 const SETTLE = +(process.env.SETTLE || 0);   /* мс ожидания перед замером — дать регулятору качества выйти на уровень */
 const FORCE_Q = process.env.FORCE_Q === undefined ? null : +process.env.FORCE_Q;   /* зафиксировать уровень качества */
 const ONLY = !!process.env.ONLY;             /* только сценарий «всё» */
+const URL_OVERRIDE = process.env.URL || '';  /* померить прод: URL=https://pozerkalam.space/play/ */
 
 let chromium;
 try { ({ chromium } = createRequire(path.join(PW_DIR, 'package.json'))('playwright-core')); }
@@ -73,6 +75,6 @@ if (OLD) {
   await load('file://' + tmp + '?nocache=' + Date.now());
   await measure(OLD, 'всё');
 }
-await load('file://' + path.join(ROOT, 'index.html') + '?nocache=' + Date.now());
+await load(URL_OVERRIDE ? URL_OVERRIDE + '?nocache=' + Date.now() : 'file://' + path.join(ROOT, 'index.html') + '?nocache=' + Date.now());
 for (const [label, setup] of (ONLY ? SCENARIOS.slice(0, 1) : SCENARIOS)) await measure('HEAD', label, setup);
 await browser.close();
