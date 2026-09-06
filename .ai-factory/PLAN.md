@@ -30,7 +30,7 @@ Rationale: вид из салона — главный скриншот карт
 ## Tasks
 
 ### Phase 0: Инструмент проверки (≈1 ч)
-- [ ] Task 1: `tools/cockpit-shots.mjs` — прогон салона одной командой.
+- [x] Task 1: `tools/cockpit-shots.mjs` — прогон салона одной командой. (база «до»: salon 0 / world 4 / mirror 0, demo 0 warn, frameCost 2,28 мс)
   - Node-скрипт на `playwright-core` с кэшированным Chromium из `~/Library/Caches/ms-playwright/chromium_headless_shell-*` (путь — из `PW_CHROME` или поиск); запуск: `cd /tmp/pw && npm i playwright-core && node <repo>/tools/cockpit-shots.mjs <tag>` (инструкция в шапке файла; в репозиторий зависимости не добавляются).
   - Открывает `index.html?nocache=<ts>` (1280×720, DPR 1), ставит `trainer_seen/hint/drive=1`, `trainer_runs=9`, `trainer_touch=0`, `doAct('start')`, `pressKey('KeyV')`.
   - Скриншоты в `build/shots/<tag>-<pose>.png` для поз `fwd` (yaw 0/pitch 0), `left45`, `right45`, `cluster` (pitch −20°), `back165` (через плечо); позы ставятся через `opt.fpYaw/opt.fpPitch`.
