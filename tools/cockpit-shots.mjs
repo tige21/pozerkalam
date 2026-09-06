@@ -5,6 +5,7 @@
      mkdir -p /tmp/pw && (cd /tmp/pw && npm i playwright-core@1.55)
      PW_DIR=/tmp/pw node tools/cockpit-shots.mjs before            # база «до»
      PW_DIR=/tmp/pw node tools/cockpit-shots.mjs after-p1 --mobile # телефон 844×390 (альбомно), DPR 2, тач
+     PW_DIR=/tmp/pw node tools/cockpit-shots.mjs after-p1 --sweep  # + поворот головы −60…+60°: переключения режима грани
    Chromium берётся из кэша Playwright (~/Library/Caches/ms-playwright/chromium_headless_shell-*)
    или из PW_CHROME. Выход: build/shots/<tag>-<поза>.png, build/shots/<tag>.json и та же JSON-строка
    в stdout; код 1, если в проходе салона есть ошибки порядка, демо дали предупреждения
@@ -19,6 +20,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const tag = args.find(a => !a.startsWith('--')) || 'run';
 const mobile = args.includes('--mobile');
+const sweepOn = args.includes('--sweep');
 const PW_DIR = process.env.PW_DIR || '/tmp/pw';
 const OUT = path.join(ROOT, 'build', 'shots');
 
@@ -127,8 +129,42 @@ for (const [yaw, passes] of Object.entries(runs)) {
   if (main.length > 1 && interior.errors) sort.worst.push({ yaw, px: interior.px, top: interior.top });
 }
 
-const result = { tag, mobile, sort, demoWarns, frameCost, shots, pageErrors };
+/* --sweep: поворот головы по градусу; грань салона не должна менять способ заливки между соседними
+   шагами (flat/grad, картинка, вес зерна скачком > 0,5) — иначе это и есть «текстуры моргают».
+   Заодно считаются вырожденные градиенты (концы ближе 1,5 px): Canvas такие не рисует вовсе */
+let sweep = null;
+if (sweepOn) {
+  sweep = await page.evaluate((cfg) => {
+    const toWorld = (c) => ({ u: -(cam.pos.x + c.x * cam.r.x + c.y * cam.u.x + c.d * cam.f.x), y: cam.pos.y + c.x * cam.r.y + c.y * cam.u.y + c.d * cam.f.y, v: cam.pos.z + c.x * cam.r.z + c.y * cam.u.z + c.d * cam.f.z });
+    const toBody = (w) => { const c = bodyPos(), f = fuv(car.th), r = ruv(car.th), du = w.u - c.u, dv = w.v - c.v; return [du * r.u + dv * r.v, w.y, du * f.u + dv * f.v]; };
+    const P = CanvasRenderingContext2D.prototype, origCLG = P.createLinearGradient; let degenerate = 0;
+    P.createLinearGradient = function (x0, y0, x1, y1) { if (Math.hypot(x1 - x0, y1 - y0) < 1.5) degenerate++; return origCLG.apply(this, arguments); };
+    const origFM = faceMode; let rec = null;
+    faceMode = function (f, s0, s1, s2, s3) {
+      const m = origFM(f, s0, s1, s2, s3);
+      if (rec && VP.w === W) { const c = clipNear(f.cp); if (c.length >= 3) {
+        const sp = c.map(toScreen); let a = 0; for (let i = 0; i < sp.length; i++) { const p = sp[i], q = sp[(i + 1) % sp.length]; a += p.x * q.y - q.x * p.y; } a = Math.abs(a) / 2;
+        let mx = 0, my = 0, md = 0; for (const q of c) { mx += q.x; my += q.y; md += q.d; }
+        const b = toBody(toWorld({ x: mx / c.length, y: my / c.length, d: md / c.length }));
+        rec.set(b.map(v => Math.round(v * 500)).join('/') + (f.img ? 'i' : '') + f.cp.length, { m, gk: f.gk || 0, a }); } }
+      return m; };
+    let toggles = 0, steps = 0; const worst = [];
+    for (const pitch of cfg.pitches) { let prev = null;
+      for (let yaw = cfg.y0; yaw <= cfg.y1; yaw += cfg.step) { opt.fpYaw = rad(yaw); opt.fpPitch = rad(pitch); rec = new Map(); render(0.016); steps++;
+        if (prev) for (const [k, v] of rec) { const p = prev.get(k); if (!p) continue;
+          const fillT = v.m.split('+')[0] !== p.m.split('+')[0] && Math.min(v.a, p.a) > 900;
+          const imgT = v.m.includes('img') !== p.m.includes('img') && Math.min(v.a, p.a) > 100;
+          const grainT = Math.abs(v.gk - p.gk) > 0.5 && Math.min(v.a, p.a) > 100;
+          if (fillT || imgT || grainT) { toggles++; if (worst.length < 8) worst.push({ pitch, yaw, key: k, from: p.m + ':' + p.gk.toFixed(2), to: v.m + ':' + v.gk.toFixed(2), area: Math.round(v.a) }); } }
+        prev = rec; } }
+    rec = null; faceMode = origFM; P.createLinearGradient = origCLG; opt.fpYaw = 0; opt.fpPitch = rad(-2);
+    return { steps, toggles, degenerate, worst };
+  }, { y0: -60, y1: 60, step: 1, pitches: [0, -20, 15] });
+}
+
+const result = { tag, mobile, sort, demoWarns, frameCost, sweep, shots, pageErrors };
 fs.writeFileSync(path.join(OUT, `${tag}.json`), JSON.stringify(result, null, 2));
 console.log(JSON.stringify(result));
 await browser.close();
-process.exit(sort.interior > 0 || demoWarns.length > 0 || pageErrors.length > 0 ? 1 : 0);
+const sweepBad = sweep && (sweep.toggles > 0 || sweep.degenerate > 0);
+process.exit(sort.interior > 0 || demoWarns.length > 0 || pageErrors.length > 0 || sweepBad ? 1 : 0);

@@ -25,6 +25,7 @@ body.mir #coach{top:calc(var(--mirbot,100px) + 8px)}
 #topleft .task{font-size:13px;line-height:1.4;margin-top:5px;color:#cfe0f0}
 #topleft .tip{font-size:12px;line-height:1.4;margin-top:6px;color:#93a7bd}
 #topright{right:14px;top:14px;font-size:13px;text-align:right;font-variant-numeric:tabular-nums}
+#perf{position:fixed;left:14px;bottom:14px;z-index:40;font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:#cfe3f2;background:rgba(9,14,20,.72);padding:4px 8px;border-radius:6px;pointer-events:none;white-space:pre}
 .sidebtn{position:fixed;right:14px;z-index:6;padding:6px 12px;border-radius:9px;text-align:center;
   background:rgba(9,14,20,.74);border:1px solid rgba(255,255,255,.14);color:#cfe0f0;
   font-size:12.5px;cursor:pointer;user-select:none}
@@ -351,6 +352,7 @@ body.fp #hint{display:none}
 
 <div id="coach">—</div>
 
+<div id="perf" hidden></div>
 <div id="bar">
   <div class="cell opt"><div class="k">селектор · Enter = D ⇄ R</div><div class="v lever" id="gearVal">P</div></div>
   <div class="cell opt"><div class="k">скорость</div><div class="v" id="spdVal">0 км/ч</div></div>
@@ -495,6 +497,9 @@ function toCam(p){
            d: dx*cam.f.x+dy*cam.f.y+dz*cam.f.z };
 }
 function toScreen(c){ const k=cam.scale/c.d; return { x: VP.cx + c.x*k, y: VP.cy - c.y*k }; }
+/* точка за ближней плоскостью проецируется как лежащая на ней: ось градиента и зерна у грани,
+   пересёкшей плоскость, меняется непрерывно, а не прыгает в плоскую заливку и обратно */
+function toScreenClamped(c){ return c.d>NEAR ? toScreen(c) : toScreen({x:c.x, y:c.y, d:NEAR}); }
 /* слепок камеры основного вида: к моменту события указателя `cam` уже
    переставлен на последнее зеркало, поэтому разворачивать пиксель нужно по слепку */
 const viewCam = { pos:{x:0,y:0,z:0}, f:{x:0,y:0,z:1}, r:{x:-1,y:0,z:0}, u:{x:0,y:1,z:0},
@@ -644,9 +649,11 @@ function pushFace(v, n, col, bias, o){
       view={x:vx/vl, y:vy/vl, z:vz/vl}; }
     const sh={mat:m, ao:o && o.ao, view};
     f.col=shadeCol(col, (o && o.n1)||n, dist, cy, sh);
-    /* градиент и зерно — только целым граням: у отсечённой грани экранные точки рёбер не те */
-    if(!behind && v.length>=4){
-      if(o && o.n2) f.col2=shadeCol(col, o.n2, dist, cy, sh);
+    if(v.length>=4){
+      if(o && o.n2){ f.col2=shadeCol(col, o.n2, dist, cy, sh);
+        /* средний цвет — для мелкой или стоящей ребром грани: там градиент не виден или вырожден */
+        const n1=(o && o.n1)||n, mx=n1.x+o.n2.x, my=n1.y+o.n2.y, mz=n1.z+o.n2.z, ml=Math.hypot(mx,my,mz)||1;
+        f.colMid=shadeCol(col, {x:mx/ml, y:my/ml, z:mz/ml}, dist, cy, sh); }
       if(m && m.grain){ f.grain=m;
         f.lu=Math.hypot(v[1].x-v[0].x, v[1].y-v[0].y, v[1].z-v[0].z);
         f.lv=Math.hypot(v[3].x-v[0].x, v[3].y-v[0].y, v[3].z-v[0].z); }
@@ -654,7 +661,7 @@ function pushFace(v, n, col, bias, o){
   } else f.col=shadeCol(col, n, Math.max(dist,1), cy);
   /* o.img — готовая картинка (циферблат, экран) натягивается на четырёхугольник: детали
      прибора рисуются один раз в offscreen-канвас, а не сотней граней каждый кадр */
-  if(o && o.img && !behind && v.length===4) f.img=o.img;
+  if(o && o.img && v.length===4) f.img=o.img;
   faces.push(f);
 }
 /* центр в (u, y, v); hw — полуширина поперёк, hl — полудлина вдоль, hh — полувысота */
@@ -703,50 +710,77 @@ function grainPattern(kind){
   g.putImageData(im,0,0);
   grainPats[kind]=ctx.createPattern(c,'repeat'); return grainPats[kind];
 }
+const GRAD_MIN_PX=24, GRAIN_AREA0=400, GRAIN_AREA1=800, GRAIN_MINIF0=1.3, GRAIN_MINIF1=1.8;
+/* режим заливки грани — чистая функция от грани и её экранных точек; по ней же прогон --sweep
+   ловит переключения режима при повороте головы. Правила: в зеркалах всё плоское; градиент — если
+   его концы дальше 1,5 px (вырожденный градиент Canvas не рисует НИЧЕГО — грань ребром пропадала
+   на кадр) и грань крупнее GRAD_MIN_PX; зерно — с плавным весом f.gk по площади и по уменьшению
+   плитки (без мип-уровней шум при уменьшении дрожит), а не по порогу, у которого оно мигало */
+function faceMode(f, s0, s1, s2, s3){
+  if(VP.w!==W) return 'flat';
+  let mode='flat';
+  if(f.col2){
+    const gx=(s1.x+s2.x-s0.x-s3.x)*0.5, gy=(s1.y+s2.y-s0.y-s3.y)*0.5;
+    const ext=Math.max(Math.abs(s2.x-s0.x), Math.abs(s2.y-s0.y), Math.abs(s1.x-s3.x), Math.abs(s1.y-s3.y));
+    if(gx*gx+gy*gy>=2.25 && ext>=GRAD_MIN_PX) mode='grad';
+  }
+  if(f.img) return mode+'+img';
+  if(f.grain){
+    const ux=s1.x-s0.x, uy=s1.y-s0.y, vx=s3.x-s0.x, vy=s3.y-s0.y;
+    const area=Math.abs(ux*vy-uy*vx);
+    const minif=Math.max(f.lu*GRAIN_PX/((Math.hypot(ux,uy)||1e-6)*DPR), f.lv*GRAIN_PX/((Math.hypot(vx,vy)||1e-6)*DPR));
+    f.gk=clamp((area-GRAIN_AREA0)/(GRAIN_AREA1-GRAIN_AREA0),0,1)*clamp((GRAIN_MINIF1-minif)/(GRAIN_MINIF1-GRAIN_MINIF0),0,1);
+    if(f.gk>0) return mode+'+grain';
+  }
+  return mode;
+}
 /* обводка грани её же цветом закрывает волосяные щели антиалиасинга между соседними гранями:
    через них просвечивало небо, и при движении камеры эти щели мерцали */
 function flushFaces(){
+  facesFrame += faces.length;
   faces.sort((p,q)=> q.d - p.d);
   ctx.lineWidth=0.9; ctx.lineJoin='round';
   for(const f of faces){
     if(!pathCam(f.cp)) continue;
-    let fill=f.col;
-    if(f.col2){
-      const s0=toScreen(f.cp[0]), s1=toScreen(f.cp[1]), s2=toScreen(f.cp[2]), s3=toScreen(f.cp[3]);
-      const g=ctx.createLinearGradient((s0.x+s3.x)*0.5,(s0.y+s3.y)*0.5,(s1.x+s2.x)*0.5,(s1.y+s2.y)*0.5);
-      g.addColorStop(0,f.col); g.addColorStop(1,f.col2); fill=g;
+    if(f.col2 || f.grain || f.img){
+      const s0=toScreenClamped(f.cp[0]), s1=toScreenClamped(f.cp[1]), s2=toScreenClamped(f.cp[2]), s3=toScreenClamped(f.cp[3]);
+      const mode=faceMode(f, s0, s1, s2, s3);
+      let fill=f.col;
+      if(f.col2){
+        if(mode.charCodeAt(0)===103){ const g=ctx.createLinearGradient((s0.x+s3.x)*0.5,(s0.y+s3.y)*0.5,(s1.x+s2.x)*0.5,(s1.y+s2.y)*0.5);
+          g.addColorStop(0,f.col); g.addColorStop(1,f.col2); fill=g; }
+        else fill=f.colMid;
+      }
+      ctx.fillStyle=fill; ctx.strokeStyle=fill; ctx.fill(); ctx.stroke();
+      if(mode.length>5){ if(f.img) imgFace(f, s0, s1, s3); else grainFace(f, s0, s1, s3); }
+      continue;
     }
-    ctx.fillStyle=fill; ctx.strokeStyle=fill; ctx.fill(); ctx.stroke();
-    if(f.grain) grainFace(f);
-    if(f.img) imgFace(f);
+    ctx.fillStyle=f.col; ctx.strokeStyle=f.col; ctx.fill(); ctx.stroke();
   }
   faces.length = 0;
 }
+/* зерно кладётся аффинно: U — ребро v0→v1, V — ребро v0→v3, длины в метрах известны из геометрии;
+   для грани в один-два десятка сантиметров перспективная ошибка аффинной карты невидима.
+   Путь грани уже построен pathCam в экранных координатах — clip берёт его как есть, а transform
+   умножает текущую матрицу, так что DPR и отражение зеркала сохраняются */
+function grainFace(f, s0, s1, s3){
+  const ux=s1.x-s0.x, uy=s1.y-s0.y, vx=s3.x-s0.x, vy=s3.y-s0.y;
+  const W=f.lu*GRAIN_PX, H=f.lv*GRAIN_PX;
+  ctx.save(); ctx.clip();
+  ctx.transform(ux/W, uy/W, vx/H, vy/H, s0.x, s0.y);
+  ctx.globalCompositeOperation='overlay'; ctx.globalAlpha=f.grain.grainA*f.gk;
+  ctx.fillStyle=grainPattern(f.grain.grain);
+  ctx.fillRect(-W, -H, 3*W, 3*H);
+  ctx.restore();
+}
 /* картинка ложится аффинно по трём углам грани: (0,0) → v0, (w,0) → v1, (0,h) → v3 */
-function imgFace(f){
-  const s0=toScreen(f.cp[0]), s1=toScreen(f.cp[1]), s3=toScreen(f.cp[3]);
+function imgFace(f, s0, s1, s3){
   const ux=s1.x-s0.x, uy=s1.y-s0.y, vx=s3.x-s0.x, vy=s3.y-s0.y;
   if(Math.abs(ux*vy-uy*vx) < 12) return;
   const W=f.img.width, H=f.img.height;
   ctx.save(); ctx.clip();
   ctx.transform(ux/W, uy/W, vx/H, vy/H, s0.x, s0.y);
   ctx.drawImage(f.img, 0, 0);
-  ctx.restore();
-}
-/* зерно кладётся аффинно: U — ребро v0→v1, V — ребро v0→v3, длины в метрах известны из геометрии;
-   для грани в один-два десятка сантиметров перспективная ошибка аффинной карты невидима.
-   Путь грани уже построен pathCam в экранных координатах — clip берёт его как есть, а transform
-   умножает текущую матрицу, так что DPR и отражение зеркала сохраняются */
-function grainFace(f){
-  const s0=toScreen(f.cp[0]), s1=toScreen(f.cp[1]), s3=toScreen(f.cp[3]);
-  const ux=s1.x-s0.x, uy=s1.y-s0.y, vx=s3.x-s0.x, vy=s3.y-s0.y;
-  if(Math.abs(ux*vy-uy*vx) < 12) return;
-  const W=f.lu*GRAIN_PX, H=f.lv*GRAIN_PX;
-  ctx.save(); ctx.clip();
-  ctx.transform(ux/W, uy/W, vx/H, vy/H, s0.x, s0.y);
-  ctx.globalCompositeOperation='overlay'; ctx.globalAlpha=f.grain.grainA;
-  ctx.fillStyle=grainPattern(f.grain.grain);
-  ctx.fillRect(-W, -H, 3*W, 3*H);
   ctx.restore();
 }
 
@@ -3227,6 +3261,9 @@ const opt  = { guides:false, trails:false, sound:false, refs:2, marks:true, camM
                mirAdj:{left:{yaw:0,pitch:0}, right:{yaw:0,pitch:0}, center:{yaw:0,pitch:0}} };
 let level = null, paused = true, trails = null, trailT = 0;
 let dprCap = 2, dprCheckT = 0;
+/* счётчик кадра по интервалу rAF, а не по JS-времени: растеризация Canvas в JS не видна */
+const PERF_ON=(()=>{ try{ return /[?&]perf=1/.test(location.search) || localStorage.getItem('trainer_perf')==='1'; }catch(e){ return false; } })();
+const perfGaps=[]; let perfT=0, perfLastTs=0, facesFrame=0;
 let hudMode = 0;                    /* 0 — все панели, 1 — только зазоры, 2 — чистый экран */
 function applyHud(){
   document.body.classList.toggle('hud-min', hudMode===1);
@@ -6430,8 +6467,18 @@ function pushTrail(dt){
   }
 }
 let last=0;
+function perfTick(dt){
+  perfT+=dt; if(perfT<0.5) return; perfT=0;
+  const el=document.getElementById('perf'); if(!el) return;
+  const g=perfGaps.slice().sort((a,b)=>a-b); if(!g.length) return;
+  let sum=0; for(const x of g) sum+=x;
+  const p95=g[Math.floor(g.length*0.95)], fps=1000/(sum/g.length);
+  el.hidden=false;
+  setText(el, fps.toFixed(0)+' fps · p95 '+p95.toFixed(1)+' мс · js '+frameCost.toFixed(1)+' мс · dpr '+DPR.toFixed(2)+' · грани '+facesFrame);
+}
 function frame(ts){
   requestAnimationFrame(frame);
+  if(perfLastTs){ perfGaps.push(ts-perfLastTs); if(perfGaps.length>240) perfGaps.shift(); } perfLastTs=ts;
   const now=ts/1000;
   let dt=last? Math.min(0.05, now-last) : 0.016; last=now;
   if(!paused && !game.done){
@@ -6464,9 +6511,11 @@ function frame(ts){
   parkBeep(dt);
   engineSound(mtOn() ? (car.rpm/MT.max)*7 : Math.abs(car.vel));
   const t0=performance.now();
+  facesFrame=0;
   render(dt);
   updateHUD();
   frameCost += (performance.now()-t0 - frameCost)*0.08;
+  if(PERF_ON) perfTick(dt);
   if(frameCost > 11) trailBudget = Math.max(70, trailBudget-10);
   else if(frameCost < 7) trailBudget = Math.min(TRAIL_MAX, trailBudget+4);
   /* резкость снижаем только если устройство реально не тянет */
