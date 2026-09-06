@@ -40,19 +40,19 @@ Rationale: вид из салона — главный скриншот карт
   - Files: `tools/cockpit-shots.mjs` (новый), `.gitignore` (убедиться, что `build/` игнорируется).
 
 ### Phase 1: Модель материалов и свет (≈4 ч) — ядро рендера, без изменения геометрии
-- [ ] Task 2: Материалы и свет из лобового в `shadeCol`/`pushFace`.
+- [x] Task 2: Материалы и свет из лобового в `shadeCol`/`pushFace`.
   - Таблица `MAT` (matte — сегодняшнее поведение по умолчанию, softtouch, leather, satin, gloss, cloth, rubber): `{spec, shin, ao, grain, grainA}`.
   - `pushFace(v, n, col, bias, o)` — пятый параметр-объект `{mat, ao, n2, img}`; `pushQuad/pushPoly/pushBox/pushBar` и хелперы `cabinCtx` пробрасывают его. Без `o` вид уличных граней не меняется (проверяется скриншотом chase «до/после» — попиксельно одинаков).
   - В режиме `cabinLit`: направление света — из лобового (`cabinLight`, считается раз в кадр в `drawSceneInto` из `fwd(car.th)` и up), Blinn-Phong блик по вектору взгляда (`cam.pos` − центр грани, уже есть в `pushFace`) с `spec/shin` материала, множитель `ao` грани поверх высотного AO. `emitLit` не меняется.
   - Логи: `console.warn('[mat] неизвестный материал', name)` один раз на имя (Set).
   - Files: `index.html` (`shadeCol`, `pushFace`, `pushQuad`, `pushPoly`, `pushBox`, `pushBar`, `barPiece`, `cabinCtx`).
-- [ ] Task 3: Градиентная заливка граней (кривизна без сотни фасок). (зависит от 2)
+- [x] Task 3: Градиентная заливка граней (кривизна без сотни фасок). (зависит от 2)
   - `o.n2` — нормаль у дальнего ребра; `pushFace` считает `col2`; `flushFaces` для таких граней заливает `createLinearGradient` от середины ребра v0–v3 к середине v1–v2 в экранных координатах; при отсечении near-плоскостью — плоская заливка. Обводка остаётся цветом `col`.
   - `cabinCtx.strip(pts, col, out, n, normalAt, o)` — полоса-валик: n подполос вдоль pts[0]→pts[3], нормали из `normalAt(t)`; `pushBar(P,a,b,r,col,seg,bias,o)` с `o.sides` (6/8) — многогранное сечение с гладкими нормалями (n2 = нормаль следующей стороны).
   - Бюджет: ≤300 градиентов на кадр; других аллокаций в кадре не добавлять.
   - Логи: нет (кадр).
   - Files: `index.html` (`pushFace`, `flushFaces`, `cabinCtx`, `pushBar`, `barPiece`).
-- [ ] Task 4: Зерно материала с привязкой к поверхности вместо экранного шума. (зависит от 2)
+- [x] Task 4: Зерно материала с привязкой к поверхности вместо экранного шума. (зависит от 2)
   - `matPattern(kind)` — процедурные плитки как `grainPattern`, три вида: leather 96 px (крупное неравномерное), cloth 64 px (регулярное), rubber 48 px; создаются один раз.
   - В `flushFaces` грань с `mat.grain` после заливки получает `setTransform` из UV грани (метры → px, 1 м = 600 px; U = v0→v1, V = v0→v3 по экранным точкам) и `fill` паттерном в режиме `overlay` с альфой `grainA`; грани, отсечённые near-плоскостью, — без зерна; лимит — только грани с `mat.grain`.
   - Убрать экранный проход `tex`/`grainPattern` (Path2D + translate по yaw) — решение по скриншотам фазы; флагов-переключателей не оставлять.
