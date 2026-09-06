@@ -408,7 +408,7 @@
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
-const ctx = canvas.getContext('2d');
+let ctx = canvas.getContext('2d');   /* let: на время прохода зеркала подменяется его канвасом */
 let W = 0, H = 0, DPR = 1;
 function resize(){
   DPR = Math.min(dprCap, window.devicePixelRatio || 1);
@@ -4631,15 +4631,38 @@ function mirrorRects(){
            left:{x:16, y:sy, w:sw, h:sh},
            right:{x:W-16-sw, y:sy, w:sw, h:sh} };
 }
-/* отдельный проход камеры + горизонтальное отражение = настоящее зеркало */
-function renderMirror(rect, kind){
+/* зеркала рисуются в свои канвасы по одному за кадр (round-robin): три полных прохода сцены каждый
+   кадр стоили на программном Canvas больше, чем сам вид из салона, а обновление каждого зеркала
+   20–40 раз в секунду на парковочной скорости неотличимо от 60. В кадр зеркало попадает блитом
+   с горизонтальным отражением (настоящее зеркало); рамка, подпись и перекрестье — поверх, на
+   основном канвасе. Разрешение зеркала ≤ 1,5 DPR: в прямоугольнике 300×90 разницы не видно */
+const MIR_DPR_MAX=1.5, MIR_KINDS=['center','left','right'];
+const mirBuf={}; let mirTurn=0;
+function mirrorBuf(rect, kind){
+  const sc=Math.min(DPR, MIR_DPR_MAX), w=Math.round(rect.w*sc), h=Math.round(rect.h*sc);
+  let b=mirBuf[kind];
+  if(!b){ b={c:document.createElement('canvas'), g:null, sc:0, w:0, h:0, fresh:false}; b.g=b.c.getContext('2d'); mirBuf[kind]=b; }
+  if(b.w!==w || b.h!==h || b.sc!==sc){ b.c.width=w; b.c.height=h; b.w=w; b.h=h; b.sc=sc; b.fresh=false; }
+  return b;
+}
+function renderMirrorInto(b, rect, kind){
+  const mainCtx=ctx; ctx=b.g;
+  try{
+    ctx.setTransform(b.sc,0,0,b.sc,0,0);
+    setVP(0,0,rect.w,rect.h);
+    const mc=mirrorCam(kind);
+    setCam(mc.pos, mc.tgt, null, mc.fov);
+    drawSceneInto({grid:false, trails:false, guides:opt.guides&&kind!=='center', maxD:46});
+  } finally { ctx=mainCtx; }
+  b.fresh=true;
+}
+function renderMirror(rect, kind, draw){
+  const b=mirrorBuf(rect, kind);
+  if(draw || !b.fresh) renderMirrorInto(b, rect, kind);
   ctx.save();
   roundRect(rect.x,rect.y,rect.w,rect.h,7); ctx.clip();
   ctx.translate(rect.x+rect.w*0.5,0); ctx.scale(-1,1); ctx.translate(-(rect.x+rect.w*0.5),0);
-  setVP(rect.x,rect.y,rect.w,rect.h);
-  const mc=mirrorCam(kind);
-  setCam(mc.pos, mc.tgt, null, mc.fov);
-  drawSceneInto({grid:false, trails:false, guides:opt.guides&&kind!=='center', maxD:46});
+  ctx.drawImage(b.c, rect.x, rect.y, rect.w, rect.h);
   ctx.restore();
   ctx.save();
   roundRect(rect.x-2,rect.y-2,rect.w+4,rect.h+4,9);
@@ -4684,8 +4707,12 @@ function render(dt){
     return;
   }
   drawSceneInto({grid:true, trails:opt.trails, guides:opt.guides, maxD:85, labels:true});
-  if(opt.mirrors){ const r=mirrorRects();
-    renderMirror(r.center,'center'); renderMirror(r.left,'left'); renderMirror(r.right,'right');
+  if(opt.mirrors){ const r=mirrorRects(), turn=MIR_KINDS[mirTurn++%3];
+    /* зеркало, чьё перетаскивание идёт сейчас, обновляется каждый кадр — иначе настройка «плывёт» */
+    const live=mirDrag&&mirDrag.kind;
+    renderMirror(r.center,'center', turn==='center'||live==='center');
+    renderMirror(r.left,'left', turn==='left'||live==='left');
+    renderMirror(r.right,'right', turn==='right'||live==='right');
     const mb=Math.round(r.center.y+r.center.h);
     if(mb!==mirBot){ mirBot=mb; document.documentElement.style.setProperty('--mirbot', mb+'px'); }
   }
