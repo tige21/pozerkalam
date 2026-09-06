@@ -533,11 +533,28 @@ function clipNear(poly){
   }
   return out;
 }
+/* контур грани раздвигается наружу на EXPAND px по биссектрисе нормалей соседних рёбер: это
+   заменяет обводку каждой грани её же цветом (обводка была второй растеризацией контура — на
+   программном Canvas половина времени кадра), а щели антиалиасинга между соседями закрывает
+   так же. Ориентацию наружу даёт знак площади экранного многоугольника */
+const EXPAND=0.75, SPX=[], SPY=[];
 function pathCam(pts){
-  const c = clipNear(pts); if(c.length<3) return false;
+  const c = clipNear(pts); const n=c.length; if(n<3) return false;
+  let area=0;
+  for(let i=0;i<n;i++){ const s=toScreen(c[i]); SPX[i]=s.x; SPY[i]=s.y; }
+  for(let i=0;i<n;i++){ const j=(i+1)%n; area+=SPX[i]*SPY[j]-SPX[j]*SPY[i]; }
+  const sg = area>0 ? -EXPAND : EXPAND;
   ctx.beginPath();
-  for(let i=0;i<c.length;i++){ const s=toScreen(c[i]);
-    if(i===0) ctx.moveTo(s.x,s.y); else ctx.lineTo(s.x,s.y); }
+  for(let i=0;i<n;i++){
+    const p=(i+n-1)%n, q=(i+1)%n;
+    let ax=SPX[i]-SPX[p], ay=SPY[i]-SPY[p], bx=SPX[q]-SPX[i], by=SPY[q]-SPY[i];
+    const al=Math.hypot(ax,ay)||1, bl=Math.hypot(bx,by)||1;
+    ax/=al; ay/=al; bx/=bl; by/=bl;
+    let nx=ay+by, ny=-ax-bx; const nl=Math.hypot(nx,ny);
+    let x=SPX[i], y=SPY[i];
+    if(nl>1e-6){ x+=nx/nl*sg; y+=ny/nl*sg; }
+    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  }
   ctx.closePath(); return true;
 }
 function fillCamPoly(pts, fill, stroke, lw){
@@ -704,13 +721,16 @@ function grainPattern(kind){
     let v;
     if(kind==='cloth')       v = 128 + 22*Math.sin(x*PI/2)*Math.sin(y*PI/2) + 30*(n3(x,y)-0.5);
     else if(kind==='rubber') v = 128 + 26*(n3(x,y)-0.5) + 14*(n2(x,y)-0.5) + 8*Math.sin((x+y)*PI/6);
-    else                     v = 128 + 44*(n1(x,y)-0.5) + 30*(n2(x,y)-0.5) + 22*(n3(x,y)-0.5);
-    const i=(y*N+x)*4; d[i]=d[i+1]=d[i+2]=clamp(v,0,255)|0; d[i+3]=255;
+    else                     v = 128 + 22*(n1(x,y)-0.5) + 30*(n2(x,y)-0.5) + 32*(n3(x,y)-0.5);
+    /* знак шума — в цвете (белое/чёрное), сила — в альфе: source-over вместо overlay серой плитки.
+       Светлые зёрна вдвое слабее тёмных: белое поверх тёмной обивки бросается в глаза, тёмное — нет */
+    const i=(y*N+x)*4, dv=clamp(v,0,255)-128, lum=dv>0?255:0;
+    d[i]=d[i+1]=d[i+2]=lum; d[i+3]=Math.min(255, Math.abs(dv)*(dv>0?0.7:1.4))|0;
   }
   g.putImageData(im,0,0);
   grainPats[kind]=ctx.createPattern(c,'repeat'); return grainPats[kind];
 }
-const GRAD_MIN_PX=24, GRAIN_AREA0=400, GRAIN_AREA1=800, GRAIN_MINIF0=1.3, GRAIN_MINIF1=1.8;
+const GRAD_MIN_PX=40, GRAIN_AREA0=400, GRAIN_AREA1=800, GRAIN_MINIF0=1.3, GRAIN_MINIF1=1.8;
 /* режим заливки грани — чистая функция от грани и её экранных точек; по ней же прогон --sweep
    ловит переключения режима при повороте головы. Правила: в зеркалах всё плоское; градиент — если
    его концы дальше 1,5 px (вырожденный градиент Canvas не рисует НИЧЕГО — грань ребром пропадала
@@ -734,12 +754,11 @@ function faceMode(f, s0, s1, s2, s3){
   }
   return mode;
 }
-/* обводка грани её же цветом закрывает волосяные щели антиалиасинга между соседними гранями:
-   через них просвечивало небо, и при движении камеры эти щели мерцали */
+/* обводки нет: контур грани раздвинут в pathCam, и щели антиалиасинга закрыты без второго
+   прохода растеризации */
 function flushFaces(){
   facesFrame += faces.length;
   faces.sort((p,q)=> q.d - p.d);
-  ctx.lineWidth=0.9; ctx.lineJoin='round';
   for(const f of faces){
     if(!pathCam(f.cp)) continue;
     if(f.col2 || f.grain || f.img){
@@ -751,36 +770,46 @@ function flushFaces(){
           g.addColorStop(0,f.col); g.addColorStop(1,f.col2); fill=g; }
         else fill=f.colMid;
       }
-      ctx.fillStyle=fill; ctx.strokeStyle=fill; ctx.fill(); ctx.stroke();
+      ctx.fillStyle=fill; ctx.fill();
       if(mode.length>5){ if(f.img) imgFace(f, s0, s1, s3); else grainFace(f, s0, s1, s3); }
       continue;
     }
-    ctx.fillStyle=f.col; ctx.strokeStyle=f.col; ctx.fill(); ctx.stroke();
+    ctx.fillStyle=f.col; ctx.fill();
   }
   faces.length = 0;
 }
 /* зерно кладётся аффинно: U — ребро v0→v1, V — ребро v0→v3, длины в метрах известны из геометрии;
    для грани в один-два десятка сантиметров перспективная ошибка аффинной карты невидима.
-   Путь грани уже построен pathCam в экранных координатах — clip берёт его как есть, а transform
-   умножает текущую матрицу, так что DPR и отражение зеркала сохраняются */
+   Путь грани уже построен pathCam и зафиксирован в пикселях канваса, transform влияет только на
+   паттерн — поэтому вторая заливка того же пути кладёт плитку без clip и без overlay (оба на
+   программном Canvas стоили дороже самой заливки); плитка полупрозрачная, светлые и тёмные
+   зёрна в её альфе */
 function grainFace(f, s0, s1, s3){
   const ux=s1.x-s0.x, uy=s1.y-s0.y, vx=s3.x-s0.x, vy=s3.y-s0.y;
   const W=f.lu*GRAIN_PX, H=f.lv*GRAIN_PX;
-  ctx.save(); ctx.clip();
+  ctx.save();
   ctx.transform(ux/W, uy/W, vx/H, vy/H, s0.x, s0.y);
-  ctx.globalCompositeOperation='overlay'; ctx.globalAlpha=f.grain.grainA*f.gk;
+  ctx.globalAlpha=f.grain.grainA*f.gk;
   ctx.fillStyle=grainPattern(f.grain.grain);
-  ctx.fillRect(-W, -H, 3*W, 3*H);
+  ctx.fill();
   ctx.restore();
 }
-/* картинка ложится аффинно по трём углам грани: (0,0) → v0, (w,0) → v1, (0,h) → v3 */
+/* картинка — тем же приёмом: паттерн без повтора, натянутый по трём углам грани:
+   (0,0) → v0, (w,0) → v1, (0,h) → v3 */
+const imgPats=new Map();
+function imgPattern(img){
+  let p=imgPats.get(img);
+  if(!p){ p=ctx.createPattern(img,'no-repeat'); if(!p){ console.warn('[img] pattern не создан'); return null; } imgPats.set(img,p); }
+  return p;
+}
 function imgFace(f, s0, s1, s3){
   const ux=s1.x-s0.x, uy=s1.y-s0.y, vx=s3.x-s0.x, vy=s3.y-s0.y;
   if(Math.abs(ux*vy-uy*vx) < 12) return;
+  const pat=imgPattern(f.img); if(!pat) return;
   const W=f.img.width, H=f.img.height;
-  ctx.save(); ctx.clip();
+  ctx.save();
   ctx.transform(ux/W, uy/W, vx/H, vy/H, s0.x, s0.y);
-  ctx.drawImage(f.img, 0, 0);
+  ctx.fillStyle=pat; ctx.fill();
   ctx.restore();
 }
 
