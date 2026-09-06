@@ -423,6 +423,7 @@ function resize(){
   canvas.width = Math.round(W*DPR); canvas.height = Math.round(H*DPR);
   canvas.style.width = W+'px'; canvas.style.height = H+'px';
   ctx.setTransform(DPR,0,0,DPR,0,0);
+  pxScale=DPR;
   setVP(0,0,W,H);
 }
 window.addEventListener('resize', resize);
@@ -533,20 +534,27 @@ function clipNear(poly){
   }
   return out;
 }
-/* контур грани раздвигается наружу на EXPAND px по биссектрисе нормалей соседних рёбер: это
-   заменяет обводку каждой грани её же цветом (обводка была второй растеризацией контура — на
-   программном Canvas половина времени кадра), а щели антиалиасинга между соседями закрывает
-   так же. Ориентацию наружу даёт знак площади экранного многоугольника */
-const EXPAND=0.75, SPX=[], SPY=[];
+/* контур грани раздвигается наружу по биссектрисе нормалей соседних рёбер: это заменяет обводку
+   каждой грани её же цветом (обводка была второй растеризацией контура — на программном Canvas
+   половина времени кадра), а щели антиалиасинга между соседями закрывает так же. Ориентацию наружу
+   даёт знак площади экранного многоугольника. Величина — в пикселях УСТРОЙСТВА (EXPAND_DEV / pxScale):
+   щель антиалиасинга — явление пиксельное, а 0,75 CSS-px на DPR 1 давали лишний пиксель.
+   Тонкие грани (ширина < 1,5 px — рёбра лофта под скользящим углом) раздвигаются пропорционально
+   ширине: с полным сдвигом каждая «щепка» становилась линией, и машины читались как сетка */
+const EXPAND_DEV=0.5, SPX=[], SPY=[];
+let pxScale=1;
 function pathCam(pts){
   const c = clipNear(pts); const n=c.length; if(n<3) return false;
-  let area=0;
+  let area=0, per=0;
   for(let i=0;i<n;i++){ const s=toScreen(c[i]); SPX[i]=s.x; SPY[i]=s.y; }
-  for(let i=0;i<n;i++){ const j=(i+1)%n; area+=SPX[i]*SPY[j]-SPX[j]*SPY[i]; }
+  for(let i=0;i<n;i++){ const j=(i+1)%n; area+=SPX[i]*SPY[j]-SPX[j]*SPY[i]; per+=Math.hypot(SPX[j]-SPX[i],SPY[j]-SPY[i]); }
   /* грань меньше половины пикселя не рисуем: у далёких машин таких сотни за кадр, и каждая —
      полный вызов растеризатора ради ничего */
   if(area<1 && area>-1) return false;
-  const sg = area>0 ? -EXPAND : EXPAND;
+  const width=Math.abs(area)/(per||1), ex=(EXPAND_DEV/pxScale)*Math.min(1, width/1.5);
+  /* в экранных координатах (y вниз) положительная площадь — обход по часовой, и нормаль (dy, −dx)
+     смотрит наружу; с обратным знаком контуры сжимались, и между гранями открывались щели-«сетка» */
+  const sg = area>0 ? ex : -ex;
   ctx.beginPath();
   for(let i=0;i<n;i++){
     const p=(i+n-1)%n, q=(i+1)%n;
@@ -4676,14 +4684,14 @@ function mirrorBuf(rect, kind){
   return b;
 }
 function renderMirrorInto(b, rect, kind){
-  const mainCtx=ctx; ctx=b.g;
+  const mainCtx=ctx, mainScale=pxScale; ctx=b.g; pxScale=b.sc;
   try{
     ctx.setTransform(b.sc,0,0,b.sc,0,0);
     setVP(0,0,rect.w,rect.h);
     const mc=mirrorCam(kind);
     setCam(mc.pos, mc.tgt, null, mc.fov);
     drawSceneInto({grid:false, trails:false, guides:opt.guides&&kind!=='center', maxD:46});
-  } finally { ctx=mainCtx; }
+  } finally { ctx=mainCtx; pxScale=mainScale; }
   b.fresh=true;
 }
 function renderMirror(rect, kind, draw){

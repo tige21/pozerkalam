@@ -8,8 +8,9 @@
      PW_DIR=/tmp/pw node tools/cockpit-shots.mjs after-p1 --sweep  # + поворот головы −60…+60°: переключения режима грани
    Chromium берётся из кэша Playwright (~/Library/Caches/ms-playwright/chromium_headless_shell-*)
    или из PW_CHROME. Выход: build/shots/<tag>-<поза>.png, build/shots/<tag>.json и та же JSON-строка
-   в stdout; код 1, если в проходе салона есть ошибки порядка, демо дали предупреждения
-   или страница бросила исключение. Отдельные проверки — tools/sort-audit.js (консоль страницы). */
+   в stdout; код 1, если в проходе салона есть ошибки порядка, демо дали предупреждения,
+   страница бросила исключение, свип нашёл переключения режима или в полосе салона кадра «вперёд»
+   больше SKY_GAP_MAX пикселей цвета неба (щели между гранями). Отдельные проверки — tools/sort-audit.js (консоль страницы). */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -96,7 +97,7 @@ const demoWarns = await page.evaluate(() => {
 await page.evaluate(() => doAct('start'));
 await page.waitForTimeout(500);
 
-const shots = [];
+const shots = []; let skyGap = null;
 for (const p of POSES) {
   if (p.name !== 'chase') {
     await page.evaluate((o) => {
@@ -109,6 +110,14 @@ for (const p of POSES) {
   const file = path.join(OUT, `${tag}-${p.name}.png`);
   await page.screenshot({ path: file });
   shots.push(path.relative(ROOT, file));
+  /* щели между гранями салона: в полосе торпедо/руля кадра «вперёд» не должно быть пикселей цвета
+     неба. Так пойман перевёрнутый знак расширения контура (грани сжимались — «всё в линиях») */
+  if (p.name === 'fwd') skyGap = await page.evaluate(() => {
+    const g = canvas.getContext('2d'), k = DPR, x0 = Math.round(W * 0.18 * k), y0 = Math.round(H * 0.67 * k);
+    const w = Math.round(W * 0.67 * k), h = Math.round(H * 0.25 * k), d = g.getImageData(x0, y0, w, h).data;
+    let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 2] - d[i] > 25 && d[i + 2] > 120) n++;
+    return n;
+  });
 }
 await page.evaluate(() => { car.blink = null; opt.fpYaw = 0; opt.fpPitch = rad(-2); });
 await page.waitForTimeout(3000);
@@ -162,9 +171,11 @@ if (sweepOn) {
   }, { y0: -60, y1: 60, step: 1, pitches: [0, -20, 15] });
 }
 
-const result = { tag, mobile, sort, demoWarns, frameCost, sweep, shots, pageErrors };
+const SKY_GAP_MAX = 60;
+const result = { tag, mobile, sort, demoWarns, frameCost, skyGap, sweep, shots, pageErrors };
 fs.writeFileSync(path.join(OUT, `${tag}.json`), JSON.stringify(result, null, 2));
 console.log(JSON.stringify(result));
 await browser.close();
 const sweepBad = sweep && (sweep.toggles > 0 || sweep.degenerate > 0);
-process.exit(sort.interior > 0 || demoWarns.length > 0 || pageErrors.length > 0 || sweepBad ? 1 : 0);
+const gapBad = skyGap !== null && skyGap > SKY_GAP_MAX;
+process.exit(sort.interior > 0 || demoWarns.length > 0 || pageErrors.length > 0 || sweepBad || gapBad ? 1 : 0);
