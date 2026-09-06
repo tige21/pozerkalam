@@ -161,7 +161,9 @@ if (sweepOn) {
     for (const pitch of cfg.pitches) { let prev = null;
       for (let yaw = cfg.y0; yaw <= cfg.y1; yaw += cfg.step) { opt.fpYaw = rad(yaw); opt.fpPitch = rad(pitch); rec = new Map(); render(0.016); steps++;
         if (prev) for (const [k, v] of rec) { const p = prev.get(k); if (!p) continue;
-          const fillT = v.m.split('+')[0] !== p.m.split('+')[0] && Math.min(v.a, p.a) > 900;
+          /* переход градиент → плоский у порога GRAD_MIN_PX (40 px) штатный и незаметный: считаем
+             только грани крупнее 50×50 px, где он был бы виден */
+          const fillT = v.m.split('+')[0] !== p.m.split('+')[0] && Math.min(v.a, p.a) > 2500;
           const imgT = v.m.includes('img') !== p.m.includes('img') && Math.min(v.a, p.a) > 100;
           const grainT = Math.abs(v.gk - p.gk) > 0.5 && Math.min(v.a, p.a) > 100;
           if (fillT || imgT || grainT) { toggles++; if (worst.length < 8) worst.push({ pitch, yaw, key: k, from: p.m + ':' + p.gk.toFixed(2), to: v.m + ':' + v.gk.toFixed(2), area: Math.round(v.a) }); } }

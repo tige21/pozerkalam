@@ -620,8 +620,14 @@ const MAT = {
   satin:     {spec:0.50, shin:5},
   gloss:     {spec:0.90, shin:30},
   cloth:     {spec:0.03, shin:2,  grain:'cloth',   grainA:0.44},
-  rubber:    {spec:0.06, shin:3,  grain:'rubber',  grainA:0.38}
+  rubber:    {spec:0.06, shin:3,  grain:'rubber',  grainA:0.38},
+  /* улица: refl — доля отражения неба (сильнее у граней, смотрящих вверх), spec — солнечный блик */
+  paint:     {spec:0.55, shin:22, refl:0.16},
+  glass:     {spec:0.90, shin:36, refl:0.42},
+  chrome:    {spec:0.90, shin:12, refl:0.50},
+  plastic:   {spec:0.12, shin:6}
 };
+const SKY_REF=[156,184,214];
 const matWarned=new Set();
 function matOf(name){
   const m=MAT[name]; if(m) return m;
@@ -647,9 +653,21 @@ function shadeCol(col, n, d, y, sh){
              +(Math.min(255, b+(SPEC_TINT[2]-b)*sp)|0)+A+')';
   }
   const nl = Math.max(0, n.x*LIGHT.x + n.y*LIGHT.y + n.z*LIGHT.z);
-  const k = 0.42 + 0.58*nl;
+  const k = sh && sh.emit ? 1 : 0.42 + 0.58*nl;
+  let r=col[0]*k, g=col[1]*k, b=col[2]*k;
+  if(sh && sh.mat){
+    const m=sh.mat;
+    /* краска и стекло отражают небо: чем выше смотрит грань, тем светлее и голубее; солнечный блик —
+       Блинн-Фонг по вектору взгляда. Без этого кузова читались как матовые коробки */
+    if(m.refl){ const f=m.refl*(0.55+0.45*Math.max(0,n.y)); r+=(SKY_REF[0]-r)*f; g+=(SKY_REF[1]-g)*f; b+=(SKY_REF[2]-b)*f; }
+    if(m.spec && sh.view){
+      const V=sh.view, hx=LIGHT.x+V.x, hy=LIGHT.y+V.y, hz=LIGHT.z+V.z, hl=Math.hypot(hx,hy,hz)||1;
+      const nh=Math.max(0,(n.x*hx+n.y*hy+n.z*hz)/hl), sp=m.spec*Math.pow(nh,m.shin);
+      r+=(255-r)*sp; g+=(255-g)*sp; b+=(255-b)*sp;
+    }
+  }
   const fog = clamp((d-26)/78, 0, 0.62);
-  const r = lerp(col[0]*k, 154, fog), g = lerp(col[1]*k, 172, fog), b = lerp(col[2]*k, 192, fog);
+  r=lerp(r,154,fog); g=lerp(g,172,fog); b=lerp(b,192,fog);
   return fn+(r|0)+','+(g|0)+','+(b|0)+A+')';
 }
 /* bias — «накладка на поверхность» (ручка двери, шов): грань сортируется на bias метров ближе,
@@ -672,23 +690,25 @@ function pushFace(v, n, col, bias, o){
   let mx=0, my=0, md=0; for(const c of cc){ mx+=c.x; my+=c.y; md+=c.d; }
   const k=1/(cc.length||1), dist=Math.hypot(mx*k,my*k,md*k);
   const f={cp, d:dist-(bias||0), col:null};
-  if(cabinLit){
-    const m = o && o.mat ? matOf(o.mat) : null;
+  const m = o && o.mat ? matOf(o.mat) : null;
+  let sh=null;
+  if(o && (m || o.ao!==undefined || o.emit)){
     let view=null;
     if(m && m.spec){ const vx=cam.pos.x-cx, vy=cam.pos.y-cy, vz=cam.pos.z-cz, vl=Math.hypot(vx,vy,vz)||1;
       view={x:vx/vl, y:vy/vl, z:vz/vl}; }
-    const sh={mat:m, ao:o && o.ao, view};
-    f.col=shadeCol(col, (o && o.n1)||n, dist, cy, sh);
-    if(v.length>=4){
-      if(o && o.n2){ f.col2=shadeCol(col, o.n2, dist, cy, sh);
-        /* средний цвет — для мелкой или стоящей ребром грани: там градиент не виден или вырожден */
-        const n1=(o && o.n1)||n, mx=n1.x+o.n2.x, my=n1.y+o.n2.y, mz=n1.z+o.n2.z, ml=Math.hypot(mx,my,mz)||1;
-        f.colMid=shadeCol(col, {x:mx/ml, y:my/ml, z:mz/ml}, dist, cy, sh); }
-      if(m && m.grain){ f.grain=m;
-        f.lu=Math.hypot(v[1].x-v[0].x, v[1].y-v[0].y, v[1].z-v[0].z);
-        f.lv=Math.hypot(v[3].x-v[0].x, v[3].y-v[0].y, v[3].z-v[0].z); }
-    }
-  } else f.col=shadeCol(col, n, Math.max(dist,1), cy);
+    sh={mat:m, ao:o.ao, view, emit:o.emit};
+  }
+  const dd = cabinLit ? dist : Math.max(dist,1);
+  f.col=shadeCol(col, (o && o.n1)||n, dd, cy, sh);
+  if(v.length>=4){
+    if(o && o.n2){ f.col2=shadeCol(col, o.n2, dd, cy, sh);
+      /* средний цвет — для мелкой или стоящей ребром грани: там градиент не виден или вырожден */
+      const n1=(o && o.n1)||n, mx=n1.x+o.n2.x, my=n1.y+o.n2.y, mz=n1.z+o.n2.z, ml=Math.hypot(mx,my,mz)||1;
+      f.colMid=shadeCol(col, {x:mx/ml, y:my/ml, z:mz/ml}, dd, cy, sh); }
+    if(cabinLit && m && m.grain){ f.grain=m;
+      f.lu=Math.hypot(v[1].x-v[0].x, v[1].y-v[0].y, v[1].z-v[0].z);
+      f.lv=Math.hypot(v[3].x-v[0].x, v[3].y-v[0].y, v[3].z-v[0].z); }
+  }
   /* o.img — готовая картинка (циферблат, экран) натягивается на четырёхугольник: детали
      прибора рисуются один раз в offscreen-канвас, а не сотней граней каждый кадр */
   if(o && o.img && v.length===4) f.img=o.img;
@@ -930,7 +950,21 @@ function stationPts(st){
   return [[-(w-0.10),yb],[-(w-0.02),yb+0.06],[-w,ys],[-(w-0.03),be],[-wg,yt-0.10],[-wr,yt],
           [wr,yt],[wg,yt-0.10],[w-0.03,be],[w,ys],[w-0.02,yb+0.06],[w-0.10,yb]];
 }
-const CAR_SECS = CAR_ST.map(st=>({pts:stationPts(st), z:st.z, k:st.k}));
+/* нормали вершин сечения (lat, y) наружу — по ним борт вблизи заливается градиентом и читается
+   гладким металлом, а не 12 гранями */
+function sectionNormals(pts){
+  const n=pts.length, cx=pts.reduce((a,p)=>a+p[0],0)/n, cy=pts.reduce((a,p)=>a+p[1],0)/n, out=[];
+  for(let i=0;i<n;i++){
+    const p=pts[(i+n-1)%n], q=pts[i], r=pts[(i+1)%n];
+    let ax=q[1]-p[1], ay=-(q[0]-p[0]), bx=r[1]-q[1], by=-(r[0]-q[0]);
+    const al=Math.hypot(ax,ay)||1, bl=Math.hypot(bx,by)||1; ax/=al; ay/=al; bx/=bl; by/=bl;
+    let nx=ax+bx, ny=ay+by; const nl=Math.hypot(nx,ny)||1; nx/=nl; ny/=nl;
+    if(nx*(q[0]-cx)+ny*(q[1]-cy)<0){ nx=-nx; ny=-ny; }
+    out.push([nx,ny]);
+  }
+  return out;
+}
+const CAR_SECS = CAR_ST.map(st=>{ const pts=stationPts(st); return {pts, nrm:sectionNormals(pts), z:st.z, k:st.k}; });
 /* рёбра сечения: 0/10 порог, 1/9 низ борта, 2/8 плечо, 3/7 стекло или стойка, 4/6 скат крыши, 5 крыша, 11 днище */
 const EDGE_SILL=new Set([0,10,11]), EDGE_SIDEGLASS=new Set([3,7]), EDGE_TOPGLASS=new Set([4,5,6]);
 function emitCarBody(u,v,th,col){
@@ -940,32 +974,39 @@ function emitCarBody(u,v,th,col){
   const sill=[44,48,54], glass=[42,52,64], pillar=[38,42,48];
   const bump=[(col[0]*0.84)|0,(col[1]*0.84)|0,(col[2]*0.84)|0];
   const NP=CAR_SECS[0].pts.length;
+  const f=fuv(th), r=ruv(th), du=(-cam.pos.x)-u, dv=cam.pos.z-v;
+  const camLat=du*r.u+dv*r.v, camZ=du*f.u+dv*f.v, camDist=Math.hypot(du,dv);
+  /* вблизи борта заливаются градиентом по нормалям сечения (только боковые рёбра: у крыши и капота
+     нормаль ещё наклонена по z, и сечения её не знают); дальше — плоские грани с материалом */
+  const smooth = camDist<16;
+  const NW=(a,b)=>{ const lat=(a[0]+b[0])*0.5, y=(a[1]+b[1])*0.5, l=Math.hypot(lat,y)||1; return {x:R.x*lat/l, y:y/l, z:R.z*lat/l}; };
   for(let i=0;i+1<CAR_SECS.length;i++){
     const A=CAR_SECS[i], B=CAR_SECS[i+1];
     for(let e=0;e<NP;e++){
       const e2=(e+1)%NP;
-      let cc=col;
-      if(A.k==='bump') cc=bump;
-      else if(EDGE_SILL.has(e)) cc=sill;
-      else if(A.k==='glass'){ if(EDGE_TOPGLASS.has(e)) cc=glass; else if(EDGE_SIDEGLASS.has(e)) cc=pillar; }
-      else if(A.k==='cabin' && EDGE_SIDEGLASS.has(e)) cc=glass;
-      else if(A.k==='pillar' && EDGE_SIDEGLASS.has(e)) cc=pillar;
+      let cc=col, mat=MO.paint;
+      if(A.k==='bump'){ cc=bump; mat=MO.plastic; }
+      else if(EDGE_SILL.has(e)){ cc=sill; mat=MO.plastic; }
+      else if(A.k==='glass'){ if(EDGE_TOPGLASS.has(e)){ cc=glass; mat=MO.glass; } else if(EDGE_SIDEGLASS.has(e)){ cc=pillar; mat=MO.plastic; } }
+      else if(A.k==='cabin' && EDGE_SIDEGLASS.has(e)){ cc=glass; mat=MO.glass; }
+      else if(A.k==='pillar' && EDGE_SIDEGLASS.has(e)){ cc=pillar; mat=MO.plastic; }
+      const side = e<=3 || (e>=7 && e<=10);
+      /* дальше 40 м блик и отражение не видны, а pow на каждую грань — видны в JS-времени кадра */
+      const o = smooth && side ? {mat:mat.mat, n1:NW(A.nrm[e],B.nrm[e]), n2:NW(A.nrm[e2],B.nrm[e2])} : (camDist<40 ? mat : undefined);
       pushQuad(P(A.pts[e][0],A.pts[e][1],A.z), P(A.pts[e2][0],A.pts[e2][1],A.z),
-               P(B.pts[e2][0],B.pts[e2][1],B.z), P(B.pts[e][0],B.pts[e][1],B.z), cc, ref);
+               P(B.pts[e2][0],B.pts[e2][1],B.z), P(B.pts[e][0],B.pts[e][1],B.z), cc, ref, 0, o);
     }
   }
   const L=CAR_SECS.length-1;
-  pushPoly(CAR_SECS[0].pts.map(q=>P(q[0],q[1],CAR_SECS[0].z)), bump, ref);
-  pushPoly(CAR_SECS[L].pts.map(q=>P(q[0],q[1],CAR_SECS[L].z)), bump, ref);
+  pushPoly(CAR_SECS[0].pts.map(q=>P(q[0],q[1],CAR_SECS[0].z)), bump, ref, 0, MO.plastic);
+  pushPoly(CAR_SECS[L].pts.map(q=>P(q[0],q[1],CAR_SECS[L].z)), bump, ref, 0, MO.plastic);
   /* ручки, швы дверей и колёсные арки — то, по чему ставят боковые зеркала («ручка задней двери
      у внутреннего края») и по чему равняются на соседа. Только вблизи камеры: у дальних машин это
      шум. bias — накладка на борт: грань кузова с центром ближе к камере закрывала бы деталь на себе */
-  const f=fuv(th), r=ruv(th), du=(-cam.pos.x)-u, dv=cam.pos.z-v;
-  const camLat=du*r.u+dv*r.v, camZ=du*f.u+dv*f.v;
   /* из салона этой же машины накладки не рисуем: со сдвигом bias верх ручки пробивался бы
      сквозь карту двери */
   const camIn = Math.abs(camLat)<0.95 && Math.abs(camZ)<2.3 && cam.pos.y<1.6;
-  if(!camIn && Math.hypot(du,dv) < 28){
+  if(!camIn && camDist < 28){
     const seam=[34,36,40], handle=[40,44,50], arch=[30,32,36];
     for(const sg of [-1,1]){
       const out=P(sg*0.5,0.7,0);
@@ -974,10 +1015,10 @@ function emitCarBody(u,v,th,col){
                  P(sg*0.906,0.985,z-0.008), seam, out, 0.3);
       for(const z of [-0.12,-1.06]){
         const c=P(sg*0.915,0.90,z), o=sg*0.935, i=sg*0.895, y0=0.886, y1=0.914, z0=z-0.085, z1=z+0.085;
-        pushQuad(P(o,y0,z0),P(o,y0,z1),P(o,y1,z1),P(o,y1,z0), handle, c, 0.3);
-        pushQuad(P(i,y1,z0),P(i,y1,z1),P(o,y1,z1),P(o,y1,z0), handle, c, 0.3);
-        pushQuad(P(i,y0,z0),P(i,y1,z0),P(o,y1,z0),P(o,y0,z0), handle, c, 0.3);
-        pushQuad(P(i,y0,z1),P(i,y1,z1),P(o,y1,z1),P(o,y0,z1), handle, c, 0.3);
+        pushQuad(P(o,y0,z0),P(o,y0,z1),P(o,y1,z1),P(o,y1,z0), handle, c, 0.3, MO.chrome);
+        pushQuad(P(i,y1,z0),P(i,y1,z1),P(o,y1,z1),P(o,y1,z0), handle, c, 0.3, MO.chrome);
+        pushQuad(P(i,y0,z0),P(i,y1,z0),P(o,y1,z0),P(o,y0,z0), handle, c, 0.3, MO.chrome);
+        pushQuad(P(i,y0,z1),P(i,y1,z1),P(o,y1,z1),P(o,y0,z1), handle, c, 0.3, MO.chrome);
       }
       /* арки: тёмный полудиск на борту вокруг колеса — сам борт сплошной, и без арки колесо
          «врастало» в дверь */
@@ -992,21 +1033,24 @@ function emitCarBody(u,v,th,col){
 function pushWheelCyl(u,v,yaw,side){
   const Rw=CAR.wheelR, hw=CAR.wheelW/2;
   const F=fwd(yaw), Rv=rgt(yaw), cx=-u, cz=v, cy=Rw;
-  const N=9, out=[], inn=[];
+  const N=12, out=[], inn=[];
   for(let i=0;i<N;i++){
     const a=(i+0.5)/N*TAU, du=Math.cos(a)*Rw, dy=Math.sin(a)*Rw;
     out.push({x:cx+Rv.x*hw+F.x*du, y:cy+dy, z:cz+Rv.z*hw+F.z*du});
     inn.push({x:cx-Rv.x*hw+F.x*du, y:cy+dy, z:cz-Rv.z*hw+F.z*du});
   }
   const ref={x:cx,y:cy,z:cz}, tyre=[28,29,33];
-  for(let i=0;i<N;i++){ const j=(i+1)%N; pushQuad(out[i],out[j],inn[j],inn[i],tyre,ref); }
+  for(let i=0;i<N;i++){ const j=(i+1)%N; pushQuad(out[i],out[j],inn[j],inn[i],tyre,ref,0,MO.rubber); }
   pushPoly(out,[20,21,25],ref); pushPoly(inn,[20,21,25],ref);
-  const d=hw+0.006, disc=[], hub=[];
-  for(let i=0;i<N;i++){ const a=(i+0.5)/N*TAU;
-    const du=Math.cos(a), dy=Math.sin(a);
-    disc.push({x:cx+Rv.x*d*side+F.x*du*Rw*0.62, y:cy+dy*Rw*0.62, z:cz+Rv.z*d*side+F.z*du*Rw*0.62});
-    hub.push({x:cx+Rv.x*(d+0.006)*side+F.x*du*Rw*0.22, y:cy+dy*Rw*0.22, z:cz+Rv.z*(d+0.006)*side+F.z*du*Rw*0.22}); }
-  pushPoly(disc,[168,174,182],ref); pushPoly(hub,[92,98,106],ref);
+  /* диск: светлый круг с пятью тёмными окнами между спицами и ступицей — колесо перестаёт быть
+     чёрным цилиндром с серым пятном */
+  const d=hw+0.006, at=(k,a,dd)=>({x:cx+Rv.x*dd*side+F.x*Math.cos(a)*Rw*k, y:cy+Math.sin(a)*Rw*k, z:cz+Rv.z*dd*side+F.z*Math.cos(a)*Rw*k});
+  const disc=[], hub=[];
+  for(let i=0;i<N;i++){ const a=(i+0.5)/N*TAU; disc.push(at(0.66,a,d)); hub.push(at(0.20,a,d+0.008)); }
+  pushPoly(disc,[176,182,190],ref,0,MO.chrome);
+  for(let k=0;k<5;k++){ const a0=k/5*TAU+0.22, a1=a0+0.82;
+    pushPoly([at(0.30,a0,d+0.004),at(0.58,a0,d+0.004),at(0.58,a1,d+0.004),at(0.30,a1,d+0.004)],[46,48,54],ref,0.02); }
+  pushPoly(hub,[120,126,134],ref,0.03,MO.chrome);
 }
 /* --- салон: панели повёрнуты нормалями ВНУТРЬ, поэтому видны изнутри --- */
 function cross3(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
@@ -1062,7 +1106,8 @@ const CAB = { FLOOR:[64,68,76], DOOR:[148,154,164], DOORTOP:[168,174,184], HEAD:
               RAIL:[192,196,204], DASH:[62,66,74], TRIM:[134,140,150], SEAT:[108,102,100],
               PILL:[208,212,220], PILLAR:[172,178,190], SILL:[250,252,255], DARK:[82,88,98] };
 const MO = { rubber:{mat:'rubber'}, cloth:{mat:'cloth'}, leather:{mat:'leather'}, softtouch:{mat:'softtouch'},
-             satin:{mat:'satin'}, gloss:{mat:'gloss'}, pillar:{mat:'cloth',sides:6}, round:{mat:'matte',sides:8}, stalk:{mat:'matte',sides:6} };
+             satin:{mat:'satin'}, gloss:{mat:'gloss'}, pillar:{mat:'cloth',sides:6}, round:{mat:'matte',sides:8}, stalk:{mat:'matte',sides:6},
+             paint:{mat:'paint'}, glass:{mat:'glass'}, chrome:{mat:'chrome'}, plastic:{mat:'plastic'}, emit:{emit:true} };
 function cabinCtx(u,v,th){
   const F=fwd(th), R=rgt(th), cx=-u, cz=v;
   const P=(lat,y,z)=>({x:cx+R.x*lat+F.x*z, y:y, z:cz+R.z*lat+F.z*z});
@@ -1329,6 +1374,19 @@ function grilleCanvas(){
     for(let y=4;y<h;y+=6) for(let x=4;x<w;x+=6){ g.beginPath(); g.arc(x,y,1.8,0,TAU); g.fill(); }
   });
 }
+function carGrilleCanvas(){
+  return imgCanvas('cargrille', 136, 24, (g,w,h)=>{
+    g.fillStyle='#1d1f24'; g.fillRect(0,0,w,h); g.fillStyle='#3a3d44';
+    for(let y=3;y<h;y+=6) g.fillRect(3,y,w-6,2);
+    g.fillStyle='#8a909a'; g.beginPath(); g.arc(w/2,h/2,5,0,TAU); g.fill();
+  });
+}
+function plateCanvas(){
+  return imgCanvas('plate', 104, 22, (g,w,h)=>{
+    g.fillStyle='#f2f4f6'; g.fillRect(0,0,w,h); g.strokeStyle='#8a8f96'; g.lineWidth=2; g.strokeRect(1,1,w-2,h-2);
+    g.fillStyle='#2a2d33'; for(const x of [10,22,34,50,62,74,86]) g.fillRect(x,6,7,10);
+  });
+}
 function switchCanvas(){
   return imgCanvas('switch', 48, 96, (g,w,h)=>{
     g.fillStyle='#22252a'; g.fillRect(0,0,w,h);
@@ -1464,11 +1522,13 @@ function emitCarMesh(u, v, th, col, st, lights){
   const head = lit.rev ? [255,255,240] : [226,230,224];
   const nF={x:F.x,y:0,z:F.z}, nB={x:-F.x,y:0,z:-F.z};
   for(const sg of [-1,1]){
-    pushFace([P(sg*0.30,0.60,2.226),P(sg*0.80,0.60,2.226),P(sg*0.80,0.76,2.226),P(sg*0.30,0.76,2.226)], nF, head);
-    pushFace([P(sg*0.26,0.86,-2.226),P(sg*0.76,0.86,-2.226),P(sg*0.76,1.02,-2.226),P(sg*0.26,1.02,-2.226)], nB, tail);
+    pushFace([P(sg*0.30,0.60,2.226),P(sg*0.80,0.60,2.226),P(sg*0.80,0.76,2.226),P(sg*0.30,0.76,2.226)], nF, head, 0, MO.emit);
+    pushFace([P(sg*0.26,0.86,-2.226),P(sg*0.76,0.86,-2.226),P(sg*0.76,1.02,-2.226),P(sg*0.26,1.02,-2.226)], nB, tail, 0, MO.emit);
   }
-  pushFace([P(-0.34,0.62,2.226),P(0.34,0.62,2.226),P(0.34,0.74,2.226),P(-0.34,0.74,2.226)], nF, [38,40,46]);
-  pushFace([P(-0.24,0.56,-2.228),P(0.24,0.56,-2.228),P(0.24,0.70,-2.228),P(-0.24,0.70,-2.228)], nB, [228,232,236]);
+  /* решётка радиатора и номера — картинки: рисуются один раз, а не десятком граней у каждой машины */
+  pushFace([P(-0.34,0.74,2.226),P(0.34,0.74,2.226),P(0.34,0.62,2.226),P(-0.34,0.62,2.226)], nF, [38,40,46], 0, {img:carGrilleCanvas()});
+  pushFace([P(-0.26,0.56,2.227),P(0.26,0.56,2.227),P(0.26,0.45,2.227),P(-0.26,0.45,2.227)], nF, [228,232,236], 0, {img:plateCanvas()});
+  pushFace([P(0.26,0.70,-2.228),P(-0.26,0.70,-2.228),P(-0.26,0.56,-2.228),P(0.26,0.56,-2.228)], nB, [228,232,236], 0, {img:plateCanvas()});
   for(const sg of [-1,1]){
     const mp=at(sg*(HALF_W+0.10), 0.70);
     pushBox(mp.u, 1.01, mp.v, 0.10, 0.055, 0.05, th, col);
