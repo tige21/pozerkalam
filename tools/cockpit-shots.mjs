@@ -4,7 +4,7 @@
    Зависимость playwright-core в репозиторий не входит — ставится во временную папку:
      mkdir -p /tmp/pw && (cd /tmp/pw && npm i playwright-core@1.55)
      PW_DIR=/tmp/pw node tools/cockpit-shots.mjs before            # база «до»
-     PW_DIR=/tmp/pw node tools/cockpit-shots.mjs after-p1 --mobile # 390×844, DPR 2, тач
+     PW_DIR=/tmp/pw node tools/cockpit-shots.mjs after-p1 --mobile # телефон 844×390 (альбомно), DPR 2, тач
    Chromium берётся из кэша Playwright (~/Library/Caches/ms-playwright/chromium_headless_shell-*)
    или из PW_CHROME. Выход: build/shots/<tag>-<поза>.png, build/shots/<tag>.json и та же JSON-строка
    в stdout; код 1, если в проходе салона есть ошибки порядка, демо дали предупреждения
@@ -63,7 +63,7 @@ fs.mkdirSync(OUT, { recursive: true });
 const url = 'file://' + path.join(ROOT, 'index.html') + '?nocache=' + Date.now();
 const browser = await chromium.launch({ executablePath: findChrome(), headless: true });
 const context = await browser.newContext(mobile
-  ? { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true }
+  ? { viewport: { width: 844, height: 390 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true }
   : { viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
 const page = await context.newPage();
 const pageErrors = [];
