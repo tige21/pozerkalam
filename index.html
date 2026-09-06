@@ -16,7 +16,7 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;touch-action:none
   font-family:ui-sans-serif,system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
 #view{position:fixed;left:0;top:0;display:block;cursor:grab;touch-action:none}
 body.drag #view{cursor:grabbing}
-body.mir #coach{top:104px}
+body.mir #coach{top:calc(var(--mirbot,100px) + 8px)}
 .panel{position:fixed;background:rgba(9,14,20,.74);border:1px solid rgba(255,255,255,.10);
   border-radius:10px;padding:10px 12px;backdrop-filter:blur(6px);pointer-events:none;z-index:5}
 #topleft{left:14px;top:14px;max-width:min(31vw,420px);pointer-events:auto;cursor:pointer}
@@ -444,7 +444,9 @@ function ruv(t){ return {u:Math.cos(t), v:-Math.sin(t)}; }
 const cam = { pos:{x:0,y:6,z:-10}, f:{x:0,y:0,z:1}, r:{x:-1,y:0,z:0}, u:{x:0,y:1,z:0}, scale:600 };
 const VP = {x:0,y:0,w:0,h:0,cx:0,cy:0};
 function setVP(x,y,w,h){ VP.x=x;VP.y=y;VP.w=w;VP.h=h;VP.cx=x+w*0.5;VP.cy=y+h*0.5; }
-const NEAR = 0.22;
+/* 0,08, не 0,22: потолок в 0,16 м над глазом, и при взгляде вверх ближняя плоскость срезала его —
+   сквозь крышу было видно небо («текстуры пропадают, когда поднимаю голову») */
+const NEAR = 0.08;
 function setCam(pos, target, upHint, fovDeg){
   const dx=target.x-pos.x, dy=target.y-pos.y, dz=target.z-pos.z;
   const fl=Math.hypot(dx,dy,dz)||1;
@@ -572,45 +574,88 @@ let faces = [];
 let cabinLit=false;
 function shadeCol(col, n, d, y){
   const nl = Math.max(0, n.x*LIGHT.x + n.y*LIGHT.y + n.z*LIGHT.z);
+  const A = col.length>3 ? ','+col[3] : '', fn = A ? 'rgba(' : 'rgb(';
   if(cabinLit){
-    const ao = 0.64 + 0.36*clamp((y-0.42)/0.96, 0, 1);
-    const k = (0.38 + 0.50*nl)*ao;
-    return 'rgb('+((col[0]*k)|0)+','+((col[1]*k)|0)+','+((col[2]*k)|0)+')';
+    const ao = 0.68 + 0.32*clamp((y-0.42)/0.96, 0, 1);
+    const k = (0.48 + 0.42*nl)*ao;
+    return fn+((col[0]*k)|0)+','+((col[1]*k)|0)+','+((col[2]*k)|0)+A+')';
   }
   const k = 0.42 + 0.58*nl;
   const fog = clamp((d-26)/78, 0, 0.62);
   const r = lerp(col[0]*k, 154, fog), g = lerp(col[1]*k, 172, fog), b = lerp(col[2]*k, 192, fog);
-  return 'rgb('+(r|0)+','+(g|0)+','+(b|0)+')';
+  return fn+(r|0)+','+(g|0)+','+(b|0)+A+')';
 }
-function pushFace(v, n, col){
+/* bias — «накладка на поверхность» (ручка двери, шов): грань сортируется на bias метров ближе,
+   чем стоит, иначе большая грань кузова с центром ближе к камере закрывает мелкую деталь на себе */
+function pushFace(v, n, col, bias){
   const cx=(v[0].x+v[2].x)*0.5, cy=(v[0].y+v[2].y)*0.5, cz=(v[0].z+v[2].z)*0.5;
   if((cam.pos.x-cx)*n.x + (cam.pos.y-cy)*n.y + (cam.pos.z-cz)*n.z <= 0) return;
-  const cp=[]; let d=0, vis=false, behind=false;
-  for(let i=0;i<v.length;i++){ const c=toCam(v[i]); cp.push(c); d+=c.d; if(c.d>NEAR) vis=true; else behind=true; }
+  const cp=[]; let vis=false, behind=false;
+  for(let i=0;i<v.length;i++){ const c=toCam(v[i]); cp.push(c); if(c.d>NEAR) vis=true; else behind=true; }
   if(!vis) return;
-  let depth=d/v.length;
-  /* грань, пересекающая плоскость камеры (стена вдоль борта из салона): среднее по всем вершинам
-     уходит к нулю и грань ложилась ПОВЕРХ салона. Глубина — по видимой, отсечённой части */
-  if(behind){ const cc=clipNear(cp); let s=0; for(const c of cc) s+=c.d; depth=cc.length?s/cc.length:depth; }
-  faces.push({cp, d:depth, col:shadeCol(col,n,Math.max(d/v.length,1),cy)});
+  /* ключ сортировки — расстояние от камеры до центра ВИДИМОЙ части грани, а не глубина вдоль
+     оси взгляда: глубина меняется с поворотом головы, и из салона порядок панелей перестраивался
+     на каждом градусе — грани мигали и «пропадали». Расстояние к повороту инвариантно.
+     Грань, пересекающую плоскость камеры (стена вдоль борта), меряем по отсечённой части:
+     среднее по всем вершинам уходило к нулю и стена ложилась поверх салона */
+  const cc = behind ? clipNear(cp) : cp;
+  let mx=0, my=0, md=0; for(const c of cc){ mx+=c.x; my+=c.y; md+=c.d; }
+  const k=1/(cc.length||1), dist=Math.hypot(mx*k,my*k,md*k);
+  faces.push({cp, d:dist-(bias||0), col:shadeCol(col,n,Math.max(dist,1),cy), tex:cabinLit});
 }
 /* центр в (u, y, v); hw — полуширина поперёк, hl — полудлина вдоль, hh — полувысота */
-function pushBox(u, y, v, hw, hh, hl, yaw, col){
+function pushBox(u, y, v, hw, hh, hl, yaw, col, bias){
   const c={x:-u, y:y, z:v};
   const F=fwd(yaw), R=rgt(yaw);
   const P=(sr,su,sf)=>({ x:c.x+R.x*sr*hw+F.x*sf*hl, y:c.y+su*hh, z:c.z+R.z*sr*hw+F.z*sf*hl });
   const a=P(-1,-1, 1), b=P( 1,-1, 1), cc=P( 1, 1, 1), dd=P(-1, 1, 1);
   const e=P(-1,-1,-1), f2=P( 1,-1,-1), g=P( 1, 1,-1), h=P(-1, 1,-1);
   const nF=F, nB={x:-F.x,y:0,z:-F.z}, nR=R, nL={x:-R.x,y:0,z:-R.z};
-  pushFace([a,b,cc,dd], nF, col);
-  pushFace([f2,e,h,g],  nB, col);
-  pushFace([b,f2,g,cc], nR, col);
-  pushFace([e,a,dd,h],  nL, col);
-  pushFace([dd,cc,g,h], {x:0,y:1,z:0}, col);
+  pushFace([a,b,cc,dd], nF, col, bias);
+  pushFace([f2,e,h,g],  nB, col, bias);
+  pushFace([b,f2,g,cc], nR, col, bias);
+  pushFace([e,a,dd,h],  nL, col, bias);
+  pushFace([dd,cc,g,h], {x:0,y:1,z:0}, col, bias);
 }
+/* зерно материала для салона: плоская заливка читалась как пластиковые плиты. Один проход —
+   все салонные грани кадра собираются в Path2D, и по нему одной заливкой кладётся шумовой
+   паттерн в режиме overlay; паттерн сдвигается вместе с поворотом головы, чтобы зерно
+   «сидело» на обивке, а не на стекле монитора */
+let grainPat=null;
+function grainPattern(){
+  if(grainPat) return grainPat;
+  const c=document.createElement('canvas'); c.width=c.height=128;
+  const g=c.getContext('2d'), im=g.createImageData(128,128), d=im.data;
+  let seed=20260906;
+  for(let i=0;i<d.length;i+=4){ seed=(seed*16807)%2147483647; const v=96+(seed&63);
+    d[i]=d[i+1]=d[i+2]=v; d[i+3]=255; }
+  g.putImageData(im,0,0);
+  grainPat=ctx.createPattern(c,'repeat'); return grainPat;
+}
+function addCamPoly(path, cp){
+  const c=clipNear(cp); if(c.length<3) return;
+  for(let i=0;i<c.length;i++){ const s=toScreen(c[i]); if(i===0) path.moveTo(s.x,s.y); else path.lineTo(s.x,s.y); }
+  path.closePath();
+}
+/* обводка грани её же цветом закрывает волосяные щели антиалиасинга между соседними гранями:
+   через них просвечивало небо, и при движении камеры эти щели мерцали */
 function flushFaces(){
   faces.sort((p,q)=> q.d - p.d);
-  for(const f of faces){ if(pathCam(f.cp)){ ctx.fillStyle=f.col; ctx.fill(); } }
+  ctx.lineWidth=0.9; ctx.lineJoin='round';
+  let tex=null;
+  for(const f of faces){
+    if(!pathCam(f.cp)) continue;
+    ctx.fillStyle=f.col; ctx.strokeStyle=f.col; ctx.fill(); ctx.stroke();
+    if(f.tex){ if(!tex) tex=new Path2D(); addCamPoly(tex, f.cp); }
+  }
+  if(tex){
+    const dx=-headYaw()*cam.scale, dy=opt.fpPitch*cam.scale;
+    ctx.save(); ctx.clip(tex);
+    ctx.globalCompositeOperation='overlay'; ctx.globalAlpha=0.38;
+    ctx.translate(dx,dy); ctx.fillStyle=grainPattern();
+    ctx.fillRect(VP.x-dx, VP.y-dy, VP.w, VP.h);
+    ctx.restore();
+  }
   faces.length = 0;
 }
 
@@ -625,6 +670,10 @@ const CAR = {
 };
 const HALF_L = CAR.length/2, HALF_W = CAR.width/2;
 const C2R = HALF_L - CAR.rearOh;                 /* центр кузова -> задняя ось */
+/* глаз водителя в системе кузова (lat, y, z от центра). z=−0,20: на z=0 глаз был в 0,26 м от
+   поперечины лобового и в 0,39 м от стойки A — они выглядели плитами во весь кадр. Слепая зона
+   перед капотом считается из этой же точки, поэтому цифры в подсказках уровней — от неё */
+const EYE = { lat:-0.36, y:1.22, z:-0.20 };
 
 /* руление тем легче и быстрее, чем быстрее катится машина:
    на месте шина скребёт пятном контакта, в качении доворачивается свободно */
@@ -665,7 +714,7 @@ function wheelSpots(u,v,th,st){
            al:a.l, ar:a.r };
 }
 /* --- кузов: лофт по сечениям (капот, лобовое, крыша, стойки, стёкла) --- */
-function pushQuad(a,b,c,d,col,ref){
+function pushQuad(a,b,c,d,col,ref,bias){
   const ux=b.x-a.x, uy=b.y-a.y, uz=b.z-a.z;
   const vx=d.x-a.x, vy=d.y-a.y, vz=d.z-a.z;
   let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
@@ -673,9 +722,9 @@ function pushQuad(a,b,c,d,col,ref){
   nx/=L; ny/=L; nz/=L;
   const mx=(a.x+b.x+c.x+d.x)*0.25, my=(a.y+b.y+c.y+d.y)*0.25, mz=(a.z+b.z+c.z+d.z)*0.25;
   if((mx-ref.x)*nx+(my-ref.y)*ny+(mz-ref.z)*nz < 0){ nx=-nx; ny=-ny; nz=-nz; }
-  pushFace([a,b,c,d], {x:nx,y:ny,z:nz}, col);
+  pushFace([a,b,c,d], {x:nx,y:ny,z:nz}, col, bias);
 }
-function pushPoly(pts,col,ref){
+function pushPoly(pts,col,ref,bias){
   if(pts.length<3) return;
   const a=pts[0], b=pts[1], c=pts[2];
   const ux=b.x-a.x, uy=b.y-a.y, uz=b.z-a.z;
@@ -686,46 +735,53 @@ function pushPoly(pts,col,ref){
   let mx=0,my=0,mz=0; for(const p of pts){mx+=p.x;my+=p.y;mz+=p.z;}
   mx/=pts.length; my/=pts.length; mz/=pts.length;
   if((mx-ref.x)*nx+(my-ref.y)*ny+(mz-ref.z)*nz < 0){ nx=-nx; ny=-ny; nz=-nz; }
-  pushFace(pts, {x:nx,y:ny,z:nz}, col);
+  pushFace(pts, {x:nx,y:ny,z:nz}, col, bias);
 }
-/* z — от центра кузова; k — что за секция ДО следующего сечения */
+/* z — от центра кузова; k — что за секция ДО следующего сечения.
+   w — полуширина по плечу (ys), be — линия окон, wg — полуширина стекла у крыши (завал стёкол),
+   wr — полуширина плоской части крыши/капота, yt — верх. Плечо шире линии окон, а крыша и капот
+   выпуклые — из плоского ящика кузов стал похож на седан и в зеркалах, и с капота из-за руля */
 const CAR_ST=[
- {z:-2.21,w:0.79,yb:0.44,ybelt:0.80,ytop:0.82,wg:0.70,k:'bump'},
- {z:-2.02,w:0.89,yb:0.34,ybelt:0.99,ytop:1.01,wg:0.80,k:'body'},
- {z:-1.62,w:0.90,yb:0.32,ybelt:1.02,ytop:1.05,wg:0.82,k:'body'},
- {z:-1.36,w:0.90,yb:0.32,ybelt:1.00,ytop:1.04,wg:0.80,k:'glass'},
- {z:-0.96,w:0.90,yb:0.32,ybelt:0.99,ytop:1.44,wg:0.71,k:'cabin'},
- {z:-0.40,w:0.90,yb:0.32,ybelt:0.99,ytop:1.44,wg:0.72,k:'pillar'},
- {z:-0.26,w:0.90,yb:0.32,ybelt:0.99,ytop:1.44,wg:0.72,k:'cabin'},
- {z: 0.32,w:0.90,yb:0.32,ybelt:0.99,ytop:1.44,wg:0.72,k:'glass'},
- {z: 0.70,w:0.90,yb:0.33,ybelt:0.98,ytop:1.02,wg:0.80,k:'body'},
- {z: 1.46,w:0.90,yb:0.34,ybelt:0.94,ytop:0.96,wg:0.82,k:'body'},
- {z: 1.98,w:0.88,yb:0.36,ybelt:0.86,ytop:0.88,wg:0.80,k:'bump'},
- {z: 2.21,w:0.79,yb:0.44,ybelt:0.80,ytop:0.82,wg:0.70,k:null}
+ {z:-2.21,w:0.78,yb:0.42,ys:0.58,be:0.72,wg:0.68,wr:0.56,yt:0.76,k:'bump'},
+ {z:-2.06,w:0.87,yb:0.32,ys:0.66,be:0.90,wg:0.80,wr:0.68,yt:0.94,k:'body'},
+ {z:-1.70,w:0.90,yb:0.32,ys:0.74,be:1.00,wg:0.82,wr:0.72,yt:1.03,k:'body'},
+ {z:-1.42,w:0.90,yb:0.32,ys:0.75,be:1.02,wg:0.79,wr:0.70,yt:1.07,k:'glass'},
+ {z:-1.05,w:0.90,yb:0.32,ys:0.75,be:1.00,wg:0.74,wr:0.66,yt:1.41,k:'cabin'},
+ {z:-0.40,w:0.90,yb:0.32,ys:0.75,be:0.99,wg:0.75,wr:0.67,yt:1.44,k:'pillar'},
+ {z:-0.28,w:0.90,yb:0.32,ys:0.75,be:0.99,wg:0.75,wr:0.67,yt:1.44,k:'cabin'},
+ {z: 0.30,w:0.90,yb:0.32,ys:0.75,be:0.99,wg:0.74,wr:0.66,yt:1.43,k:'glass'},
+ {z: 0.85,w:0.90,yb:0.33,ys:0.73,be:0.98,wg:0.83,wr:0.74,yt:1.00,k:'body'},
+ {z: 1.40,w:0.90,yb:0.34,ys:0.70,be:0.92,wg:0.82,wr:0.66,yt:0.95,k:'body'},
+ {z: 1.98,w:0.88,yb:0.36,ys:0.64,be:0.84,wg:0.78,wr:0.60,yt:0.88,k:'bump'},
+ {z: 2.12,w:0.83,yb:0.38,ys:0.58,be:0.74,wg:0.70,wr:0.56,yt:0.77,k:'bump'},
+ {z: 2.21,w:0.74,yb:0.44,ys:0.54,be:0.64,wg:0.60,wr:0.48,yt:0.66,k:null}
 ];
 const HOOD_Z=1.98, HOOD_Y=0.88;
 function stationPts(st){
-  const w=st.w, wg=st.wg, yb=st.yb, be=st.ybelt, yt=st.ytop, ch=0.09;
-  const tc=clamp((yt-be)*0.45, 0.02, 0.17);
-  return [[-(w-ch),yb],[-w,yb+ch],[-w,be],[-wg,yt-tc],[-wg*0.86,yt],
-          [wg*0.86,yt],[wg,yt-tc],[w,be],[w,yb+ch],[w-ch,yb]];
+  const {w,yb,ys,be,wg,wr,yt}=st;
+  return [[-(w-0.10),yb],[-(w-0.02),yb+0.06],[-w,ys],[-(w-0.03),be],[-wg,yt-0.10],[-wr,yt],
+          [wr,yt],[wg,yt-0.10],[w-0.03,be],[w,ys],[w-0.02,yb+0.06],[w-0.10,yb]];
 }
 const CAR_SECS = CAR_ST.map(st=>({pts:stationPts(st), z:st.z, k:st.k}));
+/* рёбра сечения: 0/10 порог, 1/9 низ борта, 2/8 плечо, 3/7 стекло или стойка, 4/6 скат крыши, 5 крыша, 11 днище */
+const EDGE_SILL=new Set([0,10,11]), EDGE_SIDEGLASS=new Set([3,7]), EDGE_TOPGLASS=new Set([4,5,6]);
 function emitCarBody(u,v,th,col){
   const F=fwd(th), R=rgt(th), cx=-u, cz=v;
   const P=(lat,y,z)=>({x:cx+R.x*lat+F.x*z, y:y, z:cz+R.z*lat+F.z*z});
   const ref={x:cx, y:0.85, z:cz};
-  const sill=[44,48,54], glass=[42,52,64];
+  const sill=[44,48,54], glass=[42,52,64], pillar=[38,42,48];
   const bump=[(col[0]*0.84)|0,(col[1]*0.84)|0,(col[2]*0.84)|0];
+  const NP=CAR_SECS[0].pts.length;
   for(let i=0;i+1<CAR_SECS.length;i++){
     const A=CAR_SECS[i], B=CAR_SECS[i+1];
-    for(let e=0;e<10;e++){
-      const e2=(e+1)%10;
+    for(let e=0;e<NP;e++){
+      const e2=(e+1)%NP;
       let cc=col;
       if(A.k==='bump') cc=bump;
-      else if(e===0||e===8) cc=sill;
-      else if(A.k==='glass' && e>=2 && e<=6) cc=glass;
-      else if(A.k==='cabin' && (e===2||e===6)) cc=glass;
+      else if(EDGE_SILL.has(e)) cc=sill;
+      else if(A.k==='glass'){ if(EDGE_TOPGLASS.has(e)) cc=glass; else if(EDGE_SIDEGLASS.has(e)) cc=pillar; }
+      else if(A.k==='cabin' && EDGE_SIDEGLASS.has(e)) cc=glass;
+      else if(A.k==='pillar' && EDGE_SIDEGLASS.has(e)) cc=pillar;
       pushQuad(P(A.pts[e][0],A.pts[e][1],A.z), P(A.pts[e2][0],A.pts[e2][1],A.z),
                P(B.pts[e2][0],B.pts[e2][1],B.z), P(B.pts[e][0],B.pts[e][1],B.z), cc, ref);
     }
@@ -733,6 +789,37 @@ function emitCarBody(u,v,th,col){
   const L=CAR_SECS.length-1;
   pushPoly(CAR_SECS[0].pts.map(q=>P(q[0],q[1],CAR_SECS[0].z)), bump, ref);
   pushPoly(CAR_SECS[L].pts.map(q=>P(q[0],q[1],CAR_SECS[L].z)), bump, ref);
+  /* ручки, швы дверей и колёсные арки — то, по чему ставят боковые зеркала («ручка задней двери
+     у внутреннего края») и по чему равняются на соседа. Только вблизи камеры: у дальних машин это
+     шум. bias — накладка на борт: грань кузова с центром ближе к камере закрывала бы деталь на себе */
+  const f=fuv(th), r=ruv(th), du=(-cam.pos.x)-u, dv=cam.pos.z-v;
+  const camLat=du*r.u+dv*r.v, camZ=du*f.u+dv*f.v;
+  /* из салона этой же машины накладки не рисуем: со сдвигом bias верх ручки пробивался бы
+     сквозь карту двери */
+  const camIn = Math.abs(camLat)<0.95 && Math.abs(camZ)<2.3 && cam.pos.y<1.6;
+  if(!camIn && Math.hypot(du,dv) < 28){
+    const seam=[34,36,40], handle=[40,44,50], arch=[30,32,36];
+    for(const sg of [-1,1]){
+      const out=P(sg*0.5,0.7,0);
+      for(const z of [0.84,-0.33,-1.30])
+        pushQuad(P(sg*0.906,0.40,z-0.008),P(sg*0.906,0.40,z+0.008),P(sg*0.906,0.985,z+0.008),
+                 P(sg*0.906,0.985,z-0.008), seam, out, 0.3);
+      for(const z of [-0.12,-1.06]){
+        const c=P(sg*0.915,0.90,z), o=sg*0.935, i=sg*0.895, y0=0.886, y1=0.914, z0=z-0.085, z1=z+0.085;
+        pushQuad(P(o,y0,z0),P(o,y0,z1),P(o,y1,z1),P(o,y1,z0), handle, c, 0.3);
+        pushQuad(P(i,y1,z0),P(i,y1,z1),P(o,y1,z1),P(o,y1,z0), handle, c, 0.3);
+        pushQuad(P(i,y0,z0),P(i,y1,z0),P(o,y1,z0),P(o,y0,z0), handle, c, 0.3);
+        pushQuad(P(i,y0,z1),P(i,y1,z1),P(o,y1,z1),P(o,y0,z1), handle, c, 0.3);
+      }
+      /* арки: тёмный полудиск на борту вокруг колеса — сам борт сплошной, и без арки колесо
+         «врастало» в дверь */
+      for(const zc of [-C2R, -C2R+CAR.wheelbase]){
+        const pts=[]; const Ra=CAR.wheelR+0.075;
+        for(let k=0;k<=8;k++){ const a=k/8*PI; pts.push(P(sg*0.905, Math.max(0.33, CAR.wheelR+Math.sin(a)*Ra), zc+Math.cos(a)*Ra)); }
+        pushPoly(pts, arch, out, 0.3);
+      }
+    }
+  }
 }
 function pushWheelCyl(u,v,yaw,side){
   const Rw=CAR.wheelR, hw=CAR.wheelW/2;
@@ -755,7 +842,17 @@ function pushWheelCyl(u,v,yaw,side){
 }
 /* --- салон: панели повёрнуты нормалями ВНУТРЬ, поэтому видны изнутри --- */
 function cross3(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
-function pushBar(P, a, b, r, col){
+/* seg — на сколько кусков резать длинный брус: у поперечины крыши во всю ширину салона центр
+   уходит вбок при повороте головы, и она сортировалась позади висящего под ней зеркала */
+function pushBar(P, a, b, r, col, seg, bias){
+  const N=seg>1?seg:1;
+  for(let i=0;i<N;i++){ const t0=i/N, t1=(i+1)/N;
+    barPiece(P,[a[0]+(b[0]-a[0])*t0,a[1]+(b[1]-a[1])*t0,a[2]+(b[2]-a[2])*t0],
+               [a[0]+(b[0]-a[0])*t1,a[1]+(b[1]-a[1])*t1,a[2]+(b[2]-a[2])*t1], r, col, bias, i===0, i===N-1); }
+}
+/* торцы — только у настоящих концов бруса: торец на стыке кусков виден сквозь соседний кусок
+   и торчал из поперечины крыши серым столбиком */
+function barPiece(P, a, b, r, col, bias, capA, capB){
   let d=[b[0]-a[0], b[1]-a[1], b[2]-a[2]];
   const L=Math.hypot(d[0],d[1],d[2]); if(L<1e-6) return;
   d=[d[0]/L,d[1]/L,d[2]/L];
@@ -766,8 +863,9 @@ function pushBar(P, a, b, r, col){
     P(base[0]+(e1[0]*s1+e2[0]*s2)*r, base[1]+(e1[1]*s1+e2[1]*s2)*r, base[2]+(e1[2]*s1+e2[2]*s2)*r));
   const c0=corn(a), c1=corn(b);
   const ref=P((a[0]+b[0])/2,(a[1]+b[1])/2,(a[2]+b[2])/2);
-  for(let i=0;i<4;i++){ const j=(i+1)%4; pushQuad(c0[i],c0[j],c1[j],c1[i],col,ref); }
-  pushPoly(c0,col,ref); pushPoly(c1,col,ref);
+  for(let i=0;i<4;i++){ const j=(i+1)%4; pushQuad(c0[i],c0[j],c1[j],c1[i],col,ref,bias); }
+  if(capA) pushPoly(c0,col,ref,bias);
+  if(capB) pushPoly(c1,col,ref,bias);
 }
 function camInsideCabin(){
   const c=bodyPos(), f=fuv(car.th), r=ruv(car.th);
@@ -780,57 +878,82 @@ function camInsideCabin(){
    через плечо, а на приборку — вниз: наборы деталей там разные и правятся порознь */
 /* цвета подняты под затемнение салона: подоконная линия и стойки — ориентиры,
    по которым игрок смотрит наружу, и в тёмном салоне они обязаны остаться светлее обивки */
-const CAB = { FLOOR:[64,68,76], DOOR:[148,154,164], HEAD:[214,218,226],
-              DASH:[46,50,56],  TRIM:[134,140,150], SEAT:[108,102,100],
-              PILL:[208,212,220], SILL:[250,252,255], DARK:[82,88,98] };
+const CAB = { FLOOR:[64,68,76], DOOR:[148,154,164], DOORTOP:[168,174,184], HEAD:[214,218,226],
+              RAIL:[192,196,204], DASH:[62,66,74], TRIM:[134,140,150], SEAT:[108,102,100],
+              PILL:[208,212,220], PILLAR:[172,178,190], SILL:[250,252,255], DARK:[82,88,98] };
 function cabinCtx(u,v,th){
   const F=fwd(th), R=rgt(th), cx=-u, cz=v;
   const P=(lat,y,z)=>({x:cx+R.x*lat+F.x*z, y:y, z:cz+R.z*lat+F.z*z});
-  const quad=(a,b,c,d,col,out)=>pushQuad(P(a[0],a[1],a[2]),P(b[0],b[1],b[2]),
-                                         P(c[0],c[1],c[2]),P(d[0],d[1],d[2]),
-                                         col, P(out[0],out[1],out[2]));
-  /* крупные панели дробим: сортировка по средней глубине иначе врёт вблизи камеры */
-  const panel=(pts,col,out,n)=>{
-    const N=n||1;
+  const quad=(a,b,c,d,col,out,bias)=>pushQuad(P(a[0],a[1],a[2]),P(b[0],b[1],b[2]),
+                                              P(c[0],c[1],c[2]),P(d[0],d[1],d[2]),
+                                              col, P(out[0],out[1],out[2]), bias);
+  /* крупные панели дробим (n — вдоль pts[0]→pts[3], m — поперёк): сортировка по центру
+     грани иначе врёт вблизи камеры — полоса во всю ширину салона имеет центр ближе к глазу,
+     чем стоящая на ней подушка сиденья, и ложилась поверх неё */
+  const panel=(pts,col,out,n,m)=>{
+    const N=n||1, M=m||1;
     const mix=(A,B,t)=>[A[0]+(B[0]-A[0])*t, A[1]+(B[1]-A[1])*t, A[2]+(B[2]-A[2])*t];
-    for(let i=0;i<N;i++){
-      const t0=i/N, t1=(i+1)/N;
-      quad(mix(pts[0],pts[3],t0), mix(pts[1],pts[2],t0),
-           mix(pts[1],pts[2],t1), mix(pts[0],pts[3],t1), col, out);
+    for(let i=0;i<N;i++) for(let j=0;j<M;j++){
+      const t0=i/N, t1=(i+1)/N, s0=j/M, s1=(j+1)/M;
+      const a0=mix(pts[0],pts[3],t0), b0=mix(pts[1],pts[2],t0);
+      const a1=mix(pts[0],pts[3],t1), b1=mix(pts[1],pts[2],t1);
+      quad(mix(a0,b0,s0), mix(a0,b0,s1), mix(a1,b1,s1), mix(a1,b1,s0), col, out);
     }
   };
   const f=fuv(th), r=ruv(th);
   const at=(lat,z)=>({u:u+f.u*z+r.u*lat, v:v+f.v*z+r.v*lat});
-  const box=(lat,y,z,w,h,d,col)=>{ const p=at(lat,z); pushBox(p.u,y,p.v,w,h,d,th,col); };
-  return {P,quad,panel,at,box,th};
+  const box=(lat,y,z,w,h,d,col,bias)=>{ const p=at(lat,z); pushBox(p.u,y,p.v,w,h,d,th,col,bias); };
+  /* накладки на карту двери: полоса карты длиной 0,35 м имеет центр ближе к глазу, чем
+     стоящий на ней карман или подлокотник, и без сдвига закрывала их */
+  const DET=0.12;
+  return {P,quad,panel,at,box,th,DET};
 }
 function emitCabinShell(K){
-  const {P,quad,panel,box}=K, C=CAB;
-  panel([[-0.80,0.42,-1.06],[0.80,0.42,-1.06],[0.80,0.42,0.70],[-0.80,0.42,0.70]], C.FLOOR,[0,-0.6,-0.2],5);
-  panel([[-0.66,1.38,-1.00],[0.66,1.38,-1.00],[0.66,1.38,0.28],[-0.66,1.38,0.28]], C.HEAD, [0,2.4,-0.3],4);
+  const {P,quad,panel,box,DET}=K, C=CAB;
+  panel([[-0.80,0.42,-1.06],[0.80,0.42,-1.06],[0.80,0.42,0.84],[-0.80,0.42,0.84]], C.FLOOR,[0,-0.6,-0.2],5,3);
+  panel([[-0.66,1.40,-1.00],[0.66,1.40,-1.00],[0.66,1.40,0.28],[-0.66,1.40,0.28]], C.HEAD, [0,2.4,-0.3],4);
+  quad([-0.06,1.392,-0.36],[0.06,1.392,-0.36],[0.06,1.392,-0.24],[-0.06,1.392,-0.24],[244,246,250],[0,0,-0.3]);
   for(const sg of [-1,1]){
     const L=sg*0.80;
-    panel([[L,0.42,-1.06],[L,0.96,-1.06],[L,0.96,0.70],[L,0.42,0.70]], C.DOOR, [sg*2.2,0.7,0], 5);
+    /* карта двери в два яруса: по светлому верху читается высота подоконника */
+    panel([[L,0.42,-1.06],[L,0.80,-1.06],[L,0.80,0.84],[L,0.42,0.84]], C.DOOR, [sg*2.2,0.6,0], 5);
+    panel([[L,0.80,-1.06],[L,0.965,-1.06],[L,0.965,0.84],[L,0.80,0.84]], C.DOORTOP, [sg*2.2,0.9,0], 5);
+    /* рельс крыши между потолком и верхом двери: без него в этот зазор было видно небо */
+    panel([[sg*0.66,1.40,-1.00],[sg*0.66,1.40,0.28],[L,1.31,0.28],[L,1.31,-1.00]], C.RAIL, [0,0.6,-0.3], 4);
     /* подоконная линия: тот самый ориентир «стойка соседа в середине бокового стекла».
        Без светлой кромки дверь и окно сливаются, и приём не на что примерить */
-    quad([L,0.965,-1.02],[L,0.965,0.66],[sg*0.72,0.965,0.66],[sg*0.72,0.965,-1.02], C.SILL,[0,2,0]);
-    box(sg*0.74, 0.80, -0.30, 0.07,0.045,0.30, C.TRIM);            /* подлокотник */
-    box(sg*0.72, 0.86, 0.10,  0.05,0.030,0.09, [176,182,192]);     /* ручка двери */
-    box(sg*0.76, 0.60, -0.02, 0.035,0.090,0.090, [96,102,112]);    /* динамик в обивке */
+    quad([L,0.965,-1.02],[L,0.965,0.82],[sg*0.72,0.965,0.82],[sg*0.72,0.965,-1.02], C.SILL,[0,2,0]);
+    box(sg*0.74, 0.80, -0.30, 0.07,0.045,0.30, C.TRIM, DET);       /* подлокотник */
+    box(sg*0.74, 0.851,-0.20, 0.032,0.006,0.055, [40,44,50], DET*2); /* блок стеклоподъёмников */
+    pushBar(P,[sg*0.71,0.86,-0.06],[sg*0.71,0.86,0.24],0.015,[120,126,136],1,DET); /* ручка-скоба */
+    box(sg*0.72, 0.88, 0.36,  0.05,0.028,0.07, [176,182,192], DET); /* ручка открывания */
+    box(sg*0.76, 0.60, -0.02, 0.035,0.090,0.090, [96,102,112], DET); /* динамик в обивке */
+    box(sg*0.77, 0.50, 0.30,  0.030,0.060,0.16, C.DARK, DET);      /* карман двери */
     /* ремень идёт от стойки B вниз к полу — в реальном салоне он всегда в кадре */
-    pushBar(P,[sg*0.74,1.28,-0.31],[sg*0.56,0.62,-0.42],0.024,[52,56,66]);
+    pushBar(P,[sg*0.74,1.28,-0.31],[sg*0.56,0.62,-0.30],0.024,[52,56,66]);
   }
   panel([[-0.80,0.42,-1.06],[0.80,0.42,-1.06],[0.80,1.02,-1.06],[-0.80,1.02,-1.06]], C.SEAT,[0,0.7,-3]);
   for(const sg of [-1,1]){
-    pushBar(P,[sg*0.76,0.99,0.66],[sg*0.63,1.36,0.26],0.058,C.PILL);   /* стойка A */
-    pushBar(P,[sg*0.79,0.96,-0.33],[sg*0.70,1.36,-0.33],0.052,C.PILL); /* стойка B */
-    box(sg*0.34, 1.33, 0.40, 0.20,0.020,0.10, [206,210,218]);          /* козырёк */
+    /* стойки тоньше и темнее потолка: глаз в 0,39 м от стойки A, и квадратный брус 0,116 м
+       выглядел плитой, сливаясь с потолком в одно светлое пятно */
+    pushBar(P,[sg*0.80,0.98,0.84],[sg*0.66,1.39,0.28],0.030,C.PILLAR);   /* стойка A */
+    pushBar(P,[sg*0.79,0.96,-0.33],[sg*0.70,1.39,-0.33],0.036,C.PILLAR); /* стойка B */
+    /* козырёк и салонное зеркало не входят в поперечину крыши (z ≤ 0.30): пересекающиеся
+       тела painter's algorithm рисует друг сквозь друга */
+    box(sg*0.34, 1.33, 0.42, 0.20,0.020,0.10, [206,210,218]);          /* козырёк */
   }
-  pushBar(P,[-0.64,1.36,0.26],[0.64,1.36,0.26],0.042,C.PILL);
+  pushBar(P,[0.66,1.35,-0.12],[0.66,1.35,0.08],0.013,[150,156,166]);   /* поручень над пассажирской дверью */
+  /* поперечина на 1,39: с 1,36 её низ был на +14° от глаза и вместе с солнцезащитной полосой
+     съедал верх лобового; теперь +17,5°, как в живом седане */
+  pushBar(P,[-0.64,1.39,0.26],[0.64,1.39,0.26],0.030,C.PILL,4);
+  /* подушка, спинка и подголовник стоят друг на друге, не проникая друг в друга — иначе
+     нижний край спинки просвечивал сквозь подушку */
   for(const sg of [-1,1]){
-    box(sg*0.36,0.50,-0.42, 0.25,0.08,0.29, C.SEAT);
-    box(sg*0.36,0.82,-0.70, 0.25,0.30,0.10, C.SEAT);
-    box(sg*0.36,1.19,-0.72, 0.13,0.10,0.07, C.SEAT);
+    box(sg*0.36,0.51,-0.28, 0.25,0.08,0.29, C.SEAT);
+    box(sg*0.36,0.845,-0.56, 0.25,0.26,0.10, C.SEAT);
+    /* верх подголовника 1,195: салонное зеркало на 1,26 — выше него на 6 см, иначе в зеркале
+       вместо заднего стекла две коричневые коробки */
+    box(sg*0.36,1.15,-0.58, 0.13,0.045,0.07, C.SEAT);
   }
 }
 /* корма салона: то, что реально мешает смотреть через плечо */
@@ -838,40 +961,48 @@ function emitCabinRear(K){
   const {P,panel,box}=K, C=CAB;
   panel([[-0.78,1.02,-1.06],[0.78,1.02,-1.06],[0.72,1.02,-1.44],[-0.72,1.02,-1.44]], C.TRIM,[0,0.2,-1.2]);
   for(const sg of [-1,1]){
-    pushBar(P,[sg*0.70,1.36,-0.96],[sg*0.66,1.06,-1.42],0.056,C.PILL);  /* стойка C */
-    box(sg*0.32, 1.16, -1.02, 0.14,0.12,0.07, C.SEAT);                  /* задний подголовник */
+    pushBar(P,[sg*0.70,1.39,-0.96],[sg*0.66,1.06,-1.42],0.056,C.PILL);  /* стойка C */
+    box(sg*0.32, 1.10, -1.02, 0.14,0.04,0.07, C.SEAT);                  /* задний подголовник */
   }
-  pushBar(P,[-0.66,1.06,-1.42],[0.66,1.06,-1.42],0.040,C.PILL);         /* нижняя кромка стекла */
-  pushBar(P,[-0.64,1.36,-0.96],[0.64,1.36,-0.96],0.040,C.PILL);
+  pushBar(P,[-0.66,1.06,-1.42],[0.66,1.06,-1.42],0.040,C.PILL,4);       /* нижняя кромка стекла */
+  pushBar(P,[-0.64,1.39,-0.96],[0.64,1.39,-0.96],0.040,C.PILL,4);
 }
 function emitDash(K){
   const {quad,panel,box}=K, C=CAB;
-  panel([[-0.80,1.00,0.63],[0.80,1.00,0.63],[0.80,0.98,0.72],[-0.80,0.98,0.72]], C.DASH,[0,0.4,0.9]);
+  /* лобовое стекло: лёгкий холодный тон и тёмная солнцезащитная полоса сверху — без них проём
+     читался как дыра в кузове. bias отрицательный: стекло сортируется дальше руля и торпедо */
+  emitLit(()=>{
+    quad([-0.74,1.36,0.29],[0.74,1.36,0.29],[0.74,1.00,0.86],[-0.74,1.00,0.86],[150,180,215,0.10],[0,1.1,-1],-0.3);
+    quad([-0.74,1.36,0.29],[0.74,1.36,0.29],[0.74,1.30,0.35],[-0.74,1.30,0.35],[30,45,70,0.30],[0,1.1,-1],-0.3);
+  });
+  panel([[-0.80,1.00,0.63],[0.80,1.00,0.63],[0.80,0.985,0.86],[-0.80,0.985,0.86]], C.DASH,[0,0.4,1.2],1,3);
   panel([[-0.80,0.52,0.63],[0.80,0.52,0.63],[0.80,1.00,0.63],[-0.80,1.00,0.63]], C.TRIM,[0,0.7,2.5],4);
-  quad([-0.80,1.005,0.60],[0.80,1.005,0.60],[0.80,1.005,0.63],[-0.80,1.005,0.63],[236,240,246],[0,0.4,0.9]);
+  quad([-0.80,1.005,0.60],[0.80,1.005,0.60],[0.80,1.005,0.63],[-0.80,1.005,0.63],[188,194,204],[0,0.4,0.9]);
   /* щиток зажат между двумя границами: ниже — его закрывает ступица руля,
      выше линии взгляда через кромку капота (y≈1.16 на этой глубине) — он загораживает
      дорогу. Отсюда центр 1.075 и плоский козырёк на 1.15 */
-  box(-0.36,1.075,0.585, 0.112,0.072,0.030, C.DARK);
-  box(-0.36,1.150,0.560, 0.122,0.014,0.050, [92,98,108]);
+  box(-0.36,0.985,0.585, 0.112,0.072,0.030, C.DARK);
+  box(-0.36,1.060,0.560, 0.122,0.014,0.050, [92,98,108]);
   emitLit(()=>emitCluster(K));
   /* повторители поворотников на щитке — мигают в такт HUD-стрелкам */
   if(car.blink && Math.floor(performance.now()/380)%2===0){
-    const sg = car.blink==='L' ? -1 : 1, bx=-0.36+sg*0.086, by=1.128, bz=0.552;
+    const sg = car.blink==='L' ? -1 : 1, bx=-0.36+sg*0.086, by=1.038, bz=0.552;
     emitLit(()=>quad([bx-sg*0.006,by-0.011,bz],[bx+sg*0.014,by,bz],
                      [bx-sg*0.006,by+0.011,bz],[bx-sg*0.006,by+0.011,bz],[92,235,140],[0,0.4,0.9]));
   }
   box(0,0.58,-0.10, 0.14,0.16,0.34, [120,125,133]);
   emitLit(()=>emitSelector(K));
-  box(0,1.32,0.34, 0.15,0.050,0.032, [96,102,112]);                     /* корпус салонного зеркала */
-  box(0,1.32,0.31, 0.135,0.040,0.010, [150,168,186]);
+  /* зеркало висит ниже поперечины крыши, не перекрывая её на экране: его центр ближе к глазу,
+     чем центр куска поперечины, и верх корпуса рисовался поверх неё */
+  box(0,1.26,0.40, 0.15,0.050,0.032, [96,102,112]);                     /* корпус салонного зеркала */
+  box(0,1.26,0.362, 0.135,0.040,0.006, [150,168,186]);
   /* свет из лобового ложится на торпедо пятном, стойки A режут его двумя тенями.
      Накладки подняты над панелью на 6 мм: в плоскости самой панели painter's algorithm
      сортирует их по средней глубине и они мерцают */
-  quad([-0.52,1.006,0.645],[0.52,1.006,0.645],[0.52,0.988,0.712],[-0.52,0.988,0.712],
+  quad([-0.52,1.006,0.66],[0.52,1.006,0.66],[0.52,0.991,0.84],[-0.52,0.991,0.84],
        [178,184,196],[0,1,0.3]);
   for(const sg of [-1,1])
-    quad([sg*0.80,1.006,0.645],[sg*0.60,1.006,0.645],[sg*0.60,0.988,0.712],[sg*0.80,0.988,0.712],
+    quad([sg*0.80,1.006,0.66],[sg*0.60,1.006,0.66],[sg*0.60,0.991,0.84],[sg*0.80,0.991,0.84],
          [52,56,64],[0,1,0.3]);
   for(const sg of [-1,1]){                                              /* дефлекторы обдува */
     box(sg*0.52,0.935,0.622, 0.075,0.028,0.012, [30,33,38]);
@@ -890,12 +1021,12 @@ function emitDash(K){
   pushBar(K.P,[0.10,0.60,-0.16],[0.13,0.73,-0.32],0.022,[52,56,64]);    /* ручник */
   box(0.135,0.745,-0.335, 0.028,0.022,0.030, [30,33,38]);
   for(const sg of [-1,1])                                               /* подрулевые рычаги */
-    pushBar(K.P,[-0.36+sg*0.05,0.985,0.505],[-0.36+sg*0.20,0.965,0.470],0.014,[46,50,58]);
+    pushBar(K.P,[-0.36+sg*0.05,0.875,0.525],[-0.36+sg*0.20,0.855,0.490],0.014,[46,50,58]);
 }
 /* щиток: шкала и стрелка скорости там, куда водитель смотрит вниз,
    чтобы не отрывать взгляд от дороги на HUD у края экрана */
 function emitCluster(K){
-  const {P}=K, cx=-0.36, cy=1.075, cz=0.552, Rd=0.060;
+  const {P}=K, cx=-0.36, cy=0.985, cz=0.552, Rd=0.060;
   const dial=(a)=>[cx+Math.cos(a)*Rd, cy+Math.sin(a)*Rd*0.86, cz+0.004];
   for(let i=0;i<=6;i++){
     const a=rad(210)-i/6*rad(240);
@@ -924,7 +1055,9 @@ function emitWheel(K){
   const {P,box}=K;
   /* руль: наклонён к водителю, крутится вместе с рулевым валом.
      Метка «12 часов» — по ней считаются обороты, без неё угол руля не прочитать */
-  const WC=[-0.36,1.01,0.48], tilt=rad(24), Rw=0.185, ang=car.steer*CAR.steerRatio;
+  /* центр 0,90, не 1,01: верх обода на 1,195 стоял выше линии капота (−8,9° от глаза) и закрывал
+     дорогу перед машиной — «не вижу, куда ехать». Теперь обод на −12,7°, дорога над ним */
+  const WC=[-0.36,0.90,0.50], tilt=rad(24), Rw=0.185, ang=car.steer*CAR.steerRatio;
   const ax=[0,Math.sin(tilt),-Math.cos(tilt)];
   const b1=[1,0,0], b2=cross3(ax,b1);
   const at3=(a,k)=>[WC[0]+(b1[0]*Math.cos(a)+b2[0]*Math.sin(a))*Rw*k,
@@ -988,11 +1121,12 @@ function emitCarMesh(u, v, th, col, st, lights){
   pushFace([P(-0.34,0.62,2.226),P(0.34,0.62,2.226),P(0.34,0.74,2.226),P(-0.34,0.74,2.226)], nF, [38,40,46]);
   pushFace([P(-0.24,0.56,-2.228),P(0.24,0.56,-2.228),P(0.24,0.70,-2.228),P(-0.24,0.70,-2.228)], nB, [228,232,236]);
   for(const sg of [-1,1]){
-    const mp=at(sg*(HALF_W+0.10), 0.56);
+    const mp=at(sg*(HALF_W+0.10), 0.70);
     pushBox(mp.u, 1.01, mp.v, 0.10, 0.055, 0.05, th, col);
     pushBox(mp.u, 1.01, mp.v, 0.105, 0.035, 0.028, th, [34,38,44]);
-    const wp=at(sg*0.34, 0.60);
-    pushBox(wp.u, 1.035, wp.v, 0.30, 0.018, 0.020, th+rad(sg*16), [30,32,36]);
+    /* дворники лежат на жабо перед стеклом: на z=0.60 они оказывались внутри салона над торпедо */
+    const wp=at(sg*0.34, 0.96);
+    pushBox(wp.u, 0.975, wp.v, 0.24, 0.006, 0.010, th+rad(sg*8), [30,32,36]);
     /* габаритные усы на кромке капота: из-за руля не видно ни бампера, ни углов,
        и это единственная точка кузова, по которой водитель целится вперёд.
        Ярче — только у своей машины, у припаркованных они остаются деталью кузова */
@@ -2041,7 +2175,7 @@ const LEVELS = [
 { name:'14 · Габарит: нос к стене', drill:true,
   precision:{side:'front', target:0.20, tol:0.07, th:0, thTol:rad(10)},
   task:'Подъехать и встать так, чтобы до стены осталось 20 см. Показание «спереди» скрыто — остановка и есть твой ответ.',
-  tip:'Из-за руля перед машиной не видно 4,2 м дороги. Ориентир — не бампер, а как стена «садится» относительно кромки капота.',
+  tip:'Из-за руля перед машиной не видно 5,4 м дороги. Ориентир — не бампер, а как стена «садится» относительно кромки капота.',
   steps:[
     'Включи D, отпусти тормоз и катись на крипе — на газу точность не поставить.',
     'Смотри не на стену, а на её низ: пока виден стык стены с асфальтом, до неё больше двух метров.',
@@ -2153,7 +2287,7 @@ const LEVELS = [
 { name:'19 · Габарит: чего ты не видишь', drill:true,
   precision:{side:'front', target:0.30, tol:0.16, th:0, thTol:rad(12)},
   task:'Подъехать к конусу как можно ближе — цель 30 см. Конус пропадёт под капотом задолго до этого.',
-  tip:'Из-за руля не видно 4,2 м дороги перед машиной. Это упражнение показывает, насколько это много.',
+  tip:'Из-за руля не видно 5,4 м дороги перед машиной. Это упражнение показывает, насколько это много.',
   steps:[
     'Едь на крипе и следи, когда конус скроется за кромкой капота.',
     'Запомни этот момент: в нём до конуса ещё больше четырёх метров.',
@@ -2805,7 +2939,7 @@ function hitReason(o){
 const CAM_CHASE=0, CAM_TOP=1, CAM_FP=2;
 /* граница видимости дороги из-за капота — считается из положения глаз водителя */
 function blindZone(){
-  const ez=0, ey=1.27;
+  const ez=EYE.z, ey=EYE.y;
   const dzF=HOOD_Z-ez, dyF=HOOD_Y-ey;
   const front = ez + dzF*(ey/Math.max(0.02,-dyF));
   const dzR=-1.62-ez, dyR=1.05-ey;
@@ -2817,7 +2951,7 @@ const REFS_NAMES = ['выкл','габариты','всё'];
 /* траектории по умолчанию выключены: у новичка на первом запуске дуги прогноза, след
    колёс и идеальная линия сливались в кашу поверх обучающих маркеров. G включает всё разом */
 const opt  = { guides:false, trails:false, sound:false, refs:2, marks:true, camMode:CAM_CHASE, camYaw:0, pitch:rad(22),
-               dist:9.0, fpYaw:0, fpPitch:rad(-4), fpFov:68, mirrors:true, prev3rd:CAM_CHASE,
+               dist:9.0, fpYaw:0, fpPitch:rad(-2), fpFov:62, mirrors:true, prev3rd:CAM_CHASE,
                mirAdj:{left:{yaw:0,pitch:0}, right:{yaw:0,pitch:0}, center:{yaw:0,pitch:0}} };
 let level = null, paused = true, trails = null, trailT = 0;
 let dprCap = 2, dprCheckT = 0;
@@ -2842,7 +2976,9 @@ function buildRenderList(obs){
   for(const o of obs){
     /* sign проходит целиком: сегментация копирует только базовые поля и потеряла бы pic */
     if(o.kind==='car'||o.kind==='cone'||o.kind==='sign'){ out.push(o); continue; }
-    const n=Math.max(1,Math.ceil(o.l/7)), m=Math.max(1,Math.ceil(o.w/7));
+    /* 3,5 м, не 7: у длинного сегмента бордюра центр ближе к камере, чем колесо соседа перед
+       ним, и бордюр рисовался поверх колеса */
+    const n=Math.max(1,Math.ceil(o.l/3.5)), m=Math.max(1,Math.ceil(o.w/3.5));
     const f=fuv(o.yaw), r=ruv(o.yaw), sl=o.l/n, sw=o.w/m;
     for(let i=0;i<n;i++) for(let j=0;j<m;j++){
       const dv=-o.l/2+sl*(i+0.5), du=-o.w/2+sw*(j+0.5);
@@ -2918,7 +3054,7 @@ function restart(){
   cityReset();
   if(exam) examInit();
   precShown=false; precHold=0;
-  opt.camYaw=level.start.th; opt.pitch=rad(22); opt.fpYaw=0; opt.fpPitch=rad(-3);
+  opt.camYaw=level.start.th; opt.pitch=rad(22); opt.fpYaw=0; opt.fpPitch=rad(-2);
   camSm = null;
 }
 
@@ -3630,10 +3766,10 @@ function thud(k){ if(!AC||!opt.sound) return;
 
 /* ---------- камера ---------- */
 let camSm=null;
-/* глаз водителя: левое сиденье, высота 1,26 м над дорогой */
+/* глаз водителя: левое сиденье, см. EYE */
 function fpEye(){
   const f=fuv(car.th), r=ruv(car.th);
-  return { u:car.ru+f.u*C2R+r.u*(-0.36), v:car.rv+f.v*C2R+r.v*(-0.36), y:1.27 };
+  return { u:car.ru+f.u*(C2R+EYE.z)+r.u*EYE.lat, v:car.rv+f.v*(C2R+EYE.z)+r.v*EYE.lat, y:EYE.y };
 }
 function headYaw(){ return opt.fpYaw + (input.lookBack? rad(150):0); }
 /* зеркала: позиция стекла + направление взгляда назад */
@@ -3644,16 +3780,25 @@ function mirAdj(kind){ return opt.mirAdj[kind] || {yaw:0,pitch:0}; }
 function mirrorCam(kind){
   const f=fuv(car.th), r=ruv(car.th), a=mirAdj(kind);
   if(kind==='center'){
-    const u=car.ru+f.u*(C2R+0.78), v=car.rv+f.v*(C2R+0.78);
-    const y=1.34+(RAMP_ON?groundH(u,v):0);
+    /* камера стоит у стекла салонного зеркала (z 0,35, y 1,26) и смотрит назад: в кадре стойки C,
+       подголовники и заднее стекло — как в живом зеркале. Корпус зеркала и козырьки позади камеры */
+    const u=car.ru+f.u*(C2R+0.35), v=car.rv+f.v*(C2R+0.35);
+    const y=1.26+(RAMP_ON?groundH(u,v):0);
     const g=fuv(angNorm(car.th+PI+a.yaw));
-    return {pos:{x:-u,y:y,z:v}, tgt:{x:-(u+g.u*14),y:y-0.62+Math.tan(a.pitch)*14,z:v+g.v*14}, fov:38};
+    /* 24°, не 38: при пропорции 0,30 это ≈70° по горизонтали, как у плоского зеркала; с 38° стойки C
+       у самой камеры заполняли половину картинки */
+    return {pos:{x:-u,y:y,z:v}, tgt:{x:-(u+g.u*14),y:y-0.25+Math.tan(a.pitch)*14,z:v+g.v*14}, fov:24};
   }
   const s = (kind==='right') ? 1 : -1;
-  const u=car.ru+f.u*(C2R+0.62)+r.u*(s*1.04), v=car.rv+f.v*(C2R+0.62)+r.v*(s*1.04);
-  const y=1.07+(RAMP_ON?groundH(u,v):0);
+  /* камера стоит внутри корпуса зеркала у его задней грани (корпус z 0,65–0,75, y 0,955–1,065):
+     с камерой над корпусом его верхняя грань попадала в кадр и с ближней плоскостью 0,08 м
+     ложилась белой полосой через всё зеркало */
+  const u=car.ru+f.u*(C2R+0.63)+r.u*(s*1.04), v=car.rv+f.v*(C2R+0.63)+r.v*(s*1.04);
+  const y=1.01+(RAMP_ON?groundH(u,v):0);
   const g=fuv(angNorm(car.th+PI-s*rad(13)+a.yaw));
-  return {pos:{x:-u,y:y,z:v}, tgt:{x:-(u+g.u*8),y:y-0.86+Math.tan(a.pitch)*8,z:v+g.v*8}, fov:52};
+  /* штатный наклон −2° и поле 46°: ручка задней двери попадает к внутреннему краю чуть ниже
+     середины — как в живой настройке «по ручке»; при 52°/−6° она висела в самом центре */
+  return {pos:{x:-u,y:y,z:v}, tgt:{x:-(u+g.u*8),y:y-0.28+Math.tan(a.pitch)*8,z:v+g.v*8}, fov:46};
 }
 function mirWrite(){
   try{ localStorage.setItem('trainer_mirrors', JSON.stringify(opt.mirAdj)); }catch(e){}
@@ -3677,7 +3822,7 @@ function mirReset(){
    `out` — отвод наружу от борта, он для левого и правого зеркала зеркально противоположен */
 const MIR_PRESETS=[
   {name:'по-книжному', out:0, down:0, cyaw:0, cpitch:0,
-   tip:'Полоска своего борта на ~1/5 ширины зеркала, горизонт по центру. Видно и свой габарит, и соседний ряд.'},
+   tip:'Полоска своего борта на ~1/5 ширины зеркала, ручка задней двери у внутреннего края чуть ниже середины, горизонт по центру. Видно и свой габарит, и соседний ряд.'},
   {name:'широко', out:rad(12), down:0, cyaw:0, cpitch:0,
    tip:'Зеркала отведены наружу: свой борт почти не виден, зато слепая зона меньше. Для потока, не для парковки.'},
   {name:'вниз на бордюр', out:rad(-4), down:rad(-9), cyaw:0, cpitch:rad(-4),
@@ -4120,8 +4265,6 @@ function drawSceneInto(o){
      салонной обшивки, а один общий сорт по средней глубине пускал длинные стены поверх салона */
   const inside = !o.noSelf && camInsideCabin();
   if(inside) flushFaces();
-  /* в салонное зеркало смотрят СКВОЗЬ заднее стекло: камера стоит внутри кузова,
-     и без этого исключения в нём виден только собственный салон — чёрный прямоугольник */
   if(!o.noSelf){
     const c=bodyPos();
     emitCarMesh(c.u,c.v,car.th,[206,214,226],car.steer,
@@ -4158,8 +4301,7 @@ function renderMirror(rect, kind){
   setVP(rect.x,rect.y,rect.w,rect.h);
   const mc=mirrorCam(kind);
   setCam(mc.pos, mc.tgt, null, mc.fov);
-  drawSceneInto({grid:false, trails:false, guides:opt.guides&&kind!=='center', maxD:46,
-                 noSelf:kind==='center'});
+  drawSceneInto({grid:false, trails:false, guides:opt.guides&&kind!=='center', maxD:46});
   ctx.restore();
   ctx.save();
   roundRect(rect.x-2,rect.y-2,rect.w+4,rect.h+4,9);
@@ -5004,7 +5146,7 @@ function endDrag(e){
 canvas.addEventListener('pointerup',endDrag);
 canvas.addEventListener('pointercancel',endDrag);
 canvas.addEventListener('pointerleave',e=>{ if(dragging) endDrag(e); });
-canvas.addEventListener('dblclick',()=>{ opt.camYaw=car.th; opt.pitch=rad(22); opt.fpYaw=0; opt.fpPitch=rad(-4); });
+canvas.addEventListener('dblclick',()=>{ opt.camYaw=car.th; opt.pitch=rad(22); opt.fpYaw=0; opt.fpPitch=rad(-2); });
 canvas.addEventListener('wheel',e=>{
   e.preventDefault();
   const k=e.deltaMode===1?18:(e.deltaMode===2?300:1);
