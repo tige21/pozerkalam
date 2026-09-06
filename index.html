@@ -541,7 +541,9 @@ function clipNear(poly){
    щель антиалиасинга — явление пиксельное, а 0,75 CSS-px на DPR 1 давали лишний пиксель.
    Тонкие грани (ширина < 1,5 px — рёбра лофта под скользящим углом) раздвигаются пропорционально
    ширине: с полным сдвигом каждая «щепка» становилась линией, и машины читались как сетка */
-const EXPAND_DEV=0.5, SPX=[], SPY=[];
+/* 0,9 px устройства — столько давала обводка 0,9 CSS-px при DPR 2; при 0,5 на GPU-Canvas шов
+   антиалиасинга (две кромки по половине покрытия) оставался светлой линией */
+const EXPAND_DEV=0.9, SPX=[], SPY=[];
 let pxScale=1;
 function pathCam(pts){
   const c = clipNear(pts); const n=c.length; if(n<3) return false;
@@ -3313,7 +3315,9 @@ const QUALITY=[ {dpr:2,    grain:true,  grad:true},
                 {dpr:1.5,  grain:false, grad:false},
                 {dpr:1.25, grain:false, grad:false},
                 {dpr:1,    grain:false, grad:false} ];
-let qLevel=0, qBest=0, qBadT=0, qGoodT=0, qCoolT=0, frameGap=16;
+/* первые секунды после загрузки кадры рваные (уровень, ресайз, прогрев) — регулятор молчит,
+   иначе он опускал уровень и храповик навсегда запирал зерно на машине, которая тянет всё */
+let qLevel=0, qBest=0, qBadT=0, qGoodT=0, qCoolT=3.0, frameGap=16;
 const Q_GAP_BAD=19, Q_GAP_GOOD=17.5, Q_BAD_HOLD=1.0, Q_GOOD_HOLD=6.0, Q_COOL=2.0;
 function qApply(level){
   qLevel=level; qCoolT=Q_COOL; qBadT=0; qGoodT=0;
@@ -6568,7 +6572,7 @@ function perfTick(dt){
   let sum=0; for(const x of g) sum+=x;
   const p95=g[Math.floor(g.length*0.95)], fps=1000/(sum/g.length);
   el.hidden=false;
-  setText(el, fps.toFixed(0)+' fps · p95 '+p95.toFixed(1)+' мс · js '+frameCost.toFixed(1)+' мс · dpr '+DPR.toFixed(2)+' · q'+qLevel+' · грани '+facesFrame);
+  setText(el, fps.toFixed(0)+' fps · p95 '+p95.toFixed(1)+' мс · js '+frameCost.toFixed(1)+' мс · dpr '+DPR.toFixed(2)+' · q'+qLevel+' · exp '+EXPAND_DEV+' · грани '+facesFrame);
 }
 function frame(ts){
   requestAnimationFrame(frame);
