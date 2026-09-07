@@ -2930,7 +2930,8 @@ const LEVELS = [
   ] },
 
 { name:'23 · Повороты на перекрёстке',
-  task:'Проехать два перекрёстка: направо на первом, налево на втором. Поворотник — до манёвра, траектория — без выезда на встречную.',
+  strict:true,
+  task:'Проехать два перекрёстка: направо на первом, налево на втором. Поворотник — до манёвра, траектория — без выезда на встречную. Грубая ошибка (встречная, стоп-линия, наезд) — попытка не засчитана: аварийная сразу, остальные со второй.',
   tip:'Правый поворот — по малой дуге, ближе к своему краю. Левый — от центра перекрёстка, с выходом на свою полосу.',
   steps:[
     'Заранее включи правый поворотник (E) и держись правее своей полосы.',
@@ -3006,7 +3007,8 @@ const LEVELS = [
   ] },
 
 { name:'24 · Разворот на перекрёстке',
-  task:'Развернуться на перекрёстке в один приём: прижаться правее, левый поворотник, дуга через центр — и в свою полосу.',
+  strict:true,
+  task:'Развернуться на перекрёстке в один приём: прижаться правее, левый поворотник, дуга через центр — и в свою полосу. Грубая ошибка (встречная, стоп-линия, наезд) — попытка не засчитана: аварийная сразу, остальные со второй.',
   tip:'Перед разворотом прижмись ПРАВЕЕ: твой круг разворота 11,8 м, и каждые полметра справа — запас слева.',
   steps:[
     'Заранее включи левый поворотник (Q).',
@@ -3072,7 +3074,8 @@ const LEVELS = [
   ] },
 
 { name:'25 · Пешеходный переход',
-  task:'Остановиться перед стоп-линией у перехода, осмотреться и проехать, не задерживаясь на зебре. Второй переход — без линии: сбавить и просмотреть.',
+  strict:true,
+  task:'Остановиться перед стоп-линией у перехода, осмотреться и проехать, не задерживаясь на зебре. Второй переход — без линии: сбавить и просмотреть. Грубая ошибка (встречная, стоп-линия, наезд) — попытка не засчитана: аварийная сразу, остальные со второй.',
   tip:'Стоп-линия — граница остановки: бампер до неё, не на ней. На самой зебре стоять нельзя ни секунды.',
   steps:[
     'Подъезжай и остановись перед стоп-линией — бампер до линии.',
@@ -3132,7 +3135,8 @@ const LEVELS = [
   ] },
 
 { name:'26 · Уступи дорогу',
-  task:'Выезд на главную под знак «уступи»: остановиться у края, пропустить машину слева и повернуть направо со своим поворотником.',
+  strict:true,
+  task:'Выезд на главную под знак «уступи»: остановиться у края, пропустить машину слева и повернуть направо со своим поворотником. Грубая ошибка (встречная, стоп-линия, наезд) — попытка не засчитана: аварийная сразу, остальные со второй.',
   tip:'Знак «уступи» = чужая дорога. Правый поворотник, стоп у края, взгляд налево — и только в чистое окно.',
   steps:[
     'Включи правый поворотник (E) заранее.',
@@ -3527,6 +3531,8 @@ function restart(){
   for(const a of level.actors){ a.u=a.act.u0; a.v=a.act.v0; a.yaw=a.act.yaw0;
     a.act.i=0; a.act.started=!a.act.trig; a.act.done=false; a._vioFired=false; }
   cityReset();
+  attempt = level.def.strict ? {strikes:0, log:[], failed:false, why:'', code:''} : null;
+  attWarn=''; attWarnT=0;
   if(exam) examInit();
   precShown=false; precHold=0;
   opt.camYaw=level.start.th; opt.pitch=rad(22); opt.fpYaw=0; opt.fpPitch=rad(-2);
@@ -3560,8 +3566,9 @@ function resolveCollisions(dt){
        набирала новое касание каждые полсекунды */
     if(!m){ o._touch=false; continue; }
     if(!o._touch){ o._touch=true; fresh=true; freshObj=o; if(o.act) o._hitByPlayer=true;
-      /* актёра не начисляем здесь: его покроет vio collision-actor из детекторов */
-      if(!o.act) examPenalty('collision'); }
+      /* актёра не начисляем здесь: его покроет vio collision-actor из детекторов.
+         На демо штраф глушим: показ ведёт машину сам и снял бы попытку игрока */
+      if(!o.act && !demo) hitPenalty(o); }
     /* m направлен ИЗ препятствия. Гасим только ту часть скорости, что идёт
        В препятствие: иначе из упора невозможно выехать — газ съедался каждый кадр */
     const outward = (f.u*m.u + f.v*m.v) * car.vel;
@@ -3881,6 +3888,7 @@ function vio(code,msg){
   vioEvents.push({code, t:game.t});
   console.warn('[vio] '+code);
   if(examActive()) examPenalty(code);
+  else if(attemptOn()) attemptVio(code, msg);
   else toast('⚠ '+msg, 3.2);
 }
 
@@ -3889,17 +3897,23 @@ function vio(code,msg){
    средние 3, мелкие 1; несдан при сумме ≥7. Аварийные нарушения — столкновение,
    непропуск — валят сразу (fatal), независимо от суммы */
 const EXAM_FAIL_SUM=7;
+/* fatal — аварийная, валит немедленно и на экзамене, и на строгом уровне;
+   hard — грубая, но не аварийная: на экзамене это просто баллы, на строгом уровне
+   первая даёт предупреждение, вторая отменяет попытку (см. «провал попытки») */
 const PENALTIES={
   'collision':       {pts:5, fatal:true,  txt:'Наезд на препятствие'},
   'collision-actor': {pts:5, fatal:true,  txt:'Столкновение с участником движения'},
   'yield':           {pts:5, fatal:true,  txt:'Не уступил дорогу'},
-  'oncoming':        {pts:5, fatal:false, txt:'Выезд на встречную полосу'},
+  'oncoming':        {pts:5, fatal:false, hard:true, txt:'Выезд на встречную полосу'},
   'rollback':        {pts:3, fatal:false, txt:'Откат на подъёме больше 0,3 м'},
-  'stopline':        {pts:3, fatal:false, txt:'Проезд стоп-линии без остановки'},
+  'stopline':        {pts:3, fatal:false, hard:true, txt:'Проезд стоп-линии без остановки'},
   'zebra':           {pts:3, fatal:false, txt:'Остановка на пешеходном переходе'},
   'no-blinker':      {pts:1, fatal:false, txt:'Манёвр без поворотника'},
   'stall':           {pts:1, fatal:false, txt:'Заглох двигатель'},
-  'handbrake-drive': {pts:1, fatal:false, txt:'Движение с затянутым ручником'}
+  'handbrake-drive': {pts:1, fatal:false, txt:'Движение с затянутым ручником'},
+  /* кода нет в экзаменационном начислении: там любой наезд идёт как 'collision'.
+     Он существует только для строгих городских уровней — см. hitPenalty */
+  'kerb':            {pts:3, fatal:false, hard:true, txt:'Наезд на бордюр'}
 };
 let exam=null;   /* {score, log:[], done, failed, rollFired, handFired} — живёт только на экзамен-уровне */
 function examActive(){ return !!exam && !exam.done; }
@@ -3912,7 +3926,7 @@ function examPenalty(code){
   if(p.fatal || exam.score>=EXAM_FAIL_SUM) examFail(p.txt);
 }
 /* каждой ошибке — уровень, где её отрабатывают: протокол даёт ссылку «отработать» */
-const EXAM_TRAIN={rollback:19, stall:19, 'handbrake-drive':19, collision:21,
+const EXAM_TRAIN={rollback:19, stall:19, 'handbrake-drive':19, collision:21, kerb:21,
   'no-blinker':22, oncoming:23, stopline:24, zebra:24, yield:25, 'collision-actor':25};
 /* первый проигрышный конец в игре: физика замирает на game.done, как при победе,
    а выход из замершего состояния — только через экран результата (ловушка resume) */
@@ -3974,6 +3988,67 @@ function examAbortHTML(){
     +'<button data-act="again">Да, прервать</button> '
     +'<button data-act="resume" class="ghost">Продолжить экзамен</button>';
 }
+/* ---------- провал попытки (строгие уровни) ----------
+   Экзамен считает баллы, городские уровни 23–26 — нет: там урок в том, что грубая
+   ошибка отменяет поездку целиком, как в жизни. Аварийные (fatal) валят сразу;
+   грубые, но не аварийные (hard) — со второй: первая даёт красное предупреждение,
+   чтобы игрок узнал правило, а не просто получил экран. Дворовые уровни и дриллы
+   флага strict не имеют — там удар о бордюр входит в обучение */
+let attempt=null;                  /* {strikes, log, failed, why, code} — только на strict-уровне */
+let attWarn='', attWarnT=0;        /* красная карточка после первой грубой ошибки */
+function attemptOn(){ return !!attempt && !attempt.failed; }
+function attemptVio(code, msg){
+  const p=PENALTIES[code];
+  if(!p){ toast('⚠ '+msg, 3.2); return; }
+  attempt.log.push({code, txt:p.txt, t:game.t});
+  if(p.fatal){ failAttempt(code, p.txt); return; }
+  if(!p.hard){ toast('⚠ '+p.txt, 3.2); return; }
+  attempt.strikes++;
+  console.warn('[fail] '+code+' — грубое нарушение '+attempt.strikes+' из 2');
+  if(attempt.strikes>=2){ failAttempt(code, p.txt); return; }
+  attWarn=p.txt+' — ещё одно грубое нарушение, и попытка не засчитана.';
+  attWarnT=5;
+}
+function failAttempt(code, why){
+  if(!attemptOn()) return;
+  attempt.failed=true; attempt.code=code; attempt.why=why;
+  console.warn('[fail] попытка не засчитана — '+why);
+  track('level-fail');
+  game.done=true;
+  if(demo) stopDemo();
+  attWarn=''; attWarnT=0;
+  tone(220,0.4,0.1,'sawtooth');
+  showOv(levelFailHTML());
+}
+/* наезд на препятствие: на экзамене — баллы (там любое касание = 'collision'),
+   на строгом городском уровне бордюр отделён от остального — цель стоит вплотную
+   к тротуару, и один чирк колесом не должен отменять поездку; второй отменяет */
+function hitPenalty(o){
+  if(examActive()){ examPenalty('collision'); return; }
+  if(attemptOn()) attemptVio(o.kind==='kerb' ? 'kerb' : 'collision', '');
+}
+/* экран провала обязан учить, а не только сообщать: к причине — правило */
+const FAIL_RULE={
+  'collision':       'Касание другого автомобиля, ограждения или столба — аварийная ошибка: поездка отменяется целиком.',
+  'collision-actor': 'Участник движения имеет приоритет. Создал ему помеху — попытка не засчитана, без вариантов.',
+  'yield':           'Уступить — значит не заставить другого тормозить или менять полосу. Не понял, кто первый, — стой.',
+  'oncoming':        'Встречная полоса чужая всегда, кроме разрешённого обгона. Выход из любого поворота — на свою полосу.',
+  'stopline':        'У стоп-линии нужна ПОЛНАЯ остановка: колёса встали, потом смотришь и едешь.',
+  'kerb':            'Бордюр — граница проезжей части, наезд на него считается выездом за её пределы.'
+};
+function levelFailHTML(){
+  const rule=FAIL_RULE[attempt.code]||'', tr=EXAM_TRAIN[attempt.code];
+  return '<h1>❌ Попытка не засчитана</h1>'
+    +'<p><b>'+attempt.why+'</b></p>'
+    +(rule?'<p style="color:#93a7bd">'+rule+'</p>':'')
+    +'<ul class="startlist">'+attempt.log.map(l=>'<li>'+l.txt
+      +' <span style="opacity:.55">('+l.t.toFixed(0)+' с)</span></li>').join('')+'</ul>'
+    +'<p>Грубая ошибка отменяет поездку целиком — так же, как на экзамене.</p>'
+    +'<button data-act="again">Начать заново</button> '
+    +(tr!==undefined?'<button data-act="train:'+tr+'" class="ghost">Отработать приём</button> ':'')
+    +'<button data-act="pick" class="ghost">К уровням</button>';
+}
+
 /* начисления, не привязанные к городской геометрии, + ведение маршрута */
 function examTick(){
   if(!examActive()) return;
@@ -5203,6 +5278,8 @@ function updateHUD(){
       +(sg&&sg.say ? ' — '+sg.say : '')+' · любая кнопка прерывает'); }
   else if(game.done) coachCard('ok','✅','Готово!');
   else if(selWarnT>0) coachCard('stop','⚠',selWarn);
+  /* выше разбора касания: игрок должен узнать про вторую ошибку раньше, чем про угол удара */
+  else if(attWarnT>0) coachCard('stop','⚠',attWarn);
   else if(noteT>0) coachCard('info','⚙',note);
   else if(game.hitMsgT>0) coachCard('hit','⚠',game.hitMsg,null,{why:game.hitWhy});
   /* молчаливый инспектор: только команда этапа, никаких «как» — фазовые подсказки не для экзамена */
@@ -5298,7 +5375,8 @@ function hideOv(){ ovEl.style.display='none'; paused=false; helpOpen=false;
 function doAct(a){
   /* уровень уже пройден или провален: закрывать оверлей нельзя — физика стоит на game.done */
   if(a==='resume' && game.done){
-    showOv(exam&&exam.done ? (exam.failed?examFailHTML():examPassHTML()) : winHTML()); return; }
+    showOv(exam&&exam.done ? (exam.failed?examFailHTML():examPassHTML())
+         : (attempt&&attempt.failed) ? levelFailHTML() : winHTML()); return; }
   if(a==='pick'){ helpOpen=false; showLevelPick(); return; }
   if(a && a.indexOf('train:')===0){ loadLevel(+a.slice(6)); hideOv(); return; }
   if(a==='help'){ helpOpen=true; showOv(helpHTML()); return; }
@@ -5375,7 +5453,8 @@ function levelPickHTML(){
       +(weakSet.has(i)?' weak':'')+'" data-lvl="'+i+'">'
       +'<div class="n">'+(l.custom?'★':(i+1))+(pg?' ✓':'')+'</div>'
       +'<div class="t">'+nm+'</div>'
-      +'<div class="d">'+(pg?progLine(l.name):(l.task||'').slice(0,90))+'</div></div>';
+      +'<div class="d">'+(l.strict?'⚠ грубая ошибка — заново · ':'')
+      +(pg?progLine(l.name):(l.task||'').slice(0,90))+'</div></div>';
   });
   s+='</div><p style="margin-top:10px;color:#93a7bd;font-size:12.5px">'
     +'Первые девять — ещё и клавишами 1…9. ★ — твои площадки из редактора.</p>'
@@ -6758,6 +6837,7 @@ function frame(ts){
   game.flash=Math.max(0,game.flash-dt*2.6);
   if(game.hitMsgT>0) game.hitMsgT-=dt;
   if(selWarnT>0) selWarnT-=dt;
+  if(attWarnT>0) attWarnT-=dt;
   if(noteT>0) noteT-=dt;
   if(mirNoteT>0) mirNoteT-=dt;
   { const lk=atLock(); if(lk && !lockWas && !demo) tone(150,0.07,0.035); lockWas=lk; }
