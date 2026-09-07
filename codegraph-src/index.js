@@ -3375,7 +3375,7 @@ const REFS_NAMES = ['выкл','габариты','всё'];
 /* траектории по умолчанию выключены: у новичка на первом запуске дуги прогноза, след
    колёс и идеальная линия сливались в кашу поверх обучающих маркеров. G включает всё разом */
 const opt  = { guides:false, trails:false, sound:false, refs:2, marks:true, camMode:CAM_CHASE, camYaw:0, pitch:rad(22),
-               dist:9.0, fpYaw:0, fpPitch:rad(-2), fpFov:62, mirrors:true, prev3rd:CAM_CHASE, gfx:'auto',
+               dist:9.0, fpYaw:0, fpPitch:rad(-2), fpFov:62, mirrors:true, mirScale:1, prev3rd:CAM_CHASE, gfx:'auto',
                mirAdj:{left:{yaw:0,pitch:0}, right:{yaw:0,pitch:0}, center:{yaw:0,pitch:0}} };
 let level = null, paused = true, trails = null, trailT = 0;
 let dprCap = 2;
@@ -4765,23 +4765,49 @@ function drawSceneInto(o){
   flushFaces();
   if(o.labels) drawMarkLabels(curS);
 }
+/* размер зеркал: у кого-то монитор далеко, у кого-то телефон — в жизни зеркало настраивают под
+   себя, здесь тоже. Множитель к штатным размерам, ограничен так, чтобы зеркала не залезали
+   на панели и не выходили за экран */
+const MIR_SCALES=[0.85, 1, 1.25, 1.5, 1.8];
+function mirScaleClamped(maxW, maxH, w, h){
+  return Math.min(opt.mirScale, maxW/w, maxH/h);
+}
 function mirrorRects(){
   if(document.body.classList.contains('compact')){
     const k=clamp(H/390, 0.6, 1);
-    const cw=clamp(W*0.23,130,220)*k, ch=cw*0.30;
-    const sw=clamp(W*0.13,84,132)*k, sh=sw*0.72;
+    let cw=clamp(W*0.23,130,220)*k, ch=cw*0.30;
+    let sw=clamp(W*0.13,84,132)*k, sh=sw*0.72;
+    const kc=mirScaleClamped(W*0.62, H*0.30, cw, ch), ks=mirScaleClamped(W*0.30, H*0.46, sw, sh);
+    cw*=kc; ch*=kc; sw*=ks; sh*=ks;
     const mmB = 5 + Math.round(100*k) + 6;      /* боковые зеркала ниже карты */
     const sy=clamp(H*0.26, mmB, Math.max(mmB+2, H-136-sh));
     return { center:{x:(W-cw)/2, y:4, w:cw, h:ch},
              left:{x:8, y:sy, w:sw, h:sh},
              right:{x:W-8-sw, y:sy, w:sw, h:sh} };
   }
-  const cw=clamp(W*0.235,200,336), ch=cw*0.30;
-  const sw=clamp(W*0.148,144,224), sh=sw*0.70;
-  const sy=clamp(H*0.40, 116, Math.max(120, H-258-sh));
+  let cw=clamp(W*0.235,200,336), ch=cw*0.30;
+  let sw=clamp(W*0.148,144,224), sh=sw*0.70;
+  /* салонное не должно налезать на карточку уровня слева (max-width 31vw, но не больше 420) —
+     иначе подпись «салонное» уходит под неё */
+  const cardW=Math.min(W*0.31, 420)+24;
+  const kc=mirScaleClamped(Math.max(200, W-2*cardW), H*0.26, cw, ch), ks=mirScaleClamped(W*0.28, H*0.52, sw, sh);
+  cw*=kc; ch*=kc; sw*=ks; sh*=ks;
+  /* верх боковых зеркал не поднимается выше 116: там висят кнопки «заново» и «демонстрация»,
+     и HTML-кнопка молча съедала бы тапы, нацеленные в зеркало на канве */
+  const sy=clamp(H*0.40, 116, Math.max(120, H-190-sh));
   return { center:{x:(W-cw)/2, y:8, w:cw, h:ch},
            left:{x:16, y:sy, w:sw, h:sh},
            right:{x:W-16-sw, y:sy, w:sw, h:sh} };
+}
+function setMirScale(v){
+  opt.mirScale=v;
+  try{ localStorage.setItem('trainer_mirscale', String(v)); }catch(e){}
+  for(const k in mirBuf) delete mirBuf[k];     /* канвасы пересоздаются под новый размер */
+  toast('Зеркала: '+Math.round(v*100)+'%', 2);
+}
+function cycleMirScale(step){
+  const i=MIR_SCALES.indexOf(opt.mirScale);
+  setMirScale(MIR_SCALES[clamp((i<0?1:i)+step, 0, MIR_SCALES.length-1)]);
 }
 /* зеркала рисуются в свои канвасы по одному за кадр (round-robin): три полных прохода сцены каждый
    кадр стоили на программном Canvas больше, чем сам вид из салона, а обновление каждого зеркала
@@ -5685,6 +5711,9 @@ canvas.addEventListener('wheel',e=>{
   e.preventDefault();
   const k=e.deltaMode===1?18:(e.deltaMode===2?300:1);
   if(editor){ editor.cam.h=clamp(editor.cam.h + e.deltaY*k*0.03, 12, 90); return; }
+  /* колесо НАД зеркалом меняет размер зеркал, а не приближает камеру: там же его и настраивают
+     перетаскиванием, и свободных клавиш под размер не осталось */
+  if(mirrorAt(e.clientX, e.clientY)){ cycleMirScale(e.deltaY>0 ? -1 : 1); return; }
   if(opt.camMode===CAM_FP) opt.fpFov=clamp(opt.fpFov + e.deltaY*k*0.05, 32, 92);
   else opt.dist=clamp(opt.dist + e.deltaY*k*0.012, 3.4, 22);
 },{passive:false});
@@ -6429,6 +6458,7 @@ try{ const m=localStorage.getItem('trainer_marks'); if(m!==null) opt.marks=m==='
 opt.gearbox='AT';
 try{ const g=localStorage.getItem('trainer_gearbox'); if(g==='MT') opt.gearbox='MT'; }catch(e){}
 try{ if(localStorage.getItem('trainer_gfx')==='max') opt.gfx='max'; }catch(e){}
+try{ const m=parseFloat(localStorage.getItem('trainer_mirscale')); if(MIR_SCALES.indexOf(m)>=0) opt.mirScale=m; }catch(e){}
 if(MOB) opt.refs = 1;   /* на телефоне метки расстояний мешают, но габариты нужны везде */
 try{ const r=localStorage.getItem('trainer_refs'); if(r!==null) opt.refs=clamp(+r|0,0,2); }catch(e){}
 mirLoad();
@@ -6532,6 +6562,7 @@ function buildMenu(){
   add('Коробка: '+(mtOn()?'механика':'автомат'), ()=>setGearbox(mtOn()?'AT':'MT'), ()=>mtOn());
   /* качество: «авто» бережёт кадры и на слабой машине снимает зерно и мелочи, «максимум» —
      всё видно всегда, ценой fps. Регулятор в этом режиме молчит */
+  add('Зеркала: '+Math.round(opt.mirScale*100)+'%', ()=>cycleMirScale(1), ()=>opt.mirScale>1);
   add('Графика: '+(opt.gfx==='max'?'максимум':'авто'), ()=>{
     opt.gfx = opt.gfx==='max' ? 'auto' : 'max';
     try{ localStorage.setItem('trainer_gfx', opt.gfx); }catch(e){}
