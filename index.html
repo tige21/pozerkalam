@@ -3729,80 +3729,158 @@ const LEVELS = [
   ] },
 
 { name:'32 · Экзамен: маршрут с инспектором',
-  task:'Экзаменационная поездка: команды даёт инспектор, подсказок и датчиков нет. Допустимо до 6 штрафных баллов; аварийная ошибка — незачёт сразу.',
-  tip:'Слушай команду в карточке и выполняй ритуалы: поворотник до манёвра, полная остановка у стоп-линий, откат на эстакаде не больше 0,3 м.',
+  task:'Экзаменационная поездка по городу: команды даёт инспектор. Маршрут выбирается случайно из трёх, каждый — около 450 м с перекрёстками, разворотом, кольцом и эстакадой. Допустимо до 6 штрафных баллов; аварийная ошибка — незачёт сразу.',
+  tip:'Два режима в меню ≡. Тренировочный: команда объявляется заранее, карта маршрута в углу, ошибка разбирается на месте. Настоящий: инспектор молчит, датчиков нет, грубая ошибка валит попытку.',
   steps:[
-    'Порядок манёвров выбирает инспектор — каждый заезд немного другой.',
+    'Маршрут выбирается случайно — заучить наизусть не получится.',
+    'Команда приходит заранее: «через 60 м направо» — успевай перестроиться.',
     'Остановка по требованию: поворотник, прижаться к тротуару, замереть.',
     'Эстакада: полная остановка у линии на подъёме, трогание без отката.',
-    'Разворот на дальнем перекрёстке — прижмись правее перед дугой.',
-    'Финиш: останови машину у тротуара в названном кармане.',
+    'Финиш: останови машину у тротуара там, где скажет инспектор.',
   ],
-  refs:'Карточка инспектора фиолетовая. Счёт баллов — в ней же.',
+  refs:'Карточка инспектора фиолетовая, счёт баллов — в ней же. В тренировочном режиме внизу справа — карта маршрута.',
   hacks:[
     'Не гонись: время не оценивается, оцениваются ошибки.',
     'Сомневаешься в манёвре — остановись и подумай: остановка не штрафуется.',
-    'Каждый ритуал отработан в уровнях 20–26 — экзамен просто собирает их подряд.',
+    'Каждый ритуал отработан в уровнях 20–31 — экзамен просто собирает их подряд.',
   ],
   transfer:'Это репетиция реального экзамена: те же команды, те же баллы, тот же молчаливый инспектор.',
+  /* Маршруты живут на общем городе: те же перекрёстки, что и в тренировках 27–31,
+     поэтому ориентир, выученный на уровне, работает и здесь. Три маршрута плюс две
+     случайности внутри каждого — заучить порядок наизусть нельзя */
   examRoute(){
-    const R1=Math.random()<0.5, R2=Math.random()<0.5;
-    const stop=(cmd,inZone)=>{ let held=0, was=false;
-      return {cmd, done:s=>{
+    const hd=(s,d)=>Math.abs(angNorm(s.th-rad(d)))<rad(35);
+    /* остановка по требованию: полная остановка в зоне, потом продолжение движения */
+    const stopGo=(cmd,short,at,inZone)=>{ let held=0, was=false;
+      return {cmd, short, at, turn:'stop', done:s=>{
         if(inZone(s)&&Math.abs(s.vel)<0.1){ if(++held>50) was=true; } else held=0;
         return was && s.vel>0.4; }}; };
-    const stopFinal=(cmd,inZone)=>{ let held=0;
-      return {cmd, done:s=>{ if(inZone(s)&&Math.abs(s.vel)<0.1) return ++held>70;
-        held=0; return false; }}; };
-    const st=[];
-    st.push({cmd:'Тронься и веди прямо по улице', done:s=>s.v>-24&&s.vel>0.5});
-    if(R1) st.push(stop('Остановись у тротуара справа — и продолжай движение',
-      s=>s.v>-19&&s.v<-10&&s.u>1.95));
-    st.push({cmd:'На перекрёстке — направо', done:s=>s.u>4&&Math.abs(deg(angNorm(s.th))-90)<30});
-    st.push(stop('Эстакада: остановись у линии на подъёме, зафиксируйся — и наверх',
-      s=>s.u>14.6&&s.u<17.8&&s.v<12));
-    st.push({cmd:'Съезжай и на дальнем перекрёстке развернись в обратную сторону',
-      done:s=>s.u<36&&Math.abs(deg(angNorm(s.th))+90)<30});
-    if(!R1) st.push(stop('Остановись у тротуара справа — и продолжай движение',
-      s=>s.u>4.5&&s.u<12.5&&s.v>13.9));
-    st.push({cmd:'На перекрёстке — налево, на юг',
-      done:s=>s.v<8&&Math.abs((deg(angNorm(s.th))+360)%360-180)<30});
-    st.push(stopFinal(R2?'Финиш: останови машину у тротуара в ПЕРВОМ кармане'
-                        :'Финиш: останови машину у тротуара во ВТОРОМ кармане',
-      R2 ? s=>s.v>-17&&s.v<-11&&s.u<-1.9
-         : s=>s.v>-25&&s.v<-19&&s.u<-1.9));
-    return st;
+    const stopEnd=(cmd,short,at,inZone)=>{ let held=0;
+      return {cmd, short, at, turn:'park', done:s=>{
+        if(inZone(s)&&Math.abs(s.vel)<0.1) return ++held>70; held=0; return false; }}; };
+    const go=(cmd,short,at,turn,done)=>({cmd, short, at, turn, done});
+    const R=Math.floor(Math.random()*3), A=Math.random()<0.5, B=Math.random()<0.5;
+    /* карманы у тротуара: два на проспекте, два на Садовой — какой назовут, решает жребий */
+    const POCK={
+      /* карман обязан лежать ЗА точкой, где закрывается предыдущий этап: с карманом на
+         v=−64 команда «остановись» приходила, когда он уже был позади, и маршрут вставал */
+      lenS:{u:8.15, v:A?-50:-38, w:s=>s.u>6.6&&s.v>(A?-53:-41)&&s.v<(A?-47:-35)},
+      lenN:{u:8.15, v:B?50:36,   w:s=>s.u>6.6&&s.v>(B?47:33)&&s.v<(B?53:39)},
+      sadW:{u:A?-40:-28, v:-68.35, w:s=>s.v>-70&&s.v<-66.7&&s.u>(A?-46:-34)&&s.u<(A?-34:-22)}
+    };
+    if(R===0) return [
+      go('Тронься и веди по проспекту на север','прямо по проспекту',{u:8.15,v:-84},'straight',
+         s=>s.v>-78&&s.vel>0.5),
+      stopGo('Остановись у тротуара справа — и продолжай движение','остановка у тротуара',
+         {u:POCK.lenS.u,v:POCK.lenS.v}, POCK.lenS.w),
+      go('Развернись на проспекте — разворот выполняют с трамвайных путей','разворот',
+         {u:0,v:-35},'U', s=>s.v<-46&&hd(s,180)),
+      go('На перекрёстке — налево, на Садовую','налево',{u:0,v:-70},'L',
+         s=>s.u>12&&hd(s,90)),
+      go('По Садовой на восток, на перекрёстке — налево, на Восточную','налево',
+         {u:78,v:-70},'L', s=>s.v>-60&&hd(s,0)),
+      stopGo('Эстакада: остановись у линии на подъёме и трогайся без отката','стоп на подъёме',
+         {u:78,v:-50}, s=>s.v>-52&&s.v<-47.5&&s.u>74&&s.u<82),
+      go('На кольце — второй съезд, на Заводскую','второй съезд',{u:78,v:0},'U',
+         s=>s.u<62&&hd(s,270)),
+      go('На перекрёстке с проспектом — направо, на север','направо',{u:0,v:0},'R',
+         s=>s.v>12&&hd(s,0)),
+      stopEnd('Финиш: останови машину у тротуара в кармане','финиш у тротуара',
+         {u:POCK.lenN.u,v:POCK.lenN.v}, POCK.lenN.w)
+    ];
+    if(R===1) return [
+      go('Тронься и веди по проспекту на север','прямо по проспекту',{u:8.15,v:-84},'straight',
+         s=>s.v>-78&&s.vel>0.5),
+      go('На перекрёстке — налево, на Садовую','налево',{u:0,v:-70},'L',
+         s=>s.u<-12&&hd(s,270)),
+      stopGo('Остановись у тротуара справа — и продолжай движение','остановка у тротуара',
+         {u:POCK.sadW.u,v:POCK.sadW.v}, POCK.sadW.w),
+      go('На перекрёстке — направо, на Западную','направо',{u:-78,v:-70},'R',
+         s=>s.v>-60&&hd(s,0)),
+      go('На косом перекрёстке — направо, на Заводскую','направо на Заводскую',{u:-78,v:0},'R',
+         s=>s.u>-64&&hd(s,90)),
+      go('Перестройся в правую полосу — впереди сплошная','перестроение вправо',
+         {u:42,v:-4.95},'straight', s=>s.u>46&&s.v<-3.3),
+      go('На кольце — первый съезд, на юг','первый съезд',{u:78,v:0},'U',
+         s=>s.v<-20&&hd(s,180)),
+      stopGo('Эстакада: остановись у линии на подъёме и трогайся без отката','стоп на подъёме',
+         {u:78,v:-38}, s=>s.v>-42&&s.v<-37&&s.u>74&&s.u<82),
+      go('На перекрёстке — направо, на Садовую','направо',{u:78,v:-70},'R',
+         s=>s.u<66&&hd(s,270)),
+      stopEnd('Финиш: останови машину у тротуара в кармане','финиш у тротуара',
+         {u:POCK.sadW.u,v:POCK.sadW.v}, POCK.sadW.w)
+    ];
+    return [
+      go('Тронься и веди по проспекту на север','прямо по проспекту',{u:8.15,v:-84},'straight',
+         s=>s.v>-78&&s.vel>0.5),
+      go('Светофор на перекрёстке — проезжай прямо','прямо через светофор',{u:0,v:-70},'straight',
+         s=>s.v>-56),
+      stopGo('Остановись у тротуара справа — и продолжай движение','остановка у тротуара',
+         {u:POCK.lenS.u,v:POCK.lenS.v}, POCK.lenS.w),
+      go('Развернись на проспекте — с трамвайных путей','разворот',{u:0,v:-35},'U',
+         s=>s.v<-46&&hd(s,180)),
+      go('На перекрёстке — направо, на Садовую','направо',{u:0,v:-70},'R',
+         s=>s.u<-12&&hd(s,270)),
+      go('На перекрёстке — направо, на Западную','направо',{u:-78,v:-70},'R',
+         s=>s.v>-60&&hd(s,0)),
+      go('На косом перекрёстке — направо, на Заводскую','направо на Заводскую',{u:-78,v:0},'R',
+         s=>s.u>-64&&hd(s,90)),
+      go('На перекрёстке с проспектом — налево, на север','налево',{u:0,v:0},'L',
+         s=>s.v>12&&hd(s,0)),
+      stopEnd('Финиш: останови машину у тротуара в кармане','финиш у тротуара',
+         {u:POCK.lenN.u,v:POCK.lenN.v}, POCK.lenN.w)
+    ];
   },
   build(){
-    const obs=[], dec=[], city={stoplines:[],zebras:[],oncoming:[],turnZones:[],yieldZones:[]};
-    roadDec(dec, 0, -10, 0, 44, 3.3);
-    roadDec(dec, 20, 12, rad(90), 48, 3.3);
-    crossDec(dec, 0, 12, 3.3);
-    roadDec(dec, 38, 12, 0, 17, 5.2);
-    crossDec(dec, 38, 12, 5.2);
-    obs.push(kerb(3.55, -16, 0.5, 13));
-    obs.push(kerb(-3.55, -17, 0.5, 15));
-    obs.push(kerb(8.5, 15.55, 9, 0.5));
-    obs.push(kerb(22, 8.2, 18, 0.5));
-    obs.push(kerb(22, 15.8, 18, 0.5));
-    obs.push(kerb(43.7, 12, 0.5, 17));
-    obs.push(kerb(38, 3.3, 10.5, 0.5));
-    obs.push(kerb(38, 20.7, 10.5, 0.5));
-    obs.push(sign('main', -4.4, 7.4, 0));
-    obs.push(sign('main', 15.6, 7.4, rad(90)));
-    const ramps=[ rampZone(14.2, 12, rad(90), 6.8, 5.5, 0.17),
-                  deckZone(19.7, 12, rad(90), 6.8, 4.6, 0.935),
-                  rampZone(29.8, 12, rad(-90), 6.8, 5.5, 0.17) ];
-    city.stoplines.push(stoplineDec(dec, 17.0, 10.35, rad(90), 3.0));
-    city.oncoming.push({u:-1.65, v:-10, yaw:0, w:3.3, l:38});
-    city.oncoming.push({u:1.65, v:-16, yaw:rad(180), w:3.3, l:26});
-    city.turnZones.push({u:0, v:12, yaw:0, w:8.6, l:8.6, blink:'R', dir:0});
-    city.turnZones.push({u:0, v:12, yaw:0, w:8.6, l:8.6, blink:'L', dir:rad(-90)});
-    city.turnZones.push({u:38, v:12, yaw:0, w:11, l:10, blink:'L', dir:rad(90)});
-    for(const zv of [-14, -22])
-      dec.push({line:true, stroke:'rgba(125,216,255,.55)', lw:2, dash:[7,6],
-        pts:[{u:-3.2,v:zv-2.8},{u:-1.5,v:zv-2.8},{u:-1.5,v:zv+2.8},{u:-3.2,v:zv+2.8},{u:-3.2,v:zv-2.8}]});
-    return { obs, dec, city, ramps, start:{u:1.65,v:-28,th:0}, goal:null }; }
+    const b=cityBase();
+    /* светофор + его стоп-линия одним вызовом: две геометрии для одного перекрёстка
+       разъезжаются на полметра, и «проезд на красный» считался бы не там, где линия */
+    const put=(u,v,yaw,grp,off,su,sv,syaw,sw)=>{
+      const L=trafficLight(u,v,yaw,grp,off);
+      b.obs.push(L); b.city.lights.push(L);
+      const sl=stoplineDec(b.dec,su,sv,syaw,sw); sl.light=L; b.city.stoplines.push(sl);
+    };
+    put(10.9,-82.5,rad(180),'NS',0,   4.9,-82.5,0,9.8);
+    put(10.9,-12.5,rad(180),'NS',6,   4.9,-12.5,0,9.8);
+    put(-13.0,-8.2,rad(-90),'EW',0,  -12.5,-3.3,rad(90),6.6);
+    put(13.0,-73.4,rad(90),'EW',4,    12.5,-68.35,rad(-90),3.3);
+    b.obs.push(sign('main', -4.4,-77.0, rad(180)));
+    b.obs.push(sign('circle', 62,-8.6, rad(-90)));
+    b.obs.push(sign('yield',  59,-8.6, rad(-90)));
+    b.obs.push(sign('yield', -74.4,-11.0, rad(180)));
+    /* эстакада на Восточной между кольцом и Садовой: подъём с обеих сторон, настил посередине —
+       маршрут может идти по ней и на север, и на юг */
+    const ramps=[ rampZone(78,-52.8,0,6.6,5.5,0.17),
+                  deckZone(78,-47.3,0,6.6,4.6,0.935),
+                  rampZone(78,-37.2,rad(180),6.6,5.5,0.17) ];
+    b.city.stoplines.push(stoplineDec(b.dec, 78,-50.2, 0, 6.6));
+    b.city.stoplines.push(stoplineDec(b.dec, 78,-39.8, rad(180), 6.6));
+    /* встречка объявлена по НАПРАВЛЕНИЮ: после разворота та же половина дороги своя */
+    b.city.oncoming.push({u:-4.9, v:-88, yaw:0, w:9.8, l:26});
+    b.city.oncoming.push({u:-4.9, v:-58, yaw:0, w:9.8, l:20});
+    b.city.oncoming.push({u:-4.9, v:-20, yaw:0, w:9.8, l:14});
+    b.city.oncoming.push({u:4.9,  v:-58, yaw:rad(180), w:9.8, l:20});
+    b.city.oncoming.push({u:36,   v:3.3, yaw:rad(90), w:6.6, l:44});
+    b.city.oncoming.push({u:-40,  v:-3.3, yaw:rad(90), w:6.6, l:44});
+    b.city.turnZones.push({u:0, v:-70, yaw:0, w:22, l:22, blink:'R', dir:0});
+    b.city.turnZones.push({u:0, v:-70, yaw:0, w:22, l:22, blink:'L', dir:rad(180)});
+    b.city.turnZones.push({u:0, v:0,   yaw:0, w:22, l:22, blink:'R', dir:rad(270)});
+    b.city.turnZones.push({u:0, v:0,   yaw:0, w:22, l:22, blink:'L', dir:rad(90)});
+    b.city.turnZones.push({u:-78, v:-70, yaw:0, w:11, l:11, blink:'R', dir:rad(270)});
+    b.city.turnZones.push({u:-78, v:0,  yaw:0, w:15, l:13, blink:'R', dir:0});
+    b.city.turnZones.push({u:78, v:-70, yaw:0, w:11, l:11, blink:'R', dir:rad(180)});
+    b.city.turnZones.push({u:78, v:-70, yaw:0, w:11, l:11, blink:'L', dir:rad(270)});
+    b.city.turnZones.push({u:0, v:-35, yaw:0, w:19.6, l:18, uturn:true, blink:'L', dir:0});
+    b.city.yieldZones.push({u:61, v:-4.95, yaw:rad(90), w:6.6, l:9, dist:13});
+    b.city.yieldZones.push({u:-78, v:-11, yaw:0, w:6.6, l:7, dist:14});
+    /* карманы у тротуара — голубым пунктиром, как на прежнем маршруте */
+    const pocket=(u,v,w,l)=>b.dec.push({line:true, stroke:'rgba(125,216,255,.55)', lw:2, dash:[7,6],
+      pts:rectPts(u,v,w,l,0).concat([rectPts(u,v,w,l,0)[0]])});
+    pocket(8.6,-50,3.0,6.0); pocket(8.6,-38,3.0,6.0);
+    pocket(8.6,50,3.0,6.0);  pocket(8.6,36,3.0,6.0);
+    pocket(-40,-68.35,10.0,3.0); pocket(-28,-68.35,10.0,3.0);
+    return { obs:b.obs, dec:b.dec, city:b.city, ramps,
+             start:{u:8.15,v:-100,th:0}, goal:null }; }
   }
 ];
 
@@ -3907,6 +3985,7 @@ const REFS_NAMES = ['выкл','габариты','всё'];
    колёс и идеальная линия сливались в кашу поверх обучающих маркеров. G включает всё разом */
 const opt  = { guides:false, trails:false, sound:false, refs:2, marks:true, camMode:CAM_CHASE, camYaw:0, pitch:rad(22),
                dist:9.0, fpYaw:0, fpPitch:rad(-2), fpFov:62, mirrors:true, mirScale:1, prev3rd:CAM_CHASE, gfx:'auto',
+               examMode:'train',
                mirAdj:{left:{yaw:0,pitch:0}, right:{yaw:0,pitch:0}, center:{yaw:0,pitch:0}} };
 let level = null, paused = true, trails = null, trailT = 0;
 let dprCap = 2;
@@ -4041,6 +4120,9 @@ function loadLevel(i){
   document.getElementById('lvlTip').textContent  = '💡 ' + def.tip;
   document.getElementById('lvlIdx').textContent  = 'уровень ' + (game.li+1) + ' / ' + LEVELS.length;
   track('level-start');
+  /* маршрут показываем ДО старта: «слишком маленький и непонятный» был не про длину,
+     а про то, что игрок не видел, куда его повезут */
+  if(def.examRoute) showOv(examBriefHTML());
 }
 function restart(){
   missFwd=null;
@@ -4449,6 +4531,7 @@ const PENALTIES={
   'kerb':            {pts:3, fatal:false, hard:true, txt:'Наезд на бордюр'}
 };
 let exam=null;   /* {score, log:[], done, failed, rollFired, handFired} — живёт только на экзамен-уровне */
+let examWhy='', examWhyT=0;   /* разбор ошибки в тренировочном режиме */
 function examActive(){ return !!exam && !exam.done; }
 function examPenalty(code){
   const p=PENALTIES[code]; if(!p || !examActive()) return;
@@ -4466,6 +4549,9 @@ const EXAM_TRAIN={rollback:19, stall:19, 'handbrake-drive':19, collision:21, ker
    а выход из замершего состояния — только через экран результата (ловушка resume) */
 function examFail(why){
   if(!examActive()) return;
+  /* тренировочный прогон не обрывается: ошибка записывается в протокол и разбирается
+     на месте, иначе новичок видит экран провала раньше, чем понимает, что сделал */
+  if(examTrain()){ examWhy=why; examWhyT=6; return; }
   exam.done=true; exam.failed=true; exam.failWhy=why;
   track('exam-fail');
   console.warn('[exam] НЕ СДАН — '+why);
@@ -4514,6 +4600,46 @@ function examFailHTML(){
     +'<ul class="startlist">'+examLogRows()+'</ul>'
     +'<p>На настоящем экзамене после трёх неудач пересдача — через полгода. Здесь — сразу.</p>'
     +'<button data-act="again">Попробовать снова</button> '
+    +'<button data-act="pick" class="ghost">К уровням</button>';
+}
+/* брифинг: карта маршрута и список команд ДО старта. На настоящем экзамене инспектор
+   тоже сообщает маршрут в общих чертах — молчит он про то, КАК ехать, а не КУДА */
+function examRouteSvg(){
+  let u0=1e9,u1=-1e9,v0=1e9,v1=-1e9;
+  for(const st of exam.route) if(st.at){
+    u0=Math.min(u0,st.at.u); u1=Math.max(u1,st.at.u);
+    v0=Math.min(v0,st.at.v); v1=Math.max(v1,st.at.v); }
+  if(u0>u1) return '';
+  const pad=14, W=(u1-u0)+pad*2, Hh=(v1-v0)+pad*2;
+  const px=(u)=>((u-u0)+pad).toFixed(1), py=(v)=>((v1-v)+pad).toFixed(1);
+  let roads='';
+  for(const d of level.dec){
+    if(d.line || d.fill!==ASPHALT || !d.pts) continue;
+    roads+='<polygon points="'+d.pts.map(p=>px(p.u)+','+py(p.v)).join(' ')
+         +'" fill="rgba(122,131,142,.45)"/>';
+  }
+  const pts=exam.route.filter(st=>st.at);
+  const line='<polyline points="'+pts.map(st=>px(st.at.u)+','+py(st.at.v)).join(' ')
+    +'" fill="none" stroke="#7dd8ff" stroke-width="1.6" stroke-dasharray="4,3" '
+    +'stroke-linejoin="round" stroke-linecap="round"/>';
+  const dots=pts.map((st,i)=>'<circle cx="'+px(st.at.u)+'" cy="'+py(st.at.v)+'" r="2" fill="'
+    +(i===0?'#50dc82':i===pts.length-1?'#ff5a66':'#ffcf4d')+'"/>').join('');
+  return '<svg viewBox="0 0 '+W.toFixed(0)+' '+Hh.toFixed(0)+'" '
+    +'style="width:100%;max-height:220px;background:rgba(0,0,0,.28);border-radius:8px;margin:8px 0">'
+    +roads+line+dots+'</svg>';
+}
+function examBriefHTML(){
+  const rows=exam.route.map((st,i)=>'<li>'+(i+1)+'. '+st.cmd+'</li>').join('');
+  return '<h1>🎓 Экзаменационный маршрут</h1>'
+    +'<p>'+(examTrain()
+      ? 'Тренировочный режим: подсказки, зазоры и карта маршрута включены, ошибка не обрывает поездку — её разберут на месте.'
+      : 'Настоящий режим: инспектор молчит, датчиков нет, грубая ошибка — незачёт сразу.')+'</p>'
+    +examRouteSvg()
+    +'<ul class="startlist">'+rows+'</ul>'
+    +'<p style="color:#93a7bd">Допустимо до '+(EXAM_FAIL_SUM-1)+' штрафных баллов. '
+    +'Порядок манёвров и финишный карман в каждом заезде свои.</p>'
+    +'<button data-act="brief">Поехали</button> '
+    + examModeBtnHTML()
     +'<button data-act="pick" class="ghost">К уровням</button>';
 }
 function examAbortHTML(){
@@ -4603,6 +4729,37 @@ function examTick(){
     if(exam.stage>=exam.route.length) examPass();
   }
 }
+/* Команду инспектор даёт ЗАРАНЕЕ, как в жизни: «через 60 метров направо». Без этого
+   игрок узнавал о манёвре, уже проехав поворот, — и это была главная жалоба на экзамен.
+   at — точка манёвра, turn — его вид; расстояние считается по прямой, чего для команды
+   достаточно: ориентир всё равно виден */
+const TURN_GLYPH={L:'↰', R:'↱', U:'↻', stop:'⏹', park:'🅿', straight:'⬆'};
+function examNav(){
+  const st=exam.route[exam.stage];
+  if(!st) return {glyph:'🎓', text:'—', dist:null};
+  const g=TURN_GLYPH[st.turn]||'🎓';
+  if(!st.at) return {glyph:g, text:st.cmd, dist:null};
+  const c=bodyPos(), d=Math.hypot(st.at.u-c.u, st.at.v-c.v);
+  if(d>75) return {glyph:g, text:st.cmd, dist:d};
+  if(d>28) return {glyph:g, text:'Через '+(Math.round(d/10)*10)+' м — '+examShort(st), dist:d};
+  if(d>10) return {glyph:g, text:examShort(st), dist:d};
+  return {glyph:g, text:st.cmd, dist:d};
+}
+/* короткая форма команды: до манёвра нужен глагол, а не абзац */
+function examShort(st){ return st.short || st.cmd; }
+/* два режима: «тренировочный» — полный HUD, навигация с упреждением и разбор ошибки
+   на месте; «настоящий» — молчаливый инспектор и провал. Молчание учит только того,
+   кто уже умеет: новичок в нём просто не понимает, что от него хотят */
+function examTrain(){ return opt.examMode!=='real'; }
+function setExamMode(m){
+  opt.examMode=m;
+  try{ localStorage.setItem('trainer_exammode', m); }catch(e){}
+  if(level.def.examRoute) loadLevel(game.li);
+  toast(m==='real' ? 'Экзамен: настоящий — инспектор молчит, грубая ошибка валит попытку'
+                   : 'Экзамен: тренировочный — подсказки, навигация и разбор ошибок включены', 4);
+}
+const examModeBtnHTML=()=>'<button data-act="exammode" class="ghost">Экзамен: '
+  +(examTrain()?'тренировочный':'НАСТОЯЩИЙ')+'</button>';
 let examSavedOpts=null;
 /* инспектор молчалив: подсказки, маркеры и идеальная траектория выключаются в памяти,
    минуя pressKey — тот пишет trainer_marks в localStorage и затёр бы настройки игрока */
@@ -4612,7 +4769,8 @@ function examInit(){
   /* рестарт зовёт examInit повторно: сохранённые настройки уже лежат в saved,
      перезапись сохранила бы выключенные значения и teardown вернул бы «всё выключено» */
   if(!examSavedOpts) examSavedOpts={marks:opt.marks, guides:opt.guides, trails:opt.trails};
-  opt.marks=false; opt.guides=false; opt.trails=false;
+  /* в тренировочном режиме настройки игрока не трогаем: там подсказки — часть урока */
+  if(!examTrain()){ opt.marks=false; opt.guides=false; opt.trails=false; }
 }
 function examTeardown(){
   if(examSavedOpts){ opt.marks=examSavedOpts.marks; opt.guides=examSavedOpts.guides;
@@ -4751,7 +4909,17 @@ function violationsTick(dt){
   /* полосы: номер полосы — это номер интервала между границами. Смена номера без
      заранее включённого поворотника — балл; пересечение сплошной — грубое.
      Ноль индекса и undefined различаем явно: на первом кадре полосы ещё нет */
+  /* внутри зоны разворота полосы не считаем: дуга на 180° пересекает их все, и каждый
+     легальный разворот превращался в «перестроение без поворотника» */
+  let inUturn=false;
+  for(const tz of (c.turnZones||[])){
+    if(!tz.uturn) continue;
+    const tf=fuv(tz.yaw||0), tr=ruv(tz.yaw||0);
+    const sU=(b.u-tz.u)*tf.u+(b.v-tz.v)*tf.v, xU=(b.u-tz.u)*tr.u+(b.v-tz.v)*tr.v;
+    if(Math.abs(sU)<tz.l/2 && Math.abs(xU)<tz.w/2){ inUturn=true; break; }
+  }
   for(const ln of (c.lanes||[])){
+    if(inUturn){ ln._lane=undefined; continue; }
     const lf=fuv(ln.yaw), lr=ruv(ln.yaw);
     const sL=(b.u-ln.u)*lf.u+(b.v-ln.v)*lf.v;
     if(Math.abs(sL)>ln.len/2){ ln._lane=undefined; continue; }
@@ -5678,7 +5846,60 @@ function render(dt){
     if(opt.camMode!==CAM_FP && hudMode===0) drawSteerPanel(16, H-186, 336, 168);
     const mm = opt.camMode===CAM_FP ? 166 : 222;
     drawMinimap(W-mm-16, H-mm-(opt.camMode===CAM_FP?52:16), mm);
+    /* карта маршрута — только на тренировочном экзамене: у молчаливого инспектора
+       её нет, там маршрут держат в голове, как на настоящем */
+    if(examActive() && examTrain()) drawRouteMap(W-mm-16, H-mm-(opt.camMode===CAM_FP?52:16)-mm-10, mm, mm-40);
   }
+}
+/* карта маршрута целиком: дороги — заливки асфальта из декалей, маршрут — точки at
+   этапов. drawMinimap не годится, он центрирован на машине с фиксированным масштабом,
+   а инспекторский маршрут надо видеть от старта до финиша */
+function routeBox(){
+  let u0=1e9,u1=-1e9,v0=1e9,v1=-1e9;
+  for(const st of exam.route) if(st.at){
+    u0=Math.min(u0,st.at.u); u1=Math.max(u1,st.at.u);
+    v0=Math.min(v0,st.at.v); v1=Math.max(v1,st.at.v); }
+  if(u0>u1) return null;
+  const c=bodyPos();
+  u0=Math.min(u0,c.u); u1=Math.max(u1,c.u); v0=Math.min(v0,c.v); v1=Math.max(v1,c.v);
+  const pad=16;
+  return {u0:u0-pad, u1:u1+pad, v0:v0-pad, v1:v1+pad};
+}
+function drawRouteMap(x,y,w,h){
+  const bb=routeBox(); if(!bb) return;
+  const sc=Math.min(w/(bb.u1-bb.u0), h/(bb.v1-bb.v0));
+  const ox=x+(w-(bb.u1-bb.u0)*sc)/2, oy=y+(h-(bb.v1-bb.v0)*sc)/2;
+  const X=(u)=>ox+(u-bb.u0)*sc, Y=(v)=>oy+(bb.v1-v)*sc;
+  panelBG(x,y,w,h);
+  ctx.save(); roundRect(x+1,y+1,w-2,h-2,9); ctx.clip();
+  ctx.fillStyle='rgba(34,40,49,.75)'; ctx.fillRect(x,y,w,h);
+  ctx.fillStyle='rgba(122,131,142,.5)';
+  for(const d of level.dec){
+    if(d.line || d.fill!==ASPHALT || !d.pts) continue;
+    ctx.beginPath(); d.pts.forEach((p,i)=> i?ctx.lineTo(X(p.u),Y(p.v)):ctx.moveTo(X(p.u),Y(p.v)));
+    ctx.closePath(); ctx.fill();
+  }
+  const pts=exam.route.filter(st=>st.at);
+  if(pts.length>1){
+    ctx.strokeStyle='rgba(125,216,255,.85)'; ctx.lineWidth=2; ctx.setLineDash([5,4]);
+    ctx.beginPath(); pts.forEach((st,i)=> i?ctx.lineTo(X(st.at.u),Y(st.at.v)):ctx.moveTo(X(st.at.u),Y(st.at.v)));
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  const t=exam.trail;
+  if(t.length>=4){
+    ctx.strokeStyle='rgba(74,222,128,.8)'; ctx.lineWidth=2;
+    ctx.beginPath(); for(let i=0;i<t.length;i+=2){ const px=X(t[i]), py=Y(t[i+1]);
+      i?ctx.lineTo(px,py):ctx.moveTo(px,py); } ctx.stroke();
+  }
+  const cur=exam.route[exam.stage];
+  if(cur && cur.at){ ctx.fillStyle='#ffcf4d';
+    ctx.beginPath(); ctx.arc(X(cur.at.u), Y(cur.at.v), 4, 0, TAU); ctx.fill(); }
+  const c=bodyPos();
+  ctx.fillStyle='#e8eef6';
+  ctx.beginPath(); ctx.arc(X(c.u), Y(c.v), 3, 0, TAU); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle='#7f93a9'; ctx.font='10px ui-sans-serif,system-ui'; ctx.textAlign='left';
+  ctx.fillText('маршрут · этап '+(exam.stage+1)+'/'+exam.route.length, x+9, y+14);
 }
 
 /* ---------- панели ---------- */
@@ -5946,8 +6167,8 @@ function updateHUD(){
     setText($('angVal'), ad<1.5 ? 'ровно' : Math.round(ad)+'° '+(da>0?'вправо':'влево'));
     $('angVal').className = 'v '+(ad<=tol?'ok':(ad<=tol+20?'warn':'bad'));
   } else { setText($('angVal'),'—'); $('angVal').className='v'; }
-  /* на экзамене датчиков нет, как в реальной машине: зазоры скрыты, беспер молчит */
-  if(examActive()){
+  /* в настоящем режиме датчиков нет, как в реальной машине: зазоры скрыты, беспер молчит */
+  if(examActive() && !examTrain()){
     for(const id of ['cf','cb','cl','cr']){ setText($(id),'—'); $(id).className='v'; }
   } else {
     setClear($('cf'),lastClear.front); setClear($('cb'),lastClear.rear);
@@ -5979,8 +6200,14 @@ function updateHUD(){
   else if(noteT>0) coachCard('info','⚙',note);
   else if(game.hitMsgT>0) coachCard('hit','⚠',game.hitMsg,null,{why:game.hitWhy});
   /* молчаливый инспектор: только команда этапа, никаких «как» — фазовые подсказки не для экзамена */
-  else if(examActive()){ const st=exam.route[exam.stage];
-    coachCard('exam','🎓',(st?st.cmd:'—')+' · баллы: '+exam.score); }
+  /* разбор ошибки в тренировочном режиме идёт ВЫШЕ команды: игрок должен понять, что
+     он сделал не так, раньше, чем куда ехать дальше */
+  else if(examActive() && examWhyT>0)
+    coachCard('hit','⚠', examWhy+' · баллы: '+exam.score+'. Дальше: '
+      +examNav().text.charAt(0).toLowerCase()+examNav().text.slice(1)+'.');
+  else if(examActive()){ const nav=examNav();
+    coachCard('exam', nav.glyph, nav.text+' · баллы: '+exam.score
+      +(examTrain()&&nav.dist!==null&&nav.dist<75 ? ' · '+nav.dist.toFixed(0)+' м' : '')); }
   /* гайд троганья владеет карточкой целиком, пока не пройден: фазовые подсказки подождут */
   else if(tut && TUT[tut.i]){ const st=TUT[tut.i]; coachCard(st.kind, st.icon, st.act(), null, {why:st.why}); }
   /* goalMiss почти на стоянке или при верной позе: на ходу посреди манёвра «доверни и
@@ -6080,6 +6307,9 @@ function doAct(a){
   if(a==='demo'){ helpOpen=false; hideOv(); startDemo(); return; }
   if(a==='touch'){ setTouch(!MOB); showOv(helpOpen? helpHTML() : startHTML()); return; }
   if(a==='gearbox'){ setGearbox(mtOn()?'AT':'MT'); showOv(helpOpen? helpHTML() : startHTML()); return; }
+  if(a==='exammode'){ setExamMode(examTrain()?'real':'train');
+    showOv(level.def.examRoute ? examBriefHTML() : (helpOpen? helpHTML() : startHTML())); return; }
+  if(a==='brief'){ hideOv(); return; }
   if(a==='start'||a==='resume'){ hideOv();
     /* счётчик запусков: первые 3 «почему» в карточке раскрыто само, дальше — по «?» */
     if(a==='start' && !game.runCounted){ game.runCounted=true; runsCnt++;
@@ -7313,6 +7543,7 @@ try{ const h=localStorage.getItem('trainer_hud'); if(h!==null) hudMode=+h||0; }c
 try{ const m=localStorage.getItem('trainer_marks'); if(m!==null) opt.marks=m==='1'; }catch(e){}
 opt.gearbox='AT';
 try{ const g=localStorage.getItem('trainer_gearbox'); if(g==='MT') opt.gearbox='MT'; }catch(e){}
+try{ const e=localStorage.getItem('trainer_exammode'); if(e==='real') opt.examMode='real'; }catch(e){}
 try{ if(localStorage.getItem('trainer_gfx')==='max') opt.gfx='max'; }catch(e){}
 try{ const m=parseFloat(localStorage.getItem('trainer_mirscale')); if(MIR_SCALES.indexOf(m)>=0) opt.mirScale=m; }catch(e){}
 if(MOB) opt.refs = 1;   /* на телефоне метки расстояний мешают, но габариты нужны везде */
@@ -7416,6 +7647,8 @@ function buildMenu(){
       toast('Идеальная траектория включена — смотри зелёно-оранжевую линию', 3.5); });
   }, ()=>opt.guides);
   add('Коробка: '+(mtOn()?'механика':'автомат'), ()=>setGearbox(mtOn()?'AT':'MT'), ()=>mtOn());
+  add('Экзамен: '+(examTrain()?'тренировочный':'настоящий'),
+      ()=>setExamMode(examTrain()?'real':'train'), ()=>!examTrain());
   /* качество: «авто» бережёт кадры и на слабой машине снимает зерно и мелочи, «максимум» —
      всё видно всегда, ценой fps. Регулятор в этом режиме молчит */
   add('Зеркала: '+Math.round(opt.mirScale*100)+'%', ()=>cycleMirScale(1), ()=>opt.mirScale>1);
@@ -7615,6 +7848,7 @@ function frame(ts){
   if(game.hitMsgT>0) game.hitMsgT-=dt;
   if(selWarnT>0) selWarnT-=dt;
   if(attWarnT>0) attWarnT-=dt;
+  if(examWhyT>0) examWhyT-=dt;
   if(noteT>0) noteT-=dt;
   if(mirNoteT>0) mirNoteT-=dt;
   { const lk=atLock(); if(lk && !lockWas && !demo) tone(150,0.07,0.035); lockWas=lk; }
@@ -7642,7 +7876,7 @@ function frame(ts){
 function parkBeep(dt){
   if(paused||!opt.sound||!AC) return;
   /* на экзамене парктроника нет — как в экзаменационной машине */
-  if(examActive()){ beepT=0; return; }
+  if(examActive() && !examTrain()){ beepT=0; return; }
   /* в P и N парктроник молчит — иначе машина у стены пищит бесконечно */
   if(car.gear===0){ beepT=0; return; }
   const d = car.gear<0 ? lastClear.rear : lastClear.front;
