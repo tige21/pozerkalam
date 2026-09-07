@@ -1625,6 +1625,182 @@ function stoplineDec(dec,u,v,yaw,w){
   dec.push({pts:rectPts(u,v,w,0.4,yaw), fill:'rgba(244,247,249,.92)'});
   return {kind:'stopline', u, v, yaw, w};
 }
+/* ---------- конструктор города ----------
+   Единый город собирается из декларации: узлы (перекрёстки) и рёбра (улицы).
+   Форма заплатки узла считается из курсов его лучей, поэтому T, косой Y и
+   смещённый крест не требуют отдельных фабрик — только другие координаты.
+   Всё, что нужно детекторам (полосы, пути, кольца), уходит в city{...};
+   геометрия, а не пиксели разметки, остаётся единственным источником правды */
+const LANE_W=3.3;                 /* ширина полосы */
+const TRAM_HW=3.2;                /* полуширина трамвайного полотна (два пути посередине) */
+const TRAM_GAUGE=1.524;           /* колея */
+const KERB_OUT=0.30;              /* бордюр — сразу за краем проезжей части */
+/* длинную дорогу режем на куски: отсечение декалей по дальности работает по кускам,
+   а один прямоугольник в 200 м заливался бы целиком на каждом кадре */
+const ROAD_CHUNK=42;
+
+function roadHW(r){ return (r.tram?TRAM_HW:0) + (r.lanes||1)*LANE_W; }
+/* границы полос в локальной оси дороги, по возрастанию: крайние — кромки проезжей части,
+   ноль — осевая. Индекс полосы = номер интервала, в котором лежит поперечная координата */
+function roadEdges(r){
+  const n=r.lanes||1, b=r.tram?TRAM_HW:0, e=[];
+  for(let i=n;i>=1;i--) e.push(-(b+LANE_W*i));
+  if(r.tram) e.push(-TRAM_HW);
+  e.push(0);
+  if(r.tram) e.push(TRAM_HW);
+  for(let i=1;i<=n;i++) e.push(b+LANE_W*i);
+  return e;
+}
+const ROAD_EDGE='rgba(240,243,245,.75)';
+const ROAD_LANE='rgba(240,243,245,.62)';
+function decLine(dec,a,b,stroke,lw,dash){
+  dec.push({line:true, stroke, lw:lw||2, dash, pts:[a,b]});
+}
+/* прямой участок улицы: асфальт кусками, кромки, осевая и межполосные линии.
+   solid:'center' делает осевую сплошной — на этом держится урок «перестройся заранее» */
+function roadDec2(dec, u, v, yaw, len, r){
+  const f=fuv(yaw), rt=ruv(yaw), hw=roadHW(r);
+  const at=(s,x)=>({u:u+f.u*s+rt.u*x, v:v+f.v*s+rt.v*x});
+  const n=Math.max(1,Math.ceil(len/ROAD_CHUNK)), sl=len/n;
+  /* куски перекрываются на 6 см: встык антиалиасинг оставлял светлый шов вдоль улицы */
+  for(let i=0;i<n;i++){
+    const c=at(-len/2+sl*(i+0.5),0);
+    dec.push({pts:rectPts(c.u,c.v,hw*2,sl+0.06,yaw), fill:ASPHALT});
+  }
+  const s0=-len/2, s1=len/2;
+  for(const sx of [-1,1]) decLine(dec, at(s0,sx*(hw-0.12)), at(s1,sx*(hw-0.12)), ROAD_EDGE, 2);
+  const edges=roadEdges(r);
+  for(const x of edges){
+    if(Math.abs(Math.abs(x)-hw)<1e-6) continue;                 /* кромки уже нарисованы */
+    const solidHere = (x===0 && r.solid==='center');
+    decLine(dec, at(s0,x), at(s1,x), solidHere?ROAD_EDGE:ROAD_LANE, 2,
+            solidHere?null:[9,8]);
+  }
+  if(r.tram) tramDec(dec, u, v, yaw, len);
+  const meta={kind:'lanes', u, v, yaw, len, hw, edges,
+              solid:edges.map(x=> Math.abs(Math.abs(x)-hw)<1e-6 ? true
+                                : (x===0 && r.solid==='center'))};
+  return meta;
+}
+/* трамвайное полотно: два пути посередине, на одном уровне с проезжей частью.
+   Возвращает мету — с неё детектор разворота проверяет, откуда начата дуга */
+function tramDec(dec, u, v, yaw, len){
+  const f=fuv(yaw), rt=ruv(yaw);
+  const at=(s,x)=>({u:u+f.u*s+rt.u*x, v:v+f.v*s+rt.v*x});
+  dec.push({pts:rectPts(u,v,TRAM_HW*2,len,yaw), fill:'#4e5259'});
+  for(const cx of [-TRAM_HW/2, TRAM_HW/2])
+    for(const sx of [-TRAM_GAUGE/2, TRAM_GAUGE/2])
+      decLine(dec, at(-len/2,cx+sx), at(len/2,cx+sx), 'rgba(146,150,156,.95)', 2.4);
+  for(let s=-len/2+1.2; s<len/2-0.6; s+=2.4)
+    for(const cx of [-TRAM_HW/2, TRAM_HW/2]){
+      const c=at(s,cx);
+      dec.push({pts:rectPts(c.u,c.v,TRAM_GAUGE+0.5,0.24,yaw), fill:'rgba(64,58,52,.75)'});
+    }
+  return {kind:'tram', u, v, yaw, len, hw:TRAM_HW};
+}
+/* заплатка перекрёстка любой формы: выпуклая оболочка «устьев» лучей.
+   У T-образного и косого узла угол, где луча нет, оболочка честно срезает —
+   квадратный crossDec там клал асфальт на газон */
+function nodeDec(dec, nu, nv, arms){
+  let R=0; for(const a of arms) R=Math.max(R,a.hw);
+  R+=1.6;
+  const pts=[];
+  for(const a of arms){
+    const f=fuv(a.yaw), rt=ruv(a.yaw);
+    for(const sx of [-1,1])
+      pts.push({u:nu+f.u*R+rt.u*sx*a.hw, v:nv+f.v*R+rt.v*sx*a.hw});
+  }
+  dec.push({pts:hull2(pts), fill:ASPHALT});
+  return R;
+}
+/* кольцо: заплатка, островок и разметка по внутреннему краю */
+function roundDec(dec, u, v, rOut, rIn){
+  const ring=(R)=>{ const p=[]; for(let i=0;i<40;i++){ const a=i/40*TAU;
+    p.push({u:u+Math.cos(a)*R, v:v+Math.sin(a)*R}); } return p; };
+  dec.push({pts:ring(rOut), fill:ASPHALT});
+  dec.push({pts:ring(rIn), fill:'#4b6b4a'});
+  dec.push(circleDec(u,v,rIn+0.35,'rgba(240,243,245,.8)',2.5));
+  dec.push(circleDec(u,v,(rIn+rOut)/2,'rgba(240,243,245,.5)',2,[8,7]));
+  return {kind:'round', u, v, rOut, rIn};
+}
+/* сборка: узлы → лучи, рёбра → полотно + бордюры + мета полос.
+   Ребро подрезается радиусом узла с каждого конца, иначе разметка и бордюр
+   лезут в перекрёсток и перегораживают проезд */
+function cityWorld(spec){
+  const obs=[], dec=[],
+        city={stoplines:[],zebras:[],oncoming:[],turnZones:[],yieldZones:[],
+              lanes:[],trams:[],rounds:[],lights:[]};
+  const pt=(e)=> Array.isArray(e) ? {u:e[0], v:e[1]} : spec.nodes[e];
+  const arms={};
+  for(const k in spec.nodes) arms[k]=[];
+  for(const r of spec.roads){
+    const A=pt(r.a), B=pt(r.b);
+    r._yaw=Math.atan2(B.u-A.u, B.v-A.v);
+    r._len=Math.hypot(B.u-A.u, B.v-A.v);
+    r._hw=roadHW(r);
+    if(!Array.isArray(r.a)) arms[r.a].push({yaw:r._yaw, hw:r._hw});
+    if(!Array.isArray(r.b)) arms[r.b].push({yaw:angNorm(r._yaw+Math.PI), hw:r._hw});
+  }
+  const radius={};
+  for(const k in spec.nodes){
+    const nd=spec.nodes[k];
+    if(!arms[k].length && !nd.round) console.warn('[city] узел «'+k+'» без дорог');
+    radius[k] = nd.round ? nd.round
+              : (arms[k].length ? nodeDec(dec, nd.u, nd.v, arms[k]) : 0);
+    if(nd.round) city.rounds.push(roundDec(dec, nd.u, nd.v, nd.round, nd.round-7.0));
+  }
+  for(const r of spec.roads){
+    const A=pt(r.a), B=pt(r.b), f=fuv(r._yaw), rt=ruv(r._yaw);
+    const t0=Array.isArray(r.a)?0:radius[r.a], t1=Array.isArray(r.b)?0:radius[r.b];
+    const len=r._len-t0-t1;
+    if(len<=1) continue;
+    const cu=A.u+f.u*(t0+len/2), cv=A.v+f.v*(t0+len/2);
+    const meta=roadDec2(dec, cu, cv, r._yaw, len, r);
+    city.lanes.push(meta);
+    if(r.tram) city.trams.push({kind:'tram', u:cu, v:cv, yaw:r._yaw, len, hw:TRAM_HW});
+    if(!r.nokerb) for(const sx of [-1,1]){
+      const ku=cu+rt.u*sx*(r._hw+KERB_OUT), kv=cv+rt.v*sx*(r._hw+KERB_OUT);
+      const k=kerb(ku,kv,0.5,len); k.yaw=r._yaw; obs.push(k);
+    }
+  }
+  return {obs, dec, city, nodes:spec.nodes, radius};
+}
+
+/* Единый город ~200×175 м: на нём живут тренировочные уровни 27–31 и все
+   экзаменационные маршруты. Узлы намеренно разной формы — обычный крест,
+   T, косой Y, смещённая пара и кольцо: экзамен не должен запоминаться наизусть.
+   Свободный конец улицы задаётся парой [u,v] вместо имени узла */
+const CITY_SPEC={
+  nodes:{
+    N1 :{u:  0, v:-70, light:'A'},              /* Ленина × Садовая — регулируемый */
+    N2 :{u:  0, v:  0, light:'B'},              /* Ленина × Заводская — регулируемый, трамвай */
+    N3 :{u:  0, v: 70},                         /* Ленина упирается в Парковую — T */
+    N4 :{u: 78, v:  0, round:15},               /* кольцо */
+    N5 :{u: 78, v:-70},                         /* смещённая пара: северный луч */
+    N5b:{u: 64, v:-70},                         /* смещённая пара: южный луч, сдвиг 14 м */
+    N6 :{u:-78, v:  0},                         /* косой Y */
+    N7 :{u:-78, v:-70}                          /* обычный крест */
+  },
+  roads:[
+    {a:[0,-105], b:'N1', lanes:2, tram:true,  name:'Ленина'},
+    {a:'N1',     b:'N2', lanes:2, tram:true,  name:'Ленина'},
+    {a:'N2',     b:'N3', lanes:2, tram:true,  name:'Ленина'},
+    {a:'N6',     b:'N2', lanes:2,             name:'Заводская'},
+    {a:'N2',     b:'N4', lanes:2, solid:'center', name:'Заводская'},
+    {a:'N7',     b:'N1', lanes:1,             name:'Садовая'},
+    {a:'N1',     b:'N5b',lanes:1,             name:'Садовая'},
+    {a:'N5b',    b:'N5', lanes:1,             name:'Садовая'},
+    {a:'N5',     b:[93,-70], lanes:1,         name:'Садовая'},
+    {a:[-24,70], b:'N3', lanes:1,             name:'Парковая'},
+    {a:'N3',     b:[24,70], lanes:1,          name:'Парковая'},
+    {a:'N5',     b:'N4', lanes:1,             name:'Восточная'},
+    {a:'N4',     b:[78,30], lanes:1,          name:'Восточная'},
+    {a:'N5b',    b:[64,-100], lanes:1,        name:'Южная'},
+    {a:'N7',     b:'N6', lanes:1,             name:'Западная'},
+    {a:'N6',     b:[-108,26], lanes:1,        name:'Косой съезд'}
+  ]
+};
+
 const SIGN_H=2.15;
 function sign(pic,u,v,yaw){
   return {kind:'sign', pic, u, v, w:0.30, l:0.30, h:SIGN_H, yaw:yaw||0, solid:true, col:[120,126,134]};
@@ -3496,6 +3672,7 @@ function loadLevel(i){
             /* городу — запас 12 м: с 3 м разворот на L24 упирался в невидимую границу на v=-1,5 */
             bounds:{u0:u0-(b.city?12:3), u1:u1+(b.city?12:3), v0:v0-(b.city?12:3), v1:v1+(b.city?12:3)},
             marks: def.marks ? def.marks() : {} };
+  decBounds(level.dec);
   RAMP_ON = level.ramps.length>0;
   if(def.phases) for(const p of def.phases){
     p._marks = [];
@@ -4679,10 +4856,30 @@ function emitCornerPosts(){
     pushBox(pu,hh*2+0.045,pv,near?0.062:0.048,0.045,near?0.062:0.048,car.th,cap);
   }
 }
-function drawDecals(){
+/* декали города — сотни полигонов на 200 м улиц; без отсечения по дальности каждый
+   кадр заливался весь город, включая асфальт за спиной. Ограничивающая окружность
+   считается один раз в loadLevel (decBounds), здесь — только сравнение расстояний */
+/* счётчик суммарный за кадр (мир + зеркала + вид сверху) и обнуляется в render:
+   один проход мерить бессмысленно — рисуют все, а платит за них общий бюджет */
+let decDrawn=0;
+function drawDecals(maxD){
+  const c=camGroundUV(), lim=maxD||1e9;
   for(const d of level.dec){
+    if(d._r!==undefined && Math.hypot(d._u-c.u, d._v-c.v)-d._r > lim) continue;
+    decDrawn++;
     if(d.line) strokeGroundPath(d.pts, d.stroke, d.lw, d.dash, 0.02);
     else fillGroundPoly(d.pts, d.fill, d.stroke, d.lw, 0.02);
+  }
+}
+/* точка, от которой меряется дальность: центр камеры на земле, а не позиция машины —
+   в виде сверху и в зеркалах камера стоит совсем не там, где кузов */
+function camGroundUV(){ return {u:-cam.x, v:cam.z}; }
+function decBounds(dec){
+  for(const d of dec){
+    const p=d.pts; if(!p||!p.length){ d._r=undefined; continue; }
+    let u0=1e9,u1=-1e9,v0=1e9,v1=-1e9;
+    for(const q of p){ if(q.u<u0)u0=q.u; if(q.u>u1)u1=q.u; if(q.v<v0)v0=q.v; if(q.v>v1)v1=q.v; }
+    d._u=(u0+u1)/2; d._v=(v0+v1)/2; d._r=Math.hypot(u1-u0, v1-v0)/2;
   }
 }
 function drawGoal(){
@@ -4818,7 +5015,7 @@ function drawRampDecks(){
   }
 }
 function drawSceneInto(o){
-  drawSky(); drawGround(o.grid); drawDecals(); if(RAMP_ON) drawRampDecks();
+  drawSky(); drawGround(o.grid); drawDecals(o.maxD); if(RAMP_ON) drawRampDecks();
   drawShadows(); drawGoal();
   if(o.trails) drawTrails();
   drawIdealPath();
@@ -4952,6 +5149,7 @@ function renderMirror(rect, kind, draw){
 let mirBot=-1;
 function render(dt){
   setVP(0,0,W,H);
+  decDrawn=0;
   updateCamera(dt);
   saveViewCam();
   if(editor){
@@ -6320,6 +6518,7 @@ function edRebuild(){
                        v0=Math.min(v0,o.v-6); v1=Math.max(v1,o.v+6); }
   level={ def:{name:'редактор', task:'', phases:null}, obs, rend:buildRenderList(obs), dec,
           ramps:[], city:null, actors:[], start:d.start, goal:d.goal, bounds:{u0,u1,v0,v1}, marks:{}, idealDraw:null };
+  decBounds(level.dec);
   RAMP_ON=false;
   curPhase=null;
   setBody(d.start.u, d.start.v, d.start.th);
@@ -6813,7 +7012,7 @@ function perfTick(dt){
   let sum=0; for(const x of g) sum+=x;
   const p95=g[Math.floor(g.length*0.95)], fps=1000/(sum/g.length);
   el.hidden=false;
-  setText(el, fps.toFixed(0)+' fps · p95 '+p95.toFixed(1)+' мс · js '+frameCost.toFixed(1)+' мс · dpr '+DPR.toFixed(2)+' · q'+qLevel+(opt.gfx==='max'?'!':'')+' · exp '+EXPAND_DEV+' · грани '+facesFrame);
+  setText(el, fps.toFixed(0)+' fps · p95 '+p95.toFixed(1)+' мс · js '+frameCost.toFixed(1)+' мс · dpr '+DPR.toFixed(2)+' · q'+qLevel+(opt.gfx==='max'?'!':'')+' · exp '+EXPAND_DEV+' · грани '+facesFrame+' · декали '+decDrawn);
 }
 function frame(ts){
   requestAnimationFrame(frame);
