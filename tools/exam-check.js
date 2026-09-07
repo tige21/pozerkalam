@@ -1,4 +1,4 @@
-/* Синтетическая проверка детекторов нарушений на экзамене (уровень 27). В консоли страницы:
+/* Синтетическая проверка детекторов нарушений на экзамене (уровень 32). В консоли страницы:
      examCheck()   // печатает PASS/FAIL по пяти сценариям и возвращает подробности
    Машину ведём setBody по траектории и на каждом шаге зовём violationsTick — как в кадре, но без
    физики, поэтому проверка занимает секунду. Появилась после бага, когда фильтр курса зоны
@@ -6,7 +6,7 @@
 function examCheck(){
   const R=4;
   const run=(blink, path)=>{
-    loadLevel(26); hideOv(); car.blink=blink;
+    loadLevel(31); hideOv(); car.blink=blink;
     for(const [u,v,th] of path){ setBody(u,v,th); car.vel=1.5; violationsTick(1/60); }
     return {score:exam.score, log:exam.log.map(e=>e.code)};
   };
