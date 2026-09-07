@@ -356,7 +356,7 @@ body.fp #hint{display:none}
 
 <div id="perf" hidden></div>
 <div id="bar">
-  <div class="cell opt"><div class="k">селектор · Enter = D ⇄ R</div><div class="v lever" id="gearVal">P</div></div>
+  <div class="cell opt"><div class="k" id="gearLbl">селектор · Enter = D ⇄ R</div><div class="v lever" id="gearVal">P</div></div>
   <div class="cell opt"><div class="k">скорость</div><div class="v" id="spdVal">0 км/ч</div></div>
   <div class="cell opt" id="rpmCell" style="display:none"><div class="k">обороты · сцепление</div><div class="v" id="rpmVal">—</div></div>
   <div class="cell opt"><div class="k">руль</div><div class="v" id="steerVal">прямо</div></div>
@@ -1338,8 +1338,11 @@ function imgCanvas(name, w, h, draw){
   draw(g, w, h); imgCache[name]=c; return c;
 }
 const DIAL_A0=rad(210), DIAL_SPAN=rad(240), DIAL_MAX=60;
-function dialCanvas(sel){
-  return imgCanvas('dial-'+sel, 256, 256, (g,S)=>{
+/* буквы на щитке — те же, что в коробке: на механике R N 1 2, на автомате P R N D.
+   Раньше циферблат всегда рисовал P R N D, и на механике водитель видел чужой селектор */
+function dialCanvas(mode, cur, stalled){
+  const labels = mode==='MT' ? MT_ORDER.map(g=>[String(g), MT_NAMES[g]]) : SEL_ORDER.map(g=>[g,g]);
+  return imgCanvas('dial-'+mode+'-'+cur+(stalled?'-s':''), 256, 256, (g,S)=>{
     const cx=S/2, cy=S/2, R=S*0.47;
     const rg=g.createRadialGradient(cx,cy,R*0.15,cx,cy,R); rg.addColorStop(0,'#2b2e35'); rg.addColorStop(1,'#111317');
     g.fillStyle=rg; g.beginPath(); g.arc(cx,cy,R,0,TAU); g.fill();
@@ -1355,8 +1358,10 @@ function dialCanvas(sel){
     g.fillStyle='#8f96a3'; g.font='13px system-ui,-apple-system,sans-serif'; g.fillText('км/ч', cx, cy+R*0.34);
     /* передача — в верхней половине: нижнюю закрывает ступица руля */
     g.font='bold 20px system-ui,-apple-system,sans-serif';
-    SEL_ORDER.forEach((L,i)=>{ g.fillStyle = L===sel ? '#7ef096' : '#5a606c';
+    labels.forEach(([key,L],i)=>{ g.fillStyle = key===cur ? '#7ef096' : '#5a606c';
       g.fillText(L, cx+(i-1.5)*28, cy-R*0.22); });
+    if(stalled){ g.fillStyle='#f87171'; g.font='bold 15px system-ui,-apple-system,sans-serif';
+      g.fillText('заглох', cx, cy+R*0.52); }
   });
 }
 function screenCanvas(){
@@ -1410,7 +1415,7 @@ function emitCluster(K){
   const {P}=K, cx=-0.36, cy=0.985, cz=0.552, Rd=0.056;
   /* фон картинки прозрачный, подложка — грань цвета щитка в салонном освещении: сам циферблат
      не затеняется, а его квадрат не выделяется тёмной плитой на козырьке */
-  const img=dialCanvas(car.sel);
+  const img = mtOn() ? dialCanvas('MT', String(car.mgear), car.stalled) : dialCanvas('AT', car.sel, false);
   if(img){ const s0=cabinLit; cabinLit=true;
     try{ pushQuad(P(cx-Rd,cy+Rd,cz), P(cx+Rd,cy+Rd,cz), P(cx+Rd,cy-Rd,cz), P(cx-Rd,cy-Rd,cz),
                   CAB.DARK, P(cx,cy,cz+0.3), 0.01, {img, mat:'softtouch'}); }
@@ -1424,7 +1429,7 @@ function emitCluster(K){
    ниже поля зрения из салона, и без этого водитель не видит, что у него включено */
 function emitSelector(K){
   const {box}=K;
-  const cur=SEL_ORDER.indexOf(car.sel);
+  const cur = mtOn() ? MT_ORDER.indexOf(car.mgear) : SEL_ORDER.indexOf(car.sel);
   box(0, 0.72, 0.02-cur*0.075, 0.030,0.055,0.030, [150,156,166], 0, MO.satin);   /* рычаг на тоннеле */
 }
 function emitWheel(K){
@@ -3370,7 +3375,7 @@ const REFS_NAMES = ['выкл','габариты','всё'];
 /* траектории по умолчанию выключены: у новичка на первом запуске дуги прогноза, след
    колёс и идеальная линия сливались в кашу поверх обучающих маркеров. G включает всё разом */
 const opt  = { guides:false, trails:false, sound:false, refs:2, marks:true, camMode:CAM_CHASE, camYaw:0, pitch:rad(22),
-               dist:9.0, fpYaw:0, fpPitch:rad(-2), fpFov:62, mirrors:true, prev3rd:CAM_CHASE,
+               dist:9.0, fpYaw:0, fpPitch:rad(-2), fpFov:62, mirrors:true, prev3rd:CAM_CHASE, gfx:'auto',
                mirAdj:{left:{yaw:0,pitch:0}, right:{yaw:0,pitch:0}, center:{yaw:0,pitch:0}} };
 let level = null, paused = true, trails = null, trailT = 0;
 let dprCap = 2;
@@ -3382,11 +3387,13 @@ let dprCap = 2;
 /* cars — материалы и гладкие борта машин (pow на грань), detail — мелкие детали салона и машин
    (дефлекторы, кнопки, швы, ручки), maxD — дальность мира: на телефоне с медленным процессором кадр
    упирается в JavaScript (3300 граней), и снижать надо число граней, а не только пиксели */
+/* порядок жертв: сначала разрешение (его почти не видно), и только потом зерно материалов —
+   владелец заметил пропажу «текстур» раньше, чем мягкость картинки */
 const QUALITY=[ {dpr:2,    grain:true,  grad:true,  cars:true,  detail:true,  maxD:85},
-                {dpr:2,    grain:false, grad:true,  cars:true,  detail:true,  maxD:85},
+                {dpr:1.5,  grain:true,  grad:true,  cars:true,  detail:true,  maxD:85},
                 {dpr:1.5,  grain:false, grad:true,  cars:true,  detail:true,  maxD:85},
-                {dpr:1.5,  grain:false, grad:false, cars:false, detail:true,  maxD:70},
-                {dpr:1.25, grain:false, grad:false, cars:false, detail:true,  maxD:70},
+                {dpr:1.25, grain:false, grad:false, cars:true,  detail:true,  maxD:70},
+                {dpr:1,    grain:false, grad:false, cars:false, detail:true,  maxD:70},
                 {dpr:1,    grain:false, grad:false, cars:false, detail:false, maxD:55},
                 /* ниже 1,0 — рендер в меньшем разрешении с растяжением браузером: на большом мониторе
                    с программным Canvas и DPR 1,0 (2560×1440) выходило 16 fps */
@@ -3408,6 +3415,8 @@ function qApply(level){
    и при 16 fps лестница спускалась вдвое медленнее, чем шли секунды. При сильной просадке
    шаг сразу на 2–3 ступени — ждать по ступени на 16 fps значит мучить игрока полминуты */
 function qTick(rdt){
+  /* «максимум» — ручной режим: игрок сознательно выбрал картинку вместо плавности */
+  if(opt.gfx==='max') return;
   if(qCoolT>0){ qCoolT-=rdt; return; }
   if(frameGap>Q_GAP_BAD){ qBadT+=rdt; qGoodT=0;
     if(qBadT>Q_BAD_HOLD && qLevel<QUALITY.length-1){
@@ -3677,20 +3686,20 @@ function setGearbox(g){
 }
 const gearboxBtnHTML=()=>'<button data-act="gearbox" class="ghost">Коробка: '+(mtOn()?'МЕХАНИКА':'автомат')+'</button>';
 function mtWarn(msg){ selWarn=msg; selWarnT=2.4; selBlockT=0.5; tone(200,0.14,0.05); }
+const MT_ORDER=[-1,0,1,2], MT_NAMES={'-1':'R','0':'N','1':'1','2':'2'};
+/* все пути включения передачи (клавиши, буквы в панели, тач-кнопки) идут сюда: правила
+   «сначала сцепление» и «задняя только с остановки» должны быть в одном месте */
+function mtSelect(g){
+  if(car.mgear===g) return;
+  if(car.clu<0.85){ mtWarn('Выжми сцепление (левый Shift) — потом передача'); return; }
+  if(g===-1 && Math.abs(car.vel)>STOP_V){ mtWarn('Задняя — только с полной остановки'); return; }
+  car.mgear=g; tone(500,0.04,0.05,'square');
+}
 function mtShift(step){
-  if(car.clu<0.85){ mtWarn('Выжми сцепление (левый Shift) — потом передача'); return; }
-  const order=[-1,0,1,2], i=order.indexOf(car.mgear), j=clamp(i+step,0,order.length-1);
-  if(j===i) return;
-  if(order[j]===-1 && Math.abs(car.vel)>STOP_V){
-    mtWarn('Задняя — только с полной остановки'); return; }
-  car.mgear=order[j]; tone(500,0.04,0.05,'square');
+  const i=MT_ORDER.indexOf(car.mgear), j=clamp(i+step,0,MT_ORDER.length-1);
+  if(j!==i) mtSelect(MT_ORDER[j]);
 }
-function mtToggleRev(){
-  if(car.clu<0.85){ mtWarn('Выжми сцепление (левый Shift) — потом передача'); return; }
-  const tgt = car.mgear===-1 ? 1 : -1;
-  if(tgt===-1 && Math.abs(car.vel)>STOP_V){ mtWarn('Задняя — только с полной остановки'); return; }
-  car.mgear=tgt; tone(500,0.04,0.05,'square');
-}
+function mtToggleRev(){ mtSelect(car.mgear===-1 ? 1 : -1); }
 function mtStall(){
   if(car.stalled) return;
   car.stalled=true;
@@ -5080,8 +5089,17 @@ function updateHUD(){
   setText($('timeVal'), game.t.toFixed(1)+' с');
   setText($('hitsVal'), 'касаний: '+game.hits);
   if(MOB){
-    document.querySelectorAll('#tgear span[data-gear]').forEach(el=>
-      el.classList.toggle('on', el.dataset.gear===car.sel));
+    /* тач-кнопки — те же передачи, что в коробке: на механике P и D сбивали бы с толку */
+    document.querySelectorAll('#tgear span[data-gear]').forEach((el,i)=>{
+      if(mtOn()){
+        const g=MT_ORDER[i];
+        if(el.dataset.mg!==String(g)){ el.dataset.mg=String(g); el.textContent=MT_NAMES[g]; }
+        el.classList.toggle('on', g===car.mgear);
+      } else {
+        if(el.dataset.mg!==undefined){ delete el.dataset.mg; el.textContent=el.dataset.gear; }
+        el.classList.toggle('on', el.dataset.gear===car.sel);
+      }
+    });
     $('tgear').classList.toggle('deny', selBlockT>0);
     setText($('tviewlbl'), CAMNAME[opt.camMode] || '');
     const tcv = mtOn() ? '' : 'none';
@@ -5100,12 +5118,14 @@ function updateHUD(){
   if(gearShown!==gearKey){
     gearShown=gearKey;
     if(mtOn()){
-      const names={'-1':'R','0':'N','1':'1','2':'2'};
-      $('gearVal').innerHTML = [-1,0,1,2].map(g=>
-        '<span'+(g===car.mgear?' class="on '+(g===-1?'r':g>0?'d':'')+'"':'')+'>'
-        +names[g]+'</span>').join('')
+      setText($('gearLbl'), 'передачи · Shift — сцепление');
+      $('gearVal').innerHTML = MT_ORDER.map(g=>
+        '<span data-mg="'+g+'" title="включить '+MT_NAMES[g]+'"'
+        +(g===car.mgear?' class="on '+(g===-1?'r':g>0?'d':'')+'"':'')+'>'
+        +MT_NAMES[g]+'</span>').join('')
         +(car.stalled?' <span style="color:#f87171">заглох</span>':'');
     } else {
+      setText($('gearLbl'), 'селектор · Enter = D ⇄ R');
       $('gearVal').innerHTML = SEL_ORDER.map(g=>
         '<span data-gear="'+g+'" title="переключить в '+g+'"'
         +(g===car.sel?' class="on '+g.toLowerCase()+'"':'')+'>'+g+'</span>').join('');
@@ -6408,6 +6428,7 @@ try{ const h=localStorage.getItem('trainer_hud'); if(h!==null) hudMode=+h||0; }c
 try{ const m=localStorage.getItem('trainer_marks'); if(m!==null) opt.marks=m==='1'; }catch(e){}
 opt.gearbox='AT';
 try{ const g=localStorage.getItem('trainer_gearbox'); if(g==='MT') opt.gearbox='MT'; }catch(e){}
+try{ if(localStorage.getItem('trainer_gfx')==='max') opt.gfx='max'; }catch(e){}
 if(MOB) opt.refs = 1;   /* на телефоне метки расстояний мешают, но габариты нужны везде */
 try{ const r=localStorage.getItem('trainer_refs'); if(r!==null) opt.refs=clamp(+r|0,0,2); }catch(e){}
 mirLoad();
@@ -6450,7 +6471,7 @@ document.querySelectorAll('#tgear span').forEach(el=>{
   el.addEventListener('pointerdown',e=>{ e.preventDefault(); initAudio();
     if(el.dataset.blink){ if(!paused) setBlink(el.dataset.blink); return; }
     if(demo) stopDemo();
-    if(!paused) selectGear(el.dataset.gear); },{passive:false});
+    if(!paused){ if(mtOn()) mtSelect(+el.dataset.mg); else selectGear(el.dataset.gear); } },{passive:false});
 });
 
 function isFull(){ return !!(document.fullscreenElement || document.webkitFullscreenElement); }
@@ -6509,6 +6530,14 @@ function buildMenu(){
       toast('Идеальная траектория включена — смотри зелёно-оранжевую линию', 3.5); });
   }, ()=>opt.guides);
   add('Коробка: '+(mtOn()?'механика':'автомат'), ()=>setGearbox(mtOn()?'AT':'MT'), ()=>mtOn());
+  /* качество: «авто» бережёт кадры и на слабой машине снимает зерно и мелочи, «максимум» —
+     всё видно всегда, ценой fps. Регулятор в этом режиме молчит */
+  add('Графика: '+(opt.gfx==='max'?'максимум':'авто'), ()=>{
+    opt.gfx = opt.gfx==='max' ? 'auto' : 'max';
+    try{ localStorage.setItem('trainer_gfx', opt.gfx); }catch(e){}
+    if(opt.gfx==='max'){ qBest=0; qApply(0); toast('Графика: максимум — все детали и зерно, кадры могут просесть', 4); }
+    else toast('Графика: авто — качество подстраивается под скорость кадра', 3.5);
+  }, ()=>opt.gfx==='max');
   add('Звук', ()=>pressKey('KeyM'), ()=>opt.sound);
   add('Начать уровень заново', ()=>{ closeMenu(); pressKey('KeyR'); });
   add('Что делают кнопки', ()=>{ closeMenu(); setTimeout(showTouchHelp,120); });
@@ -6619,9 +6648,11 @@ $('thelp').addEventListener('pointerdown',e=>{
 $('topleft').addEventListener('click',()=>{ if(!paused) showTask(); });
 /* буквы P R N D в панели кликабельны — те же правила, что у клавиш и тапов */
 $('gearVal').addEventListener('click',e=>{
-  const g=e.target.dataset && e.target.dataset.gear;
-  if(!g || paused || mtOn()) return;
-  initAudio(); if(demo) stopDemo(); selectGear(g);
+  const d=e.target.dataset||{};
+  if(paused) return;
+  if(mtOn()){ if(d.mg===undefined) return; initAudio(); if(demo) stopDemo(); mtSelect(+d.mg); return; }
+  if(!d.gear) return;
+  initAudio(); if(demo) stopDemo(); selectGear(d.gear);
 });
 $('restartBtn').addEventListener('click',()=>{ initAudio(); pressKey('KeyR'); });
 $('demoBtn').addEventListener('click',()=>{ initAudio(); if(demo) stopDemo(); else startDemo(); });
@@ -6672,7 +6703,7 @@ function perfTick(dt){
   let sum=0; for(const x of g) sum+=x;
   const p95=g[Math.floor(g.length*0.95)], fps=1000/(sum/g.length);
   el.hidden=false;
-  setText(el, fps.toFixed(0)+' fps · p95 '+p95.toFixed(1)+' мс · js '+frameCost.toFixed(1)+' мс · dpr '+DPR.toFixed(2)+' · q'+qLevel+' · exp '+EXPAND_DEV+' · грани '+facesFrame);
+  setText(el, fps.toFixed(0)+' fps · p95 '+p95.toFixed(1)+' мс · js '+frameCost.toFixed(1)+' мс · dpr '+DPR.toFixed(2)+' · q'+qLevel+(opt.gfx==='max'?'!':'')+' · exp '+EXPAND_DEV+' · грани '+facesFrame);
 }
 function frame(ts){
   requestAnimationFrame(frame);

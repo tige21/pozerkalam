@@ -159,6 +159,37 @@ await page.waitForTimeout(300);
 const back = await page.evaluate(() => ({ g: opt.gearbox, sel: car.sel, ls: localStorage.getItem('trainer_gearbox') }));
 check('возврат на автомат восстанавливает P R N D', back.g === 'AT' && back.sel === 'P' && back.ls === 'AT', JSON.stringify(back));
 
+/* 15. интерфейс механики: никакого P R N D в кабине, панели и на тач-кнопках */
+await page.evaluate(() => { setGearbox('MT'); loadLevel(0); });
+await page.waitForTimeout(400);
+await down('ShiftLeft'); await page.waitForTimeout(300); await tap('Period'); await up('ShiftLeft');
+await page.waitForTimeout(300);
+const ui = await page.evaluate(() => {
+  const bar = (document.getElementById('gearVal') || {}).textContent || '';
+  const lbl = (document.getElementById('gearLbl') || {}).textContent || '';
+  /* кэш чистим и рисуем кадр из салона: важно, какие буквы щиток запросит СЕЙЧАС,
+     а не что осталось от прошлых шагов теста */
+  for (const k of Object.keys(imgCache)) if (k.startsWith('dial-')) delete imgCache[k];
+  if (opt.camMode !== CAM_FP) pressKey('KeyV');
+  render(0.016);
+  const keys = Object.keys(imgCache).filter(k => k.startsWith('dial-'));
+  let lever = null;
+  const keep = pushBox; const seen = [];
+  pushBox = function (u, y, v, hw, hh, hl, yaw, col, bias, o) { seen.push(v); return keep.apply(null, arguments); };
+  try { emitSelector(cabinCtx(bodyPos().u, bodyPos().v, car.th)); } finally { pushBox = keep; }
+  lever = seen.length;
+  return { bar, lbl, keys, lever, touch: [...document.querySelectorAll('#tgear span[data-gear]')].map(e => e.textContent) };
+});
+check('в панели передачи механики, а не P R N D', /R\s*N\s*1\s*2/.test(ui.bar.replace(/\s+/g, ' ')) && !/P/.test(ui.bar), 'панель="' + ui.bar.trim() + '"');
+check('подпись панели про сцепление', /сцеплен/i.test(ui.lbl), 'подпись="' + ui.lbl + '"');
+check('щиток в салоне рисует буквы механики', ui.keys.length > 0 && ui.keys.every(k => k.startsWith('dial-MT')), ui.keys.join(',') || 'щиток не рисовался');
+check('рычаг на тоннеле рисуется по передаче механики', ui.lever > 0, 'граней рычага=' + ui.lever);
+
+/* 16. настройка графики: «максимум» отключает регулятор */
+const gfx = await page.evaluate(() => { const before = opt.gfx; opt.gfx = 'max'; qBest = 0; qApply(0); frameGap = 40; qCoolT = 0;
+  qTick(2); const held = qLevel; opt.gfx = 'auto'; qCoolT = 0; qTick(2); return { before, held, after: qLevel }; });
+check('«графика: максимум» держит уровень качества', gfx.held === 0 && gfx.after > 0, JSON.stringify(gfx));
+
 check('в консоли нет ошибок', errors.length === 0, errors.join(' | '));
 
 const failed = results.filter(r => !r.ok);
