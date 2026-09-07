@@ -1,0 +1,167 @@
+#!/usr/bin/env node
+/* Сценарная проверка МКПП: скрипт жмёт настоящие клавиши (KeyboardEvent с физическими кодами)
+   в живой игре и сверяет поведение с правилами механики — как это делал бы ученик.
+   Запуск (playwright-core ставится во временную папку, см. cockpit-shots.mjs):
+     PW_DIR=/tmp/pw node tools/mt-check.mjs
+     PW_DIR=/tmp/pw URL=https://pozerkalam.space/play/ node tools/mt-check.mjs   # проверить прод
+   Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена. */
+import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const PW_DIR = process.env.PW_DIR || '/tmp/pw';
+const URL_OVERRIDE = process.env.URL || '';
+
+let chromium;
+try { ({ chromium } = createRequire(path.join(PW_DIR, 'package.json'))('playwright-core')); }
+catch { console.error(`playwright-core не найден в ${PW_DIR}`); process.exit(2); }
+
+function findChrome() {
+  if (process.env.PW_CHROME) return process.env.PW_CHROME;
+  const cache = path.join(os.homedir(), 'Library', 'Caches', 'ms-playwright');
+  for (const d of fs.readdirSync(cache).filter(x => x.startsWith('chromium_headless_shell-')).sort().reverse())
+    for (const sub of fs.readdirSync(path.join(cache, d))) {
+      const bin = path.join(cache, d, sub, 'chrome-headless-shell');
+      if (fs.existsSync(bin)) return bin;
+    }
+  console.error('Chromium не найден'); process.exit(2);
+}
+
+const browser = await chromium.launch({ executablePath: findChrome(), headless: true });
+const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+const errors = [];
+page.on('pageerror', e => { if (!/ServiceWorker/.test(e.message)) errors.push(e.message); });
+
+const url = (URL_OVERRIDE || 'file://' + path.join(ROOT, 'index.html')) + '?nocache=' + Date.now();
+await page.goto(url);
+await page.evaluate(() => { for (const k of ['trainer_seen', 'trainer_hint', 'trainer_drive']) localStorage.setItem(k, '1');
+  localStorage.setItem('trainer_runs', '9'); localStorage.setItem('trainer_touch', '0'); localStorage.removeItem('trainer_gearbox'); });
+await page.goto(url + 'r');
+await page.waitForTimeout(500);
+
+/* клавиши идут через настоящие события: так проверяется весь путь, включая фильтр полей ввода */
+const down = c => page.evaluate(k => document.dispatchEvent(new KeyboardEvent('keydown', { code: k, bubbles: true })), c);
+const up = c => page.evaluate(k => document.dispatchEvent(new KeyboardEvent('keyup', { code: k, bubbles: true })), c);
+const tap = async (c, hold = 60) => { await down(c); await page.waitForTimeout(hold); await up(c); };
+const st = () => page.evaluate(() => ({ gearbox: opt.gearbox, mgear: car.mgear, clu: +car.clu.toFixed(2), rpm: Math.round(car.rpm),
+  stalled: car.stalled, vel: +car.vel.toFixed(2), warn: selWarnT > 0 ? selWarn : '', hand: !!car.hand,
+  gearHud: (document.getElementById('gearVal') || {}).textContent || '', stalls: game.stalls || 0 }));
+
+const results = [];
+const check = (name, ok, detail) => { results.push({ name, ok: !!ok, detail }); console.log((ok ? '  ok   ' : 'ПРОВАЛ ') + name + (detail ? ' — ' + detail : '')); };
+
+/* 1. включение механики со стартового экрана */
+const gbBtn = await page.evaluate(() => { const b = [...document.querySelectorAll('button[data-act="gearbox"]')][0]; return b ? b.textContent : null; });
+check('кнопка коробки есть на стартовом экране', gbBtn && /автомат/i.test(gbBtn), gbBtn || 'кнопки нет');
+await page.evaluate(() => doAct('gearbox'));
+const afterToggle = await page.evaluate(() => ({ g: opt.gearbox, ls: localStorage.getItem('trainer_gearbox'),
+  btn: (document.querySelector('button[data-act="gearbox"]') || {}).textContent || '',
+  bullet: (document.querySelector('.startlist') || { textContent: '' }).textContent.includes('Механика') }));
+check('переключение на механику сохраняется и подписано', afterToggle.g === 'MT' && afterToggle.ls === 'MT' && /МЕХАНИКА/.test(afterToggle.btn), JSON.stringify(afterToggle));
+check('подсказка на старте меняется под механику', afterToggle.bullet);
+
+await page.evaluate(() => { doAct('start'); loadLevel(0); });
+await page.waitForTimeout(400);
+
+/* 2. передача без сцепления не включается */
+await tap('Period');
+let s = await st();
+check('без сцепления передача не включается', s.mgear === 0 && /сцеплени/i.test(s.warn), 'mgear=' + s.mgear + ' warn="' + s.warn + '"');
+
+/* 3. со сцеплением включается первая */
+await down('ShiftLeft'); await page.waitForTimeout(400);
+await tap('Period');
+s = await st();
+check('со сцеплением включается 1-я', s.mgear === 1 && s.clu > 0.85, 'mgear=' + s.mgear + ' clu=' + s.clu);
+
+/* 4. бросил сцепление без газа — глохнет */
+await up('ShiftLeft'); await page.waitForTimeout(1400);
+s = await st();
+check('бросил сцепление без газа — глохнет', s.stalled === true && s.stalls >= 1, JSON.stringify({ stalled: s.stalled, rpm: s.rpm }));
+
+/* 5. запуск двигателя: без сцепления на передаче — отказ, со сцеплением — заводится */
+await tap('KeyY'); s = await st();
+check('на передаче без сцепления не заводится', s.stalled === true && /сцеплен/i.test(s.warn), 'warn="' + s.warn + '"');
+await down('ShiftLeft'); await page.waitForTimeout(300); await tap('KeyY');
+s = await st();
+check('с выжатым сцеплением заводится', s.stalled === false && s.rpm >= 800, JSON.stringify({ stalled: s.stalled, rpm: s.rpm }));
+
+/* 6. трогание: газ и плавный отпуск сцепления */
+await down('KeyW'); await page.waitForTimeout(300); await up('ShiftLeft');
+await page.waitForTimeout(2200);
+s = await st();
+check('трогание с 1-й: машина едет и не глохнет', s.vel > 0.8 && !s.stalled, 'vel=' + s.vel + ' rpm=' + s.rpm);
+
+/* 7. переключение 1 → 2 на ходу */
+await tap('Period'); s = await st();
+const noShiftNoClutch = s.mgear === 1 && /сцеплени/i.test(s.warn);
+await down('ShiftLeft'); await page.waitForTimeout(300); await tap('Period'); await up('ShiftLeft');
+await page.waitForTimeout(300);
+const s2 = await st();
+check('без сцепления на ходу передача не переключается', noShiftNoClutch, 'mgear=' + s.mgear);
+check('со сцеплением 1 → 2 переключается', s2.mgear === 2, 'mgear=' + s2.mgear);
+
+/* 8. задняя на ходу запрещена */
+await down('ShiftLeft'); await page.waitForTimeout(300); await tap('Enter'); await up('ShiftLeft');
+s = await st();
+check('задняя на ходу запрещена', s.mgear === 2 && /останов/i.test(s.warn), 'mgear=' + s.mgear + ' warn="' + s.warn + '"');
+
+/* 9. тормоз в пол на передаче без сцепления — двигатель глохнет (как в жизни) */
+await up('KeyW'); await down('KeyS'); await page.waitForTimeout(2600); await up('KeyS');
+s = await st();
+check('остановка на передаче без сцепления глушит двигатель', s.stalled === true && s.vel === 0, JSON.stringify({ stalled: s.stalled, vel: s.vel }));
+
+/* 10. остановка с выжатым сцеплением двигатель не глушит */
+await down('ShiftLeft'); await page.waitForTimeout(300); await tap('KeyY'); await page.waitForTimeout(200);
+await tap('Period'); await page.waitForTimeout(100);            /* 2-я → без ошибок при выжатом */
+await down('KeyW'); await page.waitForTimeout(200); await up('ShiftLeft'); await page.waitForTimeout(1500);
+await up('KeyW'); await down('ShiftLeft'); await down('KeyS'); await page.waitForTimeout(2200); await up('KeyS');
+s = await st();
+check('остановка с выжатым сцеплением двигатель не глушит', s.stalled === false && Math.abs(s.vel) < 0.2, JSON.stringify({ stalled: s.stalled, vel: s.vel, rpm: s.rpm }));
+
+/* 11. после остановки включается задняя и машина едет назад */
+await tap('Enter');
+s = await st();
+check('после остановки включается задняя', s.mgear === -1, 'mgear=' + s.mgear + ' vel=' + s.vel);
+await down('KeyW'); await page.waitForTimeout(300); await up('ShiftLeft'); await page.waitForTimeout(1800);
+s = await st();
+check('на задней машина едет назад', s.vel < -0.4 && !s.stalled, 'vel=' + s.vel + ' stalled=' + s.stalled);
+await up('KeyW'); await down('KeyS'); await page.waitForTimeout(1500); await up('KeyS');
+await page.evaluate(() => { restart(); });
+await page.waitForTimeout(300);
+
+/* 12. ручник душит разгон */
+await page.evaluate(() => { car.vel = 0; });
+await tap('KeyJ');
+await down('ShiftLeft'); await page.waitForTimeout(250); await tap('Enter'); await page.waitForTimeout(100); await up('ShiftLeft');
+await down('KeyW'); await page.waitForTimeout(2200);
+s = await st();
+/* правильное поведение: машина либо ползёт, либо глохнет — но не разгоняется */
+check('с ручником машина не разгоняется', s.hand === true && (Math.abs(s.vel) < 1.2 || s.stalled), 'hand=' + s.hand + ' vel=' + s.vel + ' stalled=' + s.stalled);
+await up('KeyW'); await tap('KeyJ');
+
+/* 13. демонстрация едет на автомате и возвращает механику */
+await page.evaluate(() => { restart(); startDemo(); });
+await page.waitForTimeout(600);
+const inDemo = await page.evaluate(() => ({ g: opt.gearbox, demo: !!demo }));
+await page.evaluate(() => { if (typeof stopDemo === 'function') stopDemo(); else restart(); });
+await page.waitForTimeout(400);
+const afterDemo = await page.evaluate(() => opt.gearbox);
+check('демо едет на автомате', inDemo.demo && inDemo.g === 'AT', JSON.stringify(inDemo));
+check('после демо механика возвращается', afterDemo === 'MT', 'gearbox=' + afterDemo);
+
+/* 14. возврат на автомат из меню восстанавливает селектор */
+await page.evaluate(() => setGearbox('AT'));
+await page.waitForTimeout(300);
+const back = await page.evaluate(() => ({ g: opt.gearbox, sel: car.sel, ls: localStorage.getItem('trainer_gearbox') }));
+check('возврат на автомат восстанавливает P R N D', back.g === 'AT' && back.sel === 'P' && back.ls === 'AT', JSON.stringify(back));
+
+check('в консоли нет ошибок', errors.length === 0, errors.join(' | '));
+
+const failed = results.filter(r => !r.ok);
+console.log(JSON.stringify({ total: results.length, failed: failed.length, names: failed.map(r => r.name) }));
+await browser.close();
+process.exit(failed.length ? 1 : 0);

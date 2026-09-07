@@ -3728,7 +3728,11 @@ function mtDrive(dt, gas, brakePedal, slow){
     if(grip>0.45 && car.rpm<MT.stallRpm){ mtStall(); return; }
     const dir=car.mgear<0?-1:1;
     if(gas){
-      car.vel+=dir*CAR.accel*1.15*spec.k*grip*dt;
+      /* с затянутым ручником тяга режется: у МКПП передаточное 1,5–1,6 давало ускорение выше
+         тормозного усилия ручника, и машина спокойно разгонялась до максимума «на ручнике».
+         Теперь остаётся ползание, а при отпущенном сцеплении обороты падают и машина глохнет —
+         как в жизни, когда трогаешься, забыв снять ручник */
+      car.vel+=dir*CAR.accel*1.15*spec.k*grip*(car.hand?0.55:1)*dt;
       if(Math.abs(car.vel)>spec.vmax) car.vel=dir*spec.vmax;
     } else if(grip>0.3){
       const crawl=dir*0.9;
