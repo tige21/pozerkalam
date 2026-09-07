@@ -1801,6 +1801,24 @@ const CITY_SPEC={
   ]
 };
 
+/* ---------- светофор ----------
+   Фаза считается из game.t, а не из системного времени: демо и computeIdealPath
+   стартуют с нуля и воспроизводятся кадр в кадр — иначе показ ловил бы разный свет
+   в каждом прогоне и калибровка сегментов рассыпалась бы */
+const LIGHT_CYCLE=24, LIGHT_GREEN=10, LIGHT_YELLOW=2;   /* красный = 12 с */
+const LIGHT_H=3.05;
+function trafficLight(u,v,yaw,group,offset){
+  return {kind:'light', u, v, w:0.28, l:0.28, h:LIGHT_H, yaw:yaw||0, solid:true,
+          col:[92,98,106], group:group||'NS', offset:offset||0};
+}
+function lightPhase(o){
+  const base = (o.group==='EW' ? LIGHT_CYCLE/2 : 0) + (o.offset||0);
+  const t = ((game.t + base) % LIGHT_CYCLE + LIGHT_CYCLE) % LIGHT_CYCLE;
+  return t < LIGHT_GREEN ? 'G' : t < LIGHT_GREEN+LIGHT_YELLOW ? 'Y' : 'R';
+}
+/* жёлтый — запрещающий: тормозить надо на него, а не «успевать проскочить» */
+function lightStops(o){ const p=lightPhase(o); return p==='R'||p==='Y'; }
+
 const SIGN_H=2.15;
 function sign(pic,u,v,yaw){
   return {kind:'sign', pic, u, v, w:0.30, l:0.30, h:SIGN_H, yaw:yaw||0, solid:true, col:[120,126,134]};
@@ -3630,7 +3648,7 @@ function buildRenderList(obs){
   const out=[];
   for(const o of obs){
     /* sign проходит целиком: сегментация копирует только базовые поля и потеряла бы pic */
-    if(o.kind==='car'||o.kind==='cone'||o.kind==='sign'){ out.push(o); continue; }
+    if(o.kind==='car'||o.kind==='cone'||o.kind==='sign'||o.kind==='light'){ out.push(o); continue; }
     /* 3,5 м, не 7: у длинного сегмента бордюра центр ближе к камере, чем колесо соседа перед
        ним, и бордюр рисовался поверх колеса */
     const n=Math.max(1,Math.ceil(o.l/3.5)), m=Math.max(1,Math.ceil(o.w/3.5));
@@ -4088,6 +4106,11 @@ const PENALTIES={
   'no-blinker':      {pts:1, fatal:false, txt:'Манёвр без поворотника'},
   'stall':           {pts:1, fatal:false, txt:'Заглох двигатель'},
   'handbrake-drive': {pts:1, fatal:false, txt:'Движение с затянутым ручником'},
+  'redlight':        {pts:5, fatal:true,  txt:'Проезд на запрещающий сигнал'},
+  'solid-line':      {pts:5, fatal:false, hard:true, txt:'Пересечение сплошной линии'},
+  'stop-sign':       {pts:3, fatal:false, hard:true, txt:'Проезд знака STOP без остановки'},
+  'tram-turn':       {pts:3, fatal:false, txt:'Разворот не с трамвайных путей'},
+  'lane-blinker':    {pts:1, fatal:false, txt:'Перестроение без поворотника'},
   /* кода нет в экзаменационном начислении: там любой наезд идёт как 'collision'.
      Он существует только для строгих городских уровней — см. hitPenalty */
   'kerb':            {pts:3, fatal:false, hard:true, txt:'Наезд на бордюр'}
@@ -4104,7 +4127,8 @@ function examPenalty(code){
 }
 /* каждой ошибке — уровень, где её отрабатывают: протокол даёт ссылку «отработать» */
 const EXAM_TRAIN={rollback:19, stall:19, 'handbrake-drive':19, collision:21, kerb:21,
-  'no-blinker':22, oncoming:23, stopline:24, zebra:24, yield:25, 'collision-actor':25};
+  'no-blinker':22, oncoming:23, stopline:24, zebra:24, yield:25, 'collision-actor':25,
+  redlight:26, 'stop-sign':26, 'solid-line':27, 'lane-blinker':27, 'tram-turn':28};
 /* первый проигрышный конец в игре: физика замирает на game.done, как при победе,
    а выход из замершего состояния — только через экран результата (ловушка resume) */
 function examFail(why){
@@ -4211,7 +4235,10 @@ const FAIL_RULE={
   'yield':           'Уступить — значит не заставить другого тормозить или менять полосу. Не понял, кто первый, — стой.',
   'oncoming':        'Встречная полоса чужая всегда, кроме разрешённого обгона. Выход из любого поворота — на свою полосу.',
   'stopline':        'У стоп-линии нужна ПОЛНАЯ остановка: колёса встали, потом смотришь и едешь.',
-  'kerb':            'Бордюр — граница проезжей части, наезд на него считается выездом за её пределы.'
+  'kerb':            'Бордюр — граница проезжей части, наезд на него считается выездом за её пределы.',
+  'redlight':        'Жёлтый — тоже запрещающий: на него тормозят, а не «успевают проскочить».',
+  'solid-line':      'Сплошную не пересекают ни на сантиметр. Перестраиваться надо ДО того, как разметка станет сплошной.',
+  'stop-sign':       'Под знаком STOP останавливаются всегда — даже когда дорога пустая и видно на километр.'
 };
 function levelFailHTML(){
   const rule=FAIL_RULE[attempt.code]||'', tr=EXAM_TRAIN[attempt.code];
@@ -4279,24 +4306,53 @@ function examPassHTML(){
     +'<button data-act="again">Ещё маршрут</button> '
     +'<button data-act="pick" class="ghost">К уровням</button>';
 }
+/* когда поворотник в последний раз горел: перестроение засчитывается корректным,
+   если сигнал был включён до начала манёвра, а не мигнул уже поперёк разметки */
+const blinkLog={L:-9, R:-9};
+/* сигнал засчитан, если он горит сейчас или гас меньше 1,2 с назад: манёвр
+   с самоотменой поворотника в середине не должен превращаться в нарушение */
+function blinkSeen(dir){ return car.blink===dir || game.t-blinkLog[dir] < 1.2; }
+/* центр кузова на трамвайном полотне — по мете путей, а не по цвету декали */
+function onTram(b){
+  for(const t of (level.city.trams||[])){
+    const tf=fuv(t.yaw), tr=ruv(t.yaw);
+    const s=(b.u-t.u)*tf.u+(b.v-t.v)*tf.v, x=(b.u-t.u)*tr.u+(b.v-t.v)*tr.v;
+    if(Math.abs(s)<t.len/2 && Math.abs(x)<t.hw) return true;
+  }
+  return false;
+}
 function cityReset(){
   vioEvents.length=0;
   const c=level.city; if(!c) return;
   for(const k in c){ const arr=c[k]; if(!Array.isArray(arr)) continue;
-    for(const o of arr){ o._fired=false; o._stopped=false; o._inZone=false; o._th0=0; o._blinkOk=false; } }
+    for(const o of arr){ o._fired=false; o._stopped=false; o._inZone=false; o._th0=0; o._blinkOk=false;
+                         o._lane=undefined; o._onTram=false; o._stopT=0;
+                         o._redFired=false; o._solidFired=false; o._blFired=false;
+                         o._uFired=false; o._uIn=false; o._uTh=0; o._uArm=false;
+                         o._seen=false; o._redSeen=false; } }
+  blinkLog.L=-9; blinkLog.R=-9;
 }
 function violationsTick(dt){
   const c=level.city, b=bodyPos(), f=fuv(car.th);
   const nu=b.u+f.u*HALF_L, nv=b.v+f.v*HALF_L;
   for(const sl of (c.stoplines||[])){
-    if(sl._fired) continue;
+    /* у регулируемой линии остановка обязательна только на запрещающий сигнал:
+       без этого пропуска проезд на зелёный без остановки шёл как нарушение */
+    if(sl._fired || sl.light) continue;
     const lf=fuv(sl.yaw), lr=ruv(sl.yaw);
     const s=(nu-sl.u)*lf.u+(nv-sl.v)*lf.v;
     const x=(nu-sl.u)*lr.u+(nv-sl.v)*lr.v;
     if(Math.abs(x)>sl.w/2+0.6) continue;
     if(f.u*lf.u+f.v*lf.v<0.5) continue;               /* только по ходу движения */
+    /* линию надо СНАЧАЛА увидеть перед собой: без этой защёлки любая стоп-линия,
+       оставшаяся позади (старт за ней, проезд по поперечной улице), штрафовалась
+       на первом же кадре — условие s>0.3 истинно сразу */
+    if(s<-0.1) sl._seen=true;
+    if(!sl._seen) continue;
     if(s>-4&&s<0.25&&Math.abs(car.vel)<0.1) sl._stopped=true;
-    if(s>0.3){ if(!sl._stopped) vio('stopline','Стоп-линия: перед ней нужна полная остановка');
+    if(s>0.3){ if(!sl._stopped) vio(sl.stop?'stop-sign':'stopline',
+                 sl.stop ? 'Под знаком STOP останавливаются всегда'
+                         : 'Стоп-линия: перед ней нужна полная остановка');
                sl._fired=true; }
   }
   for(const z of (c.zebras||[])){
@@ -4342,6 +4398,72 @@ function violationsTick(dt){
         vio('no-blinker','Манёвр без поворотника ('+(tz.blink==='L'?'левый':'правый')+' — Q/E)');
       tz._fired=turned>rad(25);
       tz._inZone=false;
+    }
+  }
+  /* красный/жёлтый: та же геометрия стоп-линии, что и у обычной, плюс ссылка на светофор.
+     Второй детектор с собственной геометрией разошёлся бы с первым на полметра */
+  for(const sl of (c.stoplines||[])){
+    if(!sl.light || sl._redFired) continue;
+    const lf=fuv(sl.yaw), lr=ruv(sl.yaw);
+    const s2=(nu-sl.u)*lf.u+(nv-sl.v)*lf.v;
+    const x2=(nu-sl.u)*lr.u+(nv-sl.v)*lr.v;
+    if(Math.abs(x2)>sl.w/2+0.6) continue;
+    if(f.u*lf.u+f.v*lf.v<0.5) continue;
+    if(s2<-0.1) sl._redSeen=true;
+    if(!sl._redSeen) continue;
+    if(s2>0.3){ sl._redFired=true;
+      if(lightStops(sl.light) && Math.abs(car.vel)>0.1)
+        vio('redlight','Запрещающий сигнал: перед стоп-линией нужно стоять'); }
+  }
+  /* полосы: номер полосы — это номер интервала между границами. Смена номера без
+     заранее включённого поворотника — балл; пересечение сплошной — грубое.
+     Ноль индекса и undefined различаем явно: на первом кадре полосы ещё нет */
+  for(const ln of (c.lanes||[])){
+    const lf=fuv(ln.yaw), lr=ruv(ln.yaw);
+    const sL=(b.u-ln.u)*lf.u+(b.v-ln.v)*lf.v;
+    if(Math.abs(sL)>ln.len/2){ ln._lane=undefined; continue; }
+    const x=(b.u-ln.u)*lr.u+(b.v-ln.v)*lr.v;
+    if(Math.abs(x)>ln.hw){ ln._lane=undefined; continue; }
+    let idx=0; while(idx<ln.edges.length-1 && x>ln.edges[idx+1]) idx++;
+    if(ln._lane===undefined){ ln._lane=idx; continue; }
+    if(idx===ln._lane) continue;
+    const up = idx>ln._lane;                 /* вправо по локальной оси дороги */
+    const crossed = up ? ln._lane+1 : ln._lane;   /* индекс пересечённой границы */
+    /* курс машины может быть противоположен объявленному курсу дороги: тогда
+       «вправо по оси дороги» для водителя — влево, и подсказка про поворотник врала бы */
+    const along = (fuv(car.th).u*lf.u + fuv(car.th).v*lf.v) >= 0;
+    const dir = (up===along) ? 'R' : 'L';
+    if(ln.solid[crossed] && !ln._solidFired){
+      ln._solidFired=true;
+      vio('solid-line','Сплошную не пересекают — перестраивайся заранее');
+    } else if(!blinkSeen(dir) && !ln._blFired){
+      ln._blFired=true;
+      vio('lane-blinker','Перестроение без поворотника ('+(dir==='L'?'левый Q':'правый E')+')');
+    }
+    ln._lane=idx;
+  }
+  /* разворот выполняют с трамвайных путей попутного направления: запоминаем, стоял ли
+     кузов на путях в момент входа в зону, и спрашиваем это на выходе — внутри дуги
+     машина уже уехала с путей, и проверка каждый кадр всегда давала бы «не с путей» */
+  for(const tz of (c.turnZones||[])){
+    if(!tz.uturn || tz._uFired) continue;
+    const tf=fuv(tz.yaw||0), tr=ruv(tz.yaw||0);
+    const sU=(b.u-tz.u)*tf.u+(b.v-tz.v)*tf.v, xU=(b.u-tz.u)*tr.u+(b.v-tz.v)*tr.v;
+    const inside=Math.abs(sU)<tz.l/2 && Math.abs(xU)<tz.w/2;
+    if(inside && !tz._uIn){ tz._uIn=true; tz._uTh=car.th; tz._uArm=false; tz._onTram=false; }
+    /* момент начала дуги — первый кадр, где курс ушёл от входного больше чем на 15°.
+       Спрашивать «на путях ли» непрерывно нельзя: разворот из правой полосы всё равно
+       пересекает полотно, и тогда нарушение не ловилось бы никогда */
+    if(inside && tz._uIn && !tz._uArm && Math.abs(angNorm(car.th-tz._uTh))>rad(15)){
+      tz._uArm=true; tz._onTram=onTram(b); }
+    if(!inside && tz._uIn){
+      const turned=Math.abs(angNorm(car.th-tz._uTh));
+      console.warn('[FIX:tram-turn] выход: поворот '+Math.round(deg(turned))
+        +'°, с путей '+(tz._onTram?'да':'нет'));
+      if(turned>rad(120) && tz._uArm && !tz._onTram)
+        vio('tram-turn','Разворот выполняют с трамвайных путей попутного направления');
+      tz._uFired = turned>rad(120);
+      tz._uIn=false;
     }
   }
   for(const y of (c.yieldZones||[])){
@@ -4962,7 +5084,28 @@ function emitObstacles(maxD){
       continue;
     }
     if(o.kind==='sign'){ emitSign(o); continue; }
+    if(o.kind==='light'){ emitTrafficLight(o); continue; }
     pushBox(o.u,o.h/2,o.v,o.w/2,o.h/2,o.l/2,o.yaw,o.col);
+  }
+}
+/* светофор: стойка, корпус и три линзы. Активная линза идёт через emitLit —
+   под уличным затенением она уходила в чёрное, и сигнал становился нечитаем ровно
+   там, где от него зависит, тормозить или ехать */
+function emitTrafficLight(o){
+  const ph=lightPhase(o);
+  pushBox(o.u,1.30,o.v,0.055,1.30,0.055,o.yaw,[122,128,136]);
+  pushBox(o.u,LIGHT_H-0.46,o.v,0.15,0.46,0.11,o.yaw,[46,50,56]);
+  const f=fuv(o.yaw);
+  const LENS={R:[[238,58,52],[92,34,34]], Y:[[244,190,52],[92,80,38]], G:[[70,214,110],[36,80,48]]};
+  let i=0;
+  for(const k of ['R','Y','G']){
+    const y=LIGHT_H-0.16-i*0.29; i++;
+    const on = (ph===k);
+    const c = on ? LENS[k][0] : LENS[k][1];
+    const lu=o.u+f.u*0.085, lv=o.v+f.v*0.085;
+    /* MO.emit снимает ламберт: линза, отвёрнутая от солнца, иначе уходила в чёрное,
+       и сигнал становился нечитаем ровно там, где от него зависит — ехать или стоять */
+    pushBox(lu,y,lv,0.10,0.10,0.035,o.yaw,c,0, on?MO.emit:null);
   }
 }
 /* щит знака: формы из pushPoly в вертикальной плоскости, лицом вдоль yaw знака.
@@ -5000,6 +5143,28 @@ function emitSign(o){
       mk([[-0.31,0.31],[0.31,0.31],[0.31,-0.31],[-0.31,-0.31]],[38,88,196],0.020,true);
       mk([[-0.20,-0.18],[0.20,-0.18],[0,0.18]],[242,244,246],0.033);
       break;
+    /* круговое движение: синий круг и три стрелки по часовой — в РФ движение по кольцу
+       против часовой, но знак смотрит на въезжающего, и на щите стрелки идут по кругу */
+    case 'circle': {
+      const p=[]; for(let i=0;i<14;i++){ const a=i/14*TAU;
+        p.push([Math.cos(a)*0.36, Math.sin(a)*0.36]); }
+      mk(p,[38,88,196],0.020,true);
+      for(let k=0;k<3;k++){
+        const a=k*TAU/3+0.5, ca=Math.cos(a), sa=Math.sin(a);
+        const rr=0.20, tw=0.055;
+        mk([[ca*rr-sa*tw, sa*rr+ca*tw],[ca*rr+sa*tw, sa*rr-ca*tw],
+           [ca*(rr+0.10)+sa*0.02, sa*(rr+0.10)-ca*0.02]],[242,244,246],0.033);
+      }
+      break; }
+    /* главная дорога с изменением направления: жёлтый ромб плюс чёрная ломаная —
+       на косом узле без неё непонятно, кто кому уступает */
+    case 'main-r': case 'main-l': {
+      mk([[0,0.37],[0.37,0],[0,-0.37],[-0.37,0]],[240,242,246],0.020,true);
+      mk([[0,0.27],[0.27,0],[0,-0.27],[-0.27,0]],[236,186,44],0.033);
+      const sg=(o.pic==='main-r')?1:-1;
+      mk([[-sg*0.20,-0.045],[0.0,-0.045],[sg*0.13,0.20],[sg*0.05,0.235],[-0.02,0.02],[-sg*0.20,0.045]],
+         [26,28,32],0.040);
+      break; }
   }
 }
 /* настил эстакады красится плоскими декалями: warp в toCam сам кладёт их на склон */
@@ -5785,6 +5950,7 @@ const KEYMAP={KeyW:'fwd',ArrowUp:'fwd',KeyS:'back',ArrowDown:'back',Space:'back'
 function setBlink(dir){
   car.blink = (car.blink===dir) ? null : dir;
   car.blinkTh = car.th;
+  if(car.blink) blinkLog[car.blink]=game.t;
   tone(car.blink?940:620,0.03,0.05,'square');
   syncBlinkDom();
 }
