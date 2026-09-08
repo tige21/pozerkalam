@@ -1514,12 +1514,52 @@ function emitWheel(K){
    затемнением салона шкала, стрелка и буквы передачи тонули в чёрном — то есть
    пропадало ровно то, что добавлено, чтобы читать выворот и передачу */
 function emitLit(fn){ const s=cabinLit; cabinLit=false; try{ fn(); } finally{ cabinLit=s; } }
+/* нормаль внутрь: pushQuad всегда разворачивает её ПРОЧЬ от ref, поэтому отражаем ref
+   через центр грани — «прочь от отражённого» и есть «в сторону исходного» */
+function pushQuadIn(a,b,c,d,col,ref,bias,o){
+  const mx=(a.x+b.x+c.x+d.x)*0.25, my=(a.y+b.y+c.y+d.y)*0.25, mz=(a.z+b.z+c.z+d.z)*0.25;
+  pushQuad(a,b,c,d,col,{x:2*mx-ref.x, y:2*my-ref.y, z:2*mz-ref.z}, bias, o);
+}
+/* Обшивка салона по тому же лофту, что и кузов, но нормалями внутрь.
+   Кузов строится нормалями наружу, и из салона ВСЕ его панели отсекаются back-face-culling'ом:
+   видно только то, что смоделировано отдельно — торпедо, двери, стойки. Позади и сбоку от
+   водителя модели нет, поэтому при взгляде через плечо игрок смотрел СКВОЗЬ собственную машину:
+   оставалась одна стойка и пустота, а сиденья висели в воздухе (жалоба владельца, уровень 1,
+   fpYaw ±118°). Стеклянные рёбра пропускаем — иначе окна станут глухими; моторный отсек
+   (z > 0,85) не выкладываем, его закрывает торпедо */
+function emitCabinSkin(K){
+  const {P}=K, C=CAB, NP=CAR_SECS[0].pts.length;
+  const ref={x:P(0,0.85,0).x, y:0.85, z:P(0,0.85,0).z};
+  for(let i=0;i+1<CAR_SECS.length;i++){
+    const A=CAR_SECS[i], B=CAR_SECS[i+1];
+    /* вперёд от основания лобового стекла обшивку не кладём: там всё уже закрыто торпедо,
+       стойками и самим стеклом, а её грани спорили с отделкой за порядок (2 пары в sortAudit) */
+    if(A.z>0.29) continue;
+    for(let e=0;e<NP;e++){
+      if(A.k==='glass' && EDGE_TOPGLASS.has(e)) continue;
+      if(A.k==='cabin' && EDGE_SIDEGLASS.has(e)) continue;
+      /* порог и днище пропускаем: пол салона смоделирован отдельно, а подкузовные грани
+         изнутри не видны — зато они спорили с полом за порядок отрисовки */
+      if(EDGE_SILL.has(e)) continue;
+      const e2=(e+1)%NP;
+      const col = EDGE_TOPGLASS.has(e) ? C.HEAD : C.TRIM;
+      /* Обшивка — самая наружная поверхность салона, она обязана лежать ЗА всем остальным.
+         По центроиду она выходила ближе карты двери (sortAudit давал 37 пар не в том
+         порядке), поэтому сдвигаем её единым большим отрицательным bias: одинаковый сдвиг
+         сохраняет порядок граней обшивки между собой, а мир к этому моменту уже отрисован
+         отдельным проходом, и «уехать» за него она не может */
+      pushQuadIn(P(A.pts[e][0],A.pts[e][1],A.z), P(A.pts[e2][0],A.pts[e2][1],A.z),
+                 P(B.pts[e2][0],B.pts[e2][1],B.z), P(B.pts[e][0],B.pts[e][1],B.z),
+                 col, ref, -0.30, MO.cloth);
+    }
+  }
+}
 function emitInterior(u,v,th){
   const K=cabinCtx(u,v,th);
   const F=fwd(th); cabinLight={x:F.x*0.93, y:0.37, z:F.z*0.93};
   cabinLit=true;
   /* флаг обязан сняться в любом случае: иначе салонное освещение утечёт в уличные грани */
-  try{ emitCabinShell(K); emitCabinRear(K); emitDash(K); emitWheel(K); }
+  try{ emitCabinSkin(K); emitCabinShell(K); emitCabinRear(K); emitDash(K); emitWheel(K); }
   finally{ cabinLit=false; }
 }
 function emitCarMesh(u, v, th, col, st, lights){
