@@ -59,7 +59,12 @@ function detFixture(){
   city.lanes.push(roadDec2(dec, 40, 0, 0,  80, {lanes:1, tram:true}));
   city.trams.push({kind:'tram', u:40, v:0, yaw:0, len:80, hw:TRAM_HW});
   city.turnZones.push({u:40, v:0, yaw:0, w:18, l:9, uturn:true});
-  level.dec=dec; level.city=city; level.actors=[]; level.obs=[]; level.rend=[];
+  city.oncoming.push({u:-60, v:0, yaw:0, w:6.6, l:60});
+  city.zebras.push(zebraDec(dec, 0, 50, 0, 6.6));
+  city.yieldZones.push({u:-20, v:0, yaw:0, w:6.6, l:8, dist:12});
+  const act=actorCar(-20, 8, 180, PALETTE[1], [{u:-20,v:-20}], 2.0, null);
+  act.hw=act.w/2; act.hl=act.l/2;
+  level.dec=dec; level.city=city; level.actors=[act]; level.obs=[act]; level.rend=[];
   level.bounds={u0:-40,u1:80,v0:-80,v1:80};
   decBounds(dec); cityReset(); game.t=0; car.blink=null;
 }
@@ -89,6 +94,13 @@ function detectorCheck(){
     ['перестроение с поворотником',  ()=>{ car.blink='R'; }, line(21.65,0, 24.95,0, 0, 24), [], ['lane-blinker']],
     ['разворот не с путей',          null, uturn(4.8), ['tram-turn'], []],
     ['разворот с путей',             null, uturn(1.6), [], ['tram-turn']],
+    ['выезд на встречную',           null, line(-58,-10, -58,10, 0, 24), ['oncoming'], []],
+    ['своя полоса после разворота',  null, line(-58,10, -58,-10, rad(180), 24), [], ['oncoming']],
+    ['стоянка на зебре',             null, line(0,50, 0,50, 0, 90, 0), ['zebra'], []],
+    ['проезд зебры без остановки',   null, line(0,46, 0,55, 0, 30), [], ['zebra']],
+    ['не уступил помехе',            null, line(-20,-6, -20,3, 0, 24), ['yield'], []],
+    ['наезд на участника',           ()=>{ level.actors[0]._hitByPlayer=true; },
+                                     line(0,-6, 0,-4, 0, 6), ['collision-actor'], []],
   ];
   const out=cases.map(([name, setup, path, want, forbid])=>{
     const got=run(setup, path);
