@@ -709,7 +709,8 @@ function pushFace(v, n, col, bias, o){
       f.colMid=shadeCol(col, {x:mx/ml, y:my/ml, z:mz/ml}, dd, cy, sh); }
     if(cabinLit && m && m.grain){ f.grain=m;
       f.lu=Math.hypot(v[1].x-v[0].x, v[1].y-v[0].y, v[1].z-v[0].z);
-      f.lv=Math.hypot(v[3].x-v[0].x, v[3].y-v[0].y, v[3].z-v[0].z); }
+      f.lv=Math.hypot(v[3].x-v[0].x, v[3].y-v[0].y, v[3].z-v[0].z);
+      if(cabinFrame) grainUV(f, v, n); }
   }
   /* o.img — готовая картинка (циферблат, экран) натягивается на четырёхугольник: детали
      прибора рисуются один раз в offscreen-канвас, а не сотней граней каждый кадр */
@@ -734,6 +735,26 @@ function pushBox(u, y, v, hw, hh, hl, yaw, col, bias, o){
    (метры → пиксели плитки), поэтому зерно сидит на обивке при любом повороте головы. Раньше один
    экранный шум ложился на весь салон и читался как помехи на мониторе, а не как материал */
 const GRAIN_PX=700;                       /* пикселей плитки на метр поверхности */
+/* Координаты зерна берём НЕ из рёбер грани, а из общей системы кузова и кладём плитку на одну
+   из трёх плоскостей (как триплан): у потолка, рельса и стойки рисунок продолжается через стык.
+   В координатах грани каждая деталь начинала узор от своего угла и под своим углом, и салон
+   читался лоскутным одеялом — «текстуры криво друг на друга накладываются».
+   Плоскость выбирается по нормали в системе кузова, а она у детали постоянна: выбор не
+   переключается на повороте головы и мерцать нечему */
+let cabinFrame=null;
+function grainUV(f, v, n){
+  const C=cabinFrame, fu=C.f, ru=C.r;
+  const lat=(p)=>{ const du=(-p.x)-C.u, dv=p.z-C.v; return du*ru.u+dv*ru.v; };
+  const zz =(p)=>{ const du=(-p.x)-C.u, dv=p.z-C.v; return du*fu.u+dv*fu.v; };
+  const nl=Math.abs((-n.x)*ru.u+n.z*ru.v), nz=Math.abs((-n.x)*fu.u+n.z*fu.v), ny=Math.abs(n.y);
+  let A, B;
+  if(nl>=nz && nl>=ny){ A=zz;  B=(p)=>p.y; }        /* борт: плоскость (z, y) */
+  else if(ny>=nz){      A=lat; B=zz; }              /* пол и потолок: (lat, z) */
+  else {                A=lat; B=(p)=>p.y; }        /* торпедо и корма: (lat, y) */
+  f.ga0=A(v[0])*GRAIN_PX; f.gb0=B(v[0])*GRAIN_PX;
+  f.ga1=A(v[1])*GRAIN_PX; f.gb1=B(v[1])*GRAIN_PX;
+  f.ga3=A(v[3])*GRAIN_PX; f.gb3=B(v[3])*GRAIN_PX;
+}
 const grainPats={};
 function grainPattern(kind){
   if(grainPats[kind]) return grainPats[kind];
@@ -821,10 +842,22 @@ function flushFaces(){
    программном Canvas стоили дороже самой заливки); плитка полупрозрачная, светлые и тёмные
    зёрна в её альфе */
 function grainFace(f, s0, s1, s3){
-  const ux=s1.x-s0.x, uy=s1.y-s0.y, vx=s3.x-s0.x, vy=s3.y-s0.y;
-  const W=f.lu*GRAIN_PX, H=f.lv*GRAIN_PX;
   ctx.save();
-  ctx.transform(ux/W, uy/W, vx/H, vy/H, s0.x, s0.y);
+  if(f.ga0!==undefined){
+    /* аффинная карта «координаты кузова → экран» по трём углам грани */
+    const d1a=f.ga1-f.ga0, d1b=f.gb1-f.gb0, d3a=f.ga3-f.ga0, d3b=f.gb3-f.gb0;
+    const det=d1a*d3b-d1b*d3a;
+    if(Math.abs(det)<1e-6){ ctx.restore(); return; }
+    const e1x=s1.x-s0.x, e1y=s1.y-s0.y, e3x=s3.x-s0.x, e3y=s3.y-s0.y;
+    const m11=( e1x*d3b-e3x*d1b)/det, m12=( e1y*d3b-e3y*d1b)/det;
+    const m21=(-e1x*d3a+e3x*d1a)/det, m22=(-e1y*d3a+e3y*d1a)/det;
+    ctx.transform(m11, m12, m21, m22,
+                  s0.x-(m11*f.ga0+m21*f.gb0), s0.y-(m12*f.ga0+m22*f.gb0));
+  } else {
+    const ux=s1.x-s0.x, uy=s1.y-s0.y, vx=s3.x-s0.x, vy=s3.y-s0.y;
+    const W=f.lu*GRAIN_PX, H=f.lv*GRAIN_PX;
+    ctx.transform(ux/W, uy/W, vx/H, vy/H, s0.x, s0.y);
+  }
   ctx.globalAlpha=f.grain.grainA*f.gk;
   ctx.fillStyle=grainPattern(f.grain.grain);
   ctx.fill();
@@ -1558,9 +1591,10 @@ function emitInterior(u,v,th){
   const K=cabinCtx(u,v,th);
   const F=fwd(th); cabinLight={x:F.x*0.93, y:0.37, z:F.z*0.93};
   cabinLit=true;
+  cabinFrame={u, v, th, f:fuv(th), r:ruv(th)};
   /* флаг обязан сняться в любом случае: иначе салонное освещение утечёт в уличные грани */
   try{ emitCabinSkin(K); emitCabinShell(K); emitCabinRear(K); emitDash(K); emitWheel(K); }
-  finally{ cabinLit=false; }
+  finally{ cabinLit=false; cabinFrame=null; }
 }
 function emitCarMesh(u, v, th, col, st, lights){
   const f=fuv(th), r=ruv(th), a=ackermann(st||0), t=CAR.track/2;
