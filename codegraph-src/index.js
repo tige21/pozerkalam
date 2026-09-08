@@ -4841,6 +4841,10 @@ function examNav(){
   if(!st.at) return {glyph:g, text:st.cmd, dist:null};
   const c=bodyPos(), d=Math.hypot(st.at.u-c.u, st.at.v-c.v);
   if(d>75) return {glyph:g, text:st.cmd, dist:d};
+  /* короткую форму даём только манёвру: на этапе «веди прямо» точка at — это конец
+     участка, игрок стоит от неё в десятках метров, и «прямо по проспекту» вместо полной
+     команды звучало как обрывок уже на старте экзамена */
+  if(st.turn==='straight') return {glyph:g, text:st.cmd, dist:d};
   if(d>28) return {glyph:g, text:'Через '+(Math.round(d/10)*10)+' м — '+examShort(st), dist:d};
   if(d>10) return {glyph:g, text:examShort(st), dist:d};
   return {glyph:g, text:st.cmd, dist:d};
@@ -5945,14 +5949,17 @@ function render(dt){
   }
   if(hudMode>=2) return;
   const small = document.body.classList.contains('compact');
-  if(small){ const k=clamp(H/390,0.6,1); drawMinimap(8, 5, Math.round((hudMode===1?82:100)*k)); }
+  /* на тренировочном экзамене в углу нужна карта МАРШРУТА, а не миникарта: на 450 м
+     поездки центрированная на машине карта не показывает, куда ехать, а свободного
+     места рядом нет — между зеркалом и углом остаётся 70 px */
+  const routeMap = examActive() && examTrain();
+  if(small){ const k=clamp(H/390,0.6,1), sz=Math.round((hudMode===1?82:100)*k);
+    if(routeMap) drawRouteMap(8, 5, sz, sz); else drawMinimap(8, 5, sz); }
   else {
     if(opt.camMode!==CAM_FP && hudMode===0) drawSteerPanel(16, H-186, 336, 168);
     const mm = opt.camMode===CAM_FP ? 166 : 222;
-    drawMinimap(W-mm-16, H-mm-(opt.camMode===CAM_FP?52:16), mm);
-    /* карта маршрута — только на тренировочном экзамене: у молчаливого инспектора
-       её нет, там маршрут держат в голове, как на настоящем */
-    if(examActive() && examTrain()) drawRouteMap(W-mm-16, H-mm-(opt.camMode===CAM_FP?52:16)-mm-10, mm, mm-40);
+    const mx=W-mm-16, my=H-mm-(opt.camMode===CAM_FP?52:16);
+    if(routeMap) drawRouteMap(mx, my, mm, mm); else drawMinimap(mx, my, mm);
   }
 }
 /* карта маршрута целиком: дороги — заливки асфальта из декалей, маршрут — точки at
@@ -6310,7 +6317,15 @@ function updateHUD(){
     coachCard('hit','⚠', examWhy+' · баллы: '+exam.score+'. Дальше: '
       +examNav().text.charAt(0).toLowerCase()+examNav().text.slice(1)+'.');
   else if(examActive()){ const nav=examNav();
-    coachCard('exam', nav.glyph, nav.text+' · баллы: '+exam.score
+    /* в тренировочном режиме к команде инспектора приклеиваем гейт селектора: без него
+       первая команда «тронься» приходит игроку, стоящему в P, и трогаться нечем.
+       В настоящем режиме инспектор молчит — там это часть проверки */
+    const gate = !examTrain() ? ''
+      : (mtOn() ? (car.stalled ? 'Заглох: сцепление (Shift) и Y. '
+                 : car.mgear===0 ? 'N · выжми сцепление (Shift) и включи 1-ю («.»). ' : '')
+                : (car.sel==='P' ? (MOB ? 'P · держи ТОРМОЗ, тапни D. ' : 'P · зажми тормоз (пробел) и включи передачу (Enter). ')
+                 : car.sel==='N' ? 'N · нейтраль, газ не работает. ' : ''));
+    coachCard('exam', nav.glyph, gate+nav.text+' · баллы: '+exam.score
       +(examTrain()&&nav.dist!==null&&nav.dist<75 ? ' · '+nav.dist.toFixed(0)+' м' : '')); }
   /* гайд троганья владеет карточкой целиком, пока не пройден: фазовые подсказки подождут */
   else if(tut && TUT[tut.i]){ const st=TUT[tut.i]; coachCard(st.kind, st.icon, st.act(), null, {why:st.why}); }
