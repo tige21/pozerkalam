@@ -407,6 +407,9 @@
 
 
 
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -7857,7 +7860,23 @@ function renderOnb(){
   if(!st){ closeOnboard(); return; }
   const layer=$('thelp'); layer.innerHTML=''; layer.classList.add('on');
   paused=true; for(const k in input) input[k]=false;
-  const b=document.querySelector(st.sel).getBoundingClientRect();
+  /* подсвечиваем ЯЧЕЙКУ целиком, а не одно значение: окно по «1,93 м» показывало число
+     без подписи «зазоры спереди / сзади», и текст «смотри сюда» терял адрес */
+  const tgt=document.querySelector(st.sel);
+  const b=(tgt.closest('.cell')||tgt).getBoundingClientRect();
+  /* окно в затемнении по рамке подсветки: элемент, о котором идёт речь, обязан остаться
+     читаемым — иначе тур объясняет то, чего не видно */
+  const pad=6;
+  const hx=Math.max(0,b.left-pad), hy=Math.max(0,b.top-pad);
+  const hw=Math.min(innerWidth,b.right+pad)-hx, hh=Math.min(innerHeight,b.bottom+pad)-hy;
+  const mask=(l,t,w2,h2)=>{ if(w2<=0||h2<=0) return;
+    const m=document.createElement('div'); m.className='onbmask';
+    m.style.cssText='left:'+l+'px;top:'+t+'px;width:'+w2+'px;height:'+h2+'px';
+    layer.appendChild(m); };
+  mask(0, 0, innerWidth, hy);
+  mask(0, hy+hh, innerWidth, innerHeight-hy-hh);
+  mask(0, hy, hx, hh);
+  mask(hx+hw, hy, innerWidth-hx-hw, hh);
   const ring=document.createElement('div'); ring.className='onbring';
   ring.style.cssText='left:'+(b.left-6)+'px;top:'+(b.top-6)+'px;width:'+(b.width+8)+'px;height:'+(b.height+8)+'px';
   layer.appendChild(ring);
@@ -7872,6 +7891,16 @@ function renderOnb(){
   btn.textContent = onbIdx<steps.length-1 ? 'Дальше '+(onbIdx+1)+'/'+steps.length : 'Понятно';
   btn.addEventListener('click',()=>{ onbIdx++; onbIdx<steps.length? renderOnb() : closeOnboard(); });
   layer.appendChild(btn);
+  /* кнопка стояла в центре экрана и на телефоне ложилась прямо на текст пояснения.
+     Держим её под пояснением, а если внизу не помещается — над ним; окно подсветки
+     не перекрываем ни в одном из вариантов */
+  const lx=parseFloat(d.style.left), ly=parseFloat(d.style.top);
+  const bw=btn.offsetWidth, bh=btn.offsetHeight;
+  let bx=clamp(lx+w/2-bw/2, 6, innerWidth-bw-6), by=ly+h+10;
+  const hits=(t)=> t+bh>hy-6 && t<hy+hh+6;
+  if(by+bh>innerHeight-6 || hits(by)) by=ly-bh-10;
+  if(by<6 || hits(by)) by=Math.min(innerHeight-bh-6, Math.max(6, hy+hh+12));
+  btn.style.cssText='left:'+bx+'px;top:'+by+'px;transform:none';
 }
 function showOnboard(){ onbActive=true; onbIdx=0; renderOnb(); }
 function closeOnboard(){
@@ -7881,7 +7910,9 @@ function closeOnboard(){
   maybeStartTut();
 }
 $('thelp').addEventListener('pointerdown',e=>{
-  if(e.target.id!=='thelp') return;
+  /* закрывает и клик по самому слою, и по куску затемнения: слой стал прозрачным,
+     и попасть по нему мимо кусков почти негде */
+  if(e.target.id!=='thelp' && !e.target.classList.contains('onbmask')) return;
   if(onbActive) closeOnboard(); else closeTouchHelp();
 });
 $('topleft').addEventListener('click',()=>{ if(!paused) showTask(); });
