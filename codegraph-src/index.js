@@ -7846,6 +7846,8 @@ function pushTrail(dt){
   }
 }
 let last=0;
+/* в строке ?perf=1 есть и поза камеры: разбор скриншота владельца упирался
+   в консоль, которой в превью-вкладке редактора нет */
 function perfTick(dt){
   perfT+=dt; if(perfT<0.5) return; perfT=0;
   const el=document.getElementById('perf'); if(!el) return;
@@ -7853,7 +7855,7 @@ function perfTick(dt){
   let sum=0; for(const x of g) sum+=x;
   const p95=g[Math.floor(g.length*0.95)], fps=1000/(sum/g.length);
   el.hidden=false;
-  setText(el, fps.toFixed(0)+' fps · p95 '+p95.toFixed(1)+' мс · js '+frameCost.toFixed(1)+' мс · dpr '+DPR.toFixed(2)+' · q'+qLevel+(opt.gfx==='max'?'!':'')+' · exp '+EXPAND_DEV+' · грани '+facesFrame+' · декали '+decDrawn);
+  setText(el, fps.toFixed(0)+' fps · p95 '+p95.toFixed(1)+' мс · js '+frameCost.toFixed(1)+' мс · dpr '+DPR.toFixed(2)+' · q'+qLevel+(opt.gfx==='max'?'!':'')+' · exp '+EXPAND_DEV+' · грани '+facesFrame+' · декали '+decDrawn+' · кам '+opt.camMode+' d'+opt.dist.toFixed(1)+' y'+Math.round(deg(opt.camYaw))+' p'+Math.round(deg(opt.pitch))+' fy'+Math.round(deg(opt.fpYaw))+' fp'+Math.round(deg(opt.fpPitch))+' · L'+(game.li+1)+' xy '+car.ru.toFixed(1)+','+car.rv.toFixed(1)+' th'+Math.round(deg(angNorm(car.th))));
 }
 function frame(ts){
   requestAnimationFrame(frame);
