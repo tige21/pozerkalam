@@ -5523,8 +5523,10 @@ function drawDecals(maxD){
   }
 }
 /* точка, от которой меряется дальность: центр камеры на земле, а не позиция машины —
-   в виде сверху и в зеркалах камера стоит совсем не там, где кузов */
-function camGroundUV(){ return {u:-cam.x, v:cam.z}; }
+   в виде сверху и в зеркалах камера стоит совсем не там, где кузов.
+   Координаты лежат в cam.pos, как и в emitObstacles: cam.x не существует, и отсечение
+   молча не работало — hypot(NaN) сравнивался как false, и город рисовался целиком */
+function camGroundUV(){ return {u:-cam.pos.x, v:cam.pos.z}; }
 function decBounds(dec){
   for(const d of dec){
     const p=d.pts; if(!p||!p.length){ d._r=undefined; continue; }
