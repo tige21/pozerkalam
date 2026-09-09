@@ -49,16 +49,22 @@ mkdir -p build/play
 npx --yes html-minifier-terser index.html -o build/play/index.html \
   --collapse-whitespace --remove-comments --minify-css true --minify-js true
 
-echo "==> игра: пути /play/ + Метрика"
-python3 - "$METRIKA_ID" <<'PYEOF'
+# Версию считаем от чистого минифицированного файла, до вставок: она попадает и в SW,
+# и в window.BUILD. Без версии в отчёте об ошибке «у меня баг» неотличимо от «у меня
+# старый кэш SW».
+BUILD_SHA=$(shasum -a 256 build/play/index.html | cut -c1-16)
+
+echo "==> игра: пути /play/ + версия сборки + Метрика"
+python3 - "$METRIKA_ID" "$BUILD_SHA" <<'PYEOF'
 import sys
-mid = sys.argv[1]
+mid, build = sys.argv[1], sys.argv[2]
 s = open('build/play/index.html').read()
 for a, b in [('href="/manifest.webmanifest"', 'href="/play/manifest.webmanifest"'),
              ('href="/icon-192.png"', 'href="/play/icon-192.png"'),
              ('register("/sw.js")', 'register("/play/sw.js")')]:
     assert a in s, a
     s = s.replace(a, b)
+s = s.replace('</head>', '<script>window.BUILD="%s"</script></head>' % build, 1)
 if mid:
     tag = ('<script>window.METRIKA_ID=%s;'
      '(function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};'
@@ -73,7 +79,6 @@ open('build/play/index.html','w').write(s)
 PYEOF
 
 echo "==> игра: SW с версией и путями /play/"
-BUILD_SHA=$(shasum -a 256 build/play/index.html | cut -c1-16)
 python3 - "$BUILD_SHA" <<'PYEOF'
 import sys
 s = open('sw.js').read().replace('__BUILD__', sys.argv[1])
@@ -127,6 +132,37 @@ echo "==> nginx: location для /play/"
 sshr 'grep -q "location = /play/index.html" /etc/nginx/sites-available/pozerkalam.space || \
   sed -i "s|location = /index.html { add_header Cache-Control \"no-cache\"; include snippets/pozerkalam-headers.conf; }|location = /index.html { add_header Cache-Control \"no-cache\"; include snippets/pozerkalam-headers.conf; }\n    location = /play/index.html { add_header Cache-Control \"no-cache\"; include snippets/pozerkalam-headers.conf; }|" /etc/nginx/sites-available/pozerkalam.space'
 
+echo "==> приёмник отзывов"
+if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
+  scpr server/feedback.py "$HOST:/tmp/feedback.py"
+  scpr server/pozerkalam-feedback.service "$HOST:/etc/systemd/system/pozerkalam-feedback.service"
+  scpr server/nginx-feedback.conf "$HOST:/etc/nginx/snippets/pozerkalam-feedback.conf"
+  sshr "mkdir -p /opt/pozerkalam-feedback && mv /tmp/feedback.py /opt/pozerkalam-feedback/feedback.py"
+  # env кладём файлом, а не heredoc'ом через sshr: у ретрая ssh стандартный ввод уже пуст,
+  # и вторая попытка записала бы пустой файл — сервис молча остался бы без токена.
+  # Значения не эхоятся: никакого set -x в этом блоке.
+  TMPENV=$(mktemp); chmod 600 "$TMPENV"
+  {
+    echo "# Прямого доступа к api.telegram.org с РФ-хостинга нет (замер: таймаут 15 с)."
+    echo "# NO_PROXY=api.telegram.org уводит канал в офлайн — не добавлять."
+    echo "TG_TOKEN=$TG_TOKEN"
+    echo "TG_CHAT_ID=$TG_CHAT_ID"
+    [ -n "${TG_PROXY:-}" ] && printf 'HTTPS_PROXY=%s\nhttps_proxy=%s\n' "$TG_PROXY" "$TG_PROXY"
+  } > "$TMPENV"
+  scpr "$TMPENV" "$HOST:/etc/pozerkalam-feedback.env"
+  rm -f "$TMPENV"
+  sshr "chown root:root /etc/pozerkalam-feedback.env && chmod 600 /etc/pozerkalam-feedback.env"
+  sshr "printf 'limit_req_zone \$binary_remote_addr zone=fb:1m rate=6r/m;\n' > /etc/nginx/conf.d/pozerkalam-limits.conf"
+  sshr 'grep -q "pozerkalam-feedback.conf" /etc/nginx/sites-available/pozerkalam.space || \
+    sed -i "s|    location / { try_files|    include snippets/pozerkalam-feedback.conf;\n    location / { try_files|" /etc/nginx/sites-available/pozerkalam.space'
+  sshr "systemctl daemon-reload && systemctl enable pozerkalam-feedback >/dev/null 2>&1; systemctl restart pozerkalam-feedback && echo '    сервис перезапущен'"
+  sshr "sleep 1; systemctl is-active pozerkalam-feedback"
+  # Виден ли Telegram через прокси — сервис проверяет сам на старте и пишет в journal.
+  sshr "journalctl -u pozerkalam-feedback -n 5 --no-pager | grep -E 'telegram (доступен|НЕДОСТУПЕН)' || true"
+else
+  echo "    пропуск: в .deploy.env нет TG_TOKEN/TG_CHAT_ID"
+fi
+
 echo "==> заливка"
 sshr "mkdir -p $DOCROOT/play"
 scpr -r landing/dist/* "$HOST:$DOCROOT/"
@@ -147,4 +183,17 @@ sha_r=$(shasum -a 256 /tmp/pz_play.html | cut -d' ' -f1)
 [ "$sha_l" = "$sha_r" ] && echo "    /play/ sha256: СОВПАДАЕТ" || { echo "    /play/ sha256 РАЗЛИЧАЕТСЯ"; exit 1; }
 grep -q "По зеркалам" /tmp/pz_play.html && echo "    игра на /play/: ДА"
 curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} https://pozerkalam.space/ | grep -q 'rel="canonical" href="https://pozerkalam.space/"' && echo "    лендинг на корне: ДА"
+if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
+  # dry: эндпоинт проверяется целиком, но сообщение не уходит — иначе каждый деплой
+  # присылал бы владельцу мусорный отчёт.
+  fb=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} -X POST https://pozerkalam.space/api/feedback \
+       -H 'Content-Type: application/json' \
+       -d '{"kind":"note","text":"смоук деплоя, отправка не выполняется","dry":true}')
+  echo "    /api/feedback -> ${fb}"
+  case "$fb" in *'"ok": true'*|*'"ok":true'*) ;; *) echo "СМОУК ПРОВАЛЕН на /api/feedback"; exit 1;; esac
+  pre=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} -o /dev/null -w "%{http_code}" \
+        -X OPTIONS https://pozerkalam.space/api/feedback)
+  echo "    /api/feedback OPTIONS -> ${pre}"
+  [ "$pre" = "204" ] || { echo "СМОУК ПРОВАЛЕН: preflight не 204"; exit 1; }
+fi
 echo "ГОТОВО: лендинг https://pozerkalam.space/ · игра https://pozerkalam.space/play/ (build ${BUILD_SHA})"

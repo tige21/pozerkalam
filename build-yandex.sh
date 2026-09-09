@@ -22,6 +22,11 @@ s = s.replace('<link rel="manifest" href="/manifest.webmanifest">', '')
 s = s.replace('<link rel="icon" type="image/png" href="/icon-192.png">', '')
 s = re.sub(r'try\{"serviceWorker"in navigator&&navigator\.serviceWorker\.register\("/sw\.js"\)\}catch\(\w+\)\{\}', '', s)
 assert 'serviceWorker' not in s, 'SW-регистрация не вырезана'
+import hashlib
+# Версия сборки нужна в отчётах об ошибках: без неё отчёт из Яндекс Игр не привязать
+# к конкретному билду. Считаем до вставки адаптера.
+s = s.replace('</head>', '<script>window.BUILD="ya-%s"</script></head>'
+              % hashlib.sha256(s.encode()).hexdigest()[:16], 1)
 adapter = (
  '<script src="/sdk.js"></script>'
  '<script>YaGames.init().then(function(ysdk){'
