@@ -6,7 +6,7 @@
 import { createRequire } from 'node:module';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'; import http from 'node:http';
 const DIST='/Users/user/Documents/projects/car-maneuver-trainer/landing/dist';
-const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css','.webp':'image/webp','.woff2':'font/woff2','.png':'image/png','.jpg':'image/jpeg','.xml':'application/xml','.txt':'text/plain'};
+const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css','.webp':'image/webp','.woff2':'font/woff2','.png':'image/png','.jpg':'image/jpeg','.xml':'application/xml','.txt':'text/plain','.svg':'image/svg+xml','.mp4':'video/mp4','.webmanifest':'application/manifest+json'};
 const srv=http.createServer((q,r)=>{let p=decodeURIComponent(q.url.split('?')[0]);if(p.endsWith('/'))p+='index.html';const f=path.join(DIST,p);
  if(!fs.existsSync(f)||fs.statSync(f).isDirectory()){r.writeHead(404).end('404');return;}
  r.writeHead(200,{'Content-Type':MIME[path.extname(f)]||'application/octet-stream'});fs.createReadStream(f).pipe(r);});

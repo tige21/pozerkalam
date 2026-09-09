@@ -59,50 +59,22 @@ const penalties = [
 
   <section class="scene">
     <div class="wrap">
-      <h2>Зеркала здесь настоящие</h2>
+      <h2>Зеркало ставят по ручке задней двери</h2>
       <div class="prose scene-body">
-        <p>Три зеркала, каждое настраивается перетаскиванием. В боковом своя полоска борта
-          занимает четверть кадра, ручка задней двери стоит у внутреннего края чуть ниже
-          середины — по ней зеркало и выставляют в жизни.</p>
+        <p>Три зеркала, каждое настраивается перетаскиванием. Полоска своего борта — четверть
+          кадра, ручка задней двери — у внутреннего края чуть ниже середины. Так их
+          выставляют в машине.</p>
         <p>Пресет «вниз на бордюр» опускает зеркало до заднего колеса и кромки бордюра.
-          С таким зеркалом прижимаются вплотную и не режут диски.</p>
+          С ним прижимаются вплотную и не режут диски.</p>
       </div>
       <figure class="shot">
-        <img src="/shots/cockpit.webp" width="2000" height="1250" loading="lazy" decoding="async"
-             alt="Вид из салона тренажёра: руль, приборная панель, три зеркала и подсказка «Вперёд до голубой стоп-линии»." />
-        <figcaption>Вид из-за руля. Салонное зеркало сверху, боковые по краям, подсказка ведёт манёвр.</figcaption>
-      </figure>
-    </div>
-  </section>
-
-  <section class="scene">
-    <div class="wrap">
-      <h2>Из-за руля не видно <br />5,4 метра дороги</h2>
-      <div class="prose scene-body">
-        <p>Спереди скрыто 5,4 метра дороги, сзади 8,2. Бампера не видно, бордюра под дверью
-          тоже. Отсюда и большинство притёртых дисков на площадке.</p>
-        <p>Сначала машина обведена по контуру прямо на асфальте — видно, где она кончается.
-          Потом контур убирают: подъезжаешь к стене и встаёшь там, где, по-твоему,
-          осталось 20 сантиметров.</p>
-      </div>
-
-      <dl class="facts">
-        <div><dt class="tel-k">не видно спереди</dt><dd class="tel-v">5,4 <i>м</i></dd></div>
-        <div><dt class="tel-k">не видно сзади</dt><dd class="tel-v">8,2 <i>м</i></dd></div>
-        <div><dt class="tel-k">радиус разворота</dt><dd class="tel-v">11,8 <i>м</i></dd></div>
-        <div><dt class="tel-k">руль от упора до упора</dt><dd class="tel-v">1,49 <i>об.</i></dd></div>
-      </dl>
-
-      <div class="card scene-card">
-        <p>На упражнениях зазор спереди закрыт знаком вопроса, пока машина не остановится.
-          Остановился — цифра открывается один раз за попытку. Подкрадываться по сантиметру
-          и подглядывать не выйдет.</p>
-      </div>
-
-      <figure class="shot">
-        <img src="/shots/drill.webp" width="2000" height="1250" loading="lazy" decoding="async"
-             alt="Упражнение «Габарит: нос к стене»: показание зазора спереди скрыто знаком вопроса." />
-        <figcaption>Упражнение на габариты: цифра спереди скрыта, ответ засчитывается по остановке.</figcaption>
+        <video class="clip" width="960" height="600" muted loop playsinline preload="none"
+               poster="/clips/mirrors.webp"
+               aria-label="Параллельная парковка из-за руля: в правом зеркале появляется угол задней машины, подсказка ведёт манёвр.">
+          <source src="/clips/mirrors.mp4" type="video/mp4" />
+        </video>
+        <figcaption>Параллельная парковка из-за руля. В правом зеркале появляется угол задней
+          машины — по нему и крутят руль.</figcaption>
       </figure>
     </div>
   </section>
@@ -129,22 +101,14 @@ const penalties = [
       </div>
 
       <figure class="shot">
-        <img src="/shots/city.webp" width="2000" height="1250" loading="lazy" decoding="async"
-             alt="Городской уровень тренажёра: перестроение до сплошной, разметка полос и подсказка с целью 1,5 метра." />
-        <figcaption>Город на общей карте: перекрёстки со светофорами, трамвайные пути, кольцо, сплошная.</figcaption>
+        <video class="clip" width="960" height="600" muted loop playsinline preload="none"
+               poster="/clips/city.webp"
+               aria-label="Кольцо в городе: машина стоит под знаком «уступи», пропускает едущего по кольцу и выходит на свой съезд.">
+          <source src="/clips/city.mp4" type="video/mp4" />
+        </video>
+        <figcaption>Кольцо на общей карте. Уступаешь тем, кто уже на нём, съезд считаешь от въезда,
+          перед своим включаешь правый.</figcaption>
       </figure>
-    </div>
-  </section>
-
-  <section class="scene solo">
-    <div class="wrap">
-      <h2>Аппаратный тренажёр стоит 214 000 ₽ <br />и занимает класс</h2>
-      <div class="card kerb scene-card wide">
-        <p>«По зеркалам» открывается по ссылке на телефоне ученика. Парковку и эстакаду он
-          отрабатывает дома между занятиями и приезжает на площадку уже с навыком.
-          White-label со списком упражнений школы, бесплатный пилот на группу.</p>
-        <p><a href="/avtoshkolam/">Условия для автошкол</a></p>
-      </div>
     </div>
   </section>
 
@@ -276,39 +240,30 @@ const penalties = [
     }
     .scene h2 { grid-column: 1; }
     .scene .scene-body { grid-column: 2; margin-top: .35em; }
-    .scene .facts,
+    /* список баллов и карточка стоят на той же оси, что и текст: во всю ширину они
+       обрывались на 64ch и линейки уезжали в пустоту правее текста */
     .scene .pen,
-    .scene .scene-card,
+    .scene .scene-card { grid-column: 2; }
     .scene .shot { grid-column: 1 / -1; }
-    .scene.solo h2 { grid-column: 1 / -1; max-width: 26ch; }
   }
 
-  /* На двух колонках подпись «руль от упора до упора» уходит в две строки и
-     роняет своё число ниже соседних — держим строку подписи одной высоты. */
-  @media (max-width: 780px) {
-    .facts dt { min-height: 2.5em; }
-  }
-  .scene-card { margin-top: clamp(24px, 3vw, 36px); max-width: 60ch; }
-  .scene-card.wide { max-width: 68ch; margin-top: clamp(26px, 3vw, 38px); }
+  .scene-card { margin-top: clamp(20px, 2.4vw, 30px); max-width: 60ch; }
+  .scene-card.wide { max-width: 68ch; }
   .scene-card p { color: var(--mute); }
 
-  .facts {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
-    gap: 0; margin: clamp(30px, 4vw, 46px) 0 0; border-top: 1px solid var(--edge);
+  .pen { list-style: none; padding: 0; margin: clamp(22px, 2.6vw, 32px) 0 0; max-width: 60ch; }
+  .pen li {
+    display: grid; grid-template-columns: 2.2ch 1fr; column-gap: 18px;
+    align-items: baseline; padding: 14px 0; border-top: 1px solid var(--edge);
   }
-  .facts > div { padding: 16px 18px 18px 0; border-bottom: 1px solid var(--edge); }
-  .facts dt { margin-bottom: 6px; }
-  .facts dd { margin: 0; font-size: clamp(1.7rem, 3.2vw, 2.4rem); letter-spacing: -.04em; color: var(--ink); }
-  .facts dd i { font-style: normal; font-size: .42em; font-weight: 500; color: var(--faint); letter-spacing: 0; margin-left: .2em; }
-
-  .pen { list-style: none; padding: 0; margin: clamp(30px, 4vw, 46px) 0 0; max-width: 64ch; }
-  .pen li { display: flex; gap: 18px; align-items: baseline; padding: 15px 0; border-top: 1px solid var(--edge); }
   .pen li:last-child { border-bottom: 1px solid var(--edge); }
-  .pen-n { font-size: 1.5rem; color: var(--stop); min-width: 1.4ch; letter-spacing: -.03em; }
+  .pen-n { font-size: 1.5rem; color: var(--stop); letter-spacing: -.03em; }
   .pen-w { color: var(--mute); font-size: .98rem; }
 
   .shot { margin: clamp(34px, 4.6vw, 60px) 0 0; }
-  .shot img { border-radius: 14px; border: 1px solid var(--edge); background: var(--asphalt-2); }
+  .shot img,
+  .shot video { border-radius: 14px; border: 1px solid var(--edge); background: var(--asphalt-2); }
+  .shot video { display: block; width: 100%; height: auto; }
   .shot figcaption { margin-top: 12px; color: var(--faint); font-size: .87rem; max-width: 62ch; }
 
   .final { text-align: center; padding-bottom: clamp(20px, 4vw, 48px); }
@@ -321,4 +276,19 @@ const penalties = [
   import { mount } from '../scripts/park.js';
   const hero = document.getElementById('hero');
   if (hero) mount(hero);
+
+  /* Ролики грузятся, только когда доезжаешь до них, и останавливаются за экраном:
+     preload="none" плюс IntersectionObserver — страница открывается без их веса. */
+  const clips = document.querySelectorAll('video.clip');
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (clips.length && !still && 'IntersectionObserver' in window) {
+    const io = new IntersectionObserver((rows) => {
+      for (const r of rows) {
+        const v = r.target;
+        if (r.isIntersecting) { v.play().catch(() => {}); }
+        else v.pause();
+      }
+    }, { rootMargin: '120px 0px', threshold: 0.25 });
+    for (const v of clips) { v.preload = 'auto'; io.observe(v); }
+  }
 </script>
