@@ -574,8 +574,26 @@ function rampSlopeAt(u,v){
   }
   return null;
 }
+/* машина — жёсткое тело, и на настиле её нельзя поднимать вершина за вершиной: пока нос
+   уже на уклоне, а корма на плоскости, пер-вершинный groundH срезает лофт и салон по
+   диагонали, а из-за руля торпедо в метре впереди глаза уходит на 0,17 м ВЫШЕ глаза и
+   закрывает вид. Поэтому кузов, салон и все камеры, привязанные к машине, поднимаются по
+   одной раме: высота под задней осью плюс тангаж по разнице высот под осями */
+let carRampF=null;      /* {u,v,fu,fv,h,k} — рама, пересчитывается раз в кадр */
+let carRampUse=false;   /* true, пока идёт эмиссия кузова и салона */
+function carRampSync(){
+  if(!RAMP_ON){ carRampF=null; return; }
+  const f=fuv(car.th), wb=CAR.wheelbase;
+  const hr=groundH(car.ru,car.rv);
+  const hf=groundH(car.ru+f.u*wb, car.rv+f.v*wb);
+  carRampF={u:car.ru, v:car.rv, fu:f.u, fv:f.v, h:hr, k:(hf-hr)/wb};
+}
+function carLift(u,v){
+  const c=carRampF; if(!c) return 0;
+  return c.h + c.k*((u-c.u)*c.fu+(v-c.v)*c.fv);
+}
 function toCam(p){
-  const py = RAMP_ON ? p.y+groundH(-p.x,p.z) : p.y;
+  const py = RAMP_ON ? p.y+(carRampUse ? carLift(-p.x,p.z) : groundH(-p.x,p.z)) : p.y;
   const dx=p.x-cam.pos.x, dy=py-cam.pos.y, dz=p.z-cam.pos.z;
   return { x: dx*cam.r.x+dy*cam.r.y+dz*cam.r.z,
            y: dx*cam.u.x+dy*cam.u.y+dz*cam.u.z,
@@ -1215,7 +1233,11 @@ function barPiece(P, a, b, r, col, bias, capA, capB, o){
 function camInsideCabin(){
   const c=bodyPos(), f=fuv(car.th), r=ruv(car.th);
   const du=(-cam.pos.x)-c.u, dv=cam.pos.z-c.v;
-  const lat=du*r.u+dv*r.v, z=du*f.u+dv*f.v, y=cam.pos.y;
+  const lat=du*r.u+dv*r.v, z=du*f.u+dv*f.v;
+  /* высота считается от настила под камерой, а не от нуля мира: на эстакаде глаз
+     поднят вместе с машиной, и порог 1,56 срабатывал уже на середине подъёма —
+     салон переставал рисоваться, а вид из-за руля оставался «внутри текстур» */
+  const y=cam.pos.y-(RAMP_ON?carLift(-cam.pos.x, cam.pos.z):0);
   return Math.abs(lat)<0.95 && z>-1.35 && z<0.95 && y>0.72 && y<1.56;
 }
 /* салон в системе кузова: lat — вправо, y — вверх, z — вперёд.
@@ -1509,6 +1531,50 @@ function carGrilleCanvas(){
     g.fillStyle='#1d1f24'; g.fillRect(0,0,w,h); g.fillStyle='#3a3d44';
     for(let y=3;y<h;y+=6) g.fillRect(3,y,w-6,2);
     g.fillStyle='#8a909a'; g.beginPath(); g.arc(w/2,h/2,5,0,TAU); g.fill();
+  });
+}
+/* пиктограммы знаков рисуются в канвас, а не набираются из граней: пешеход, «СТОП» и
+   три стрелки кольца из треугольников читались как пустой щит — на дистанции восприятия
+   деталь в 4 пикселя не видна вовсе. Прозрачный фон ложится на цвет щита, поэтому
+   квадрат картинки обязан целиком помещаться внутрь фигуры под ним */
+function signPic(pic){
+  return imgCanvas('sign-'+pic, 128, 128, (g,w,h)=>{
+    const cx=w/2, cy=h/2;
+    g.lineJoin='round'; g.lineCap='round';
+    if(pic==='stop'){
+      g.fillStyle='#f4f6f8'; g.textAlign='center'; g.textBaseline='middle';
+      g.font='700 38px -apple-system, "Segoe UI", Roboto, sans-serif';
+      g.fillText('СТОП', cx, cy+2);
+    }
+    else if(pic==='circle'){
+      /* 4.3: три белые стрелки по кругу. На щите, обращённом к водителю, они идут
+         против часовой — так же, как объезжают островок */
+      const R=40;
+      g.strokeStyle='#f4f6f8'; g.fillStyle='#f4f6f8'; g.lineWidth=14; g.lineCap='butt';
+      for(let k=0;k<3;k++){
+        const a0=k*TAU/3, a1=a0-(TAU/3-0.95);
+        g.beginPath(); g.arc(cx,cy,R,a0,a1,true); g.stroke();
+        const ca=Math.cos(a1), sa=Math.sin(a1), px=cx+ca*R, py=cy+sa*R;
+        g.beginPath();
+        g.moveTo(px+sa*22, py-ca*22);
+        g.lineTo(px+ca*15, py+sa*15);
+        g.lineTo(px-ca*15, py-sa*15);
+        g.closePath(); g.fill();
+      }
+    }
+    else if(pic==='ped'){
+      g.fillStyle='#f4f6f8';
+      g.beginPath(); g.moveTo(cx,10); g.lineTo(w-10,h-12); g.lineTo(10,h-12); g.closePath(); g.fill();
+      g.fillStyle='#15181d'; g.strokeStyle='#15181d';
+      g.beginPath(); g.arc(60,50,8,0,TAU); g.fill();
+      g.lineWidth=10; g.beginPath(); g.moveTo(60,60); g.lineTo(65,84); g.stroke();
+      g.lineWidth=8;
+      g.beginPath(); g.moveTo(65,84); g.lineTo(54,104); g.stroke();
+      g.beginPath(); g.moveTo(65,84); g.lineTo(79,102); g.stroke();
+      g.lineWidth=7;
+      g.beginPath(); g.moveTo(62,66); g.lineTo(49,76); g.stroke();
+      g.beginPath(); g.moveTo(62,66); g.lineTo(76,72); g.stroke();
+    }
   });
 }
 function plateCanvas(){
@@ -3332,10 +3398,13 @@ const LEVELS = [
     roadDec(dec, 10, 0, rad(90), 34, 3.3);
     roadDec(dec, 20, 7, 0, 26, 3.3);
     crossDec(dec, 0, 0, 3.3); crossDec(dec, 20, 0, 3.3);
-    obs.push(sign('main', -4.4, -4.6, 0));
-    obs.push(sign('main', 15.6, -4.6, rad(90)));
-    city.oncoming.push({u:10, v:1.65, yaw:rad(90), w:3.3, l:12});
-    city.oncoming.push({u:18.35, v:9, yaw:0, w:3.3, l:8});
+    obs.push(sign('main', -4.4, -4.6, rad(180)));
+    obs.push(sign('main', 15.6, -4.6, rad(-90)));
+    /* встречка начинается в 6 м за перекрёстком и требует 0,5 м захода за осевую:
+       у самого узла правый поворот законно выносит центр кузова на осевую, и показ
+       сам получал «выезд на встречную» на собственной образцовой дуге */
+    city.oncoming.push({u:11, v:1.9, yaw:rad(90), w:2.8, l:10});
+    city.oncoming.push({u:18.6, v:10, yaw:0, w:2.8, l:6});
     city.turnZones.push({u:0, v:0, yaw:0, w:8.6, l:8.6, blink:'R'});
     city.turnZones.push({u:20, v:0, yaw:0, w:8.6, l:8.6, blink:'L'});
     return { obs, dec, city, start:{u:1.65,v:-17,th:0},
@@ -3409,7 +3478,7 @@ const LEVELS = [
     roadDec(dec, 0, 12, 0, 24, 5.2);
     roadDec(dec, 0, 0, rad(90), 40, 4.2);
     crossDec(dec, 0, 0, 5.2);
-    obs.push(sign('main', -7.6, -7.4, 0));
+    obs.push(sign('main', -7.6, -7.4, rad(180)));
     city.oncoming.push({u:-2.6, v:-13, yaw:0, w:5.2, l:18});
     city.turnZones.push({u:0, v:0, yaw:0, w:12, l:10, blink:'L'});
     return { obs, dec, city, start:{u:2.6,v:-21,th:0},
@@ -3473,8 +3542,8 @@ const LEVELS = [
   build(){
     const obs=[], dec=[], city={stoplines:[],zebras:[],oncoming:[],turnZones:[],yieldZones:[]};
     roadDec(dec, 0, 6, 0, 60, 3.3);
-    obs.push(sign('ped', -4.4, 5.5, 0));
-    obs.push(sign('ped', -4.4, 20, 0));
+    obs.push(sign('ped', -4.4, 5.5, rad(180)));
+    obs.push(sign('ped', -4.4, 20, rad(180)));
     city.stoplines.push(stoplineDec(dec, 1.65, 2.0, 0, 3.0));
     city.zebras.push(zebraDec(dec, 0, 5.5, 0, 6.6));
     city.zebras.push(zebraDec(dec, 0, 20, 0, 6.6));
@@ -3535,11 +3604,11 @@ const LEVELS = [
     const obs=[], dec=[], city={stoplines:[],zebras:[],oncoming:[],turnZones:[],yieldZones:[]};
     roadDec(dec, 0, -12, 0, 18, 3.3);
     roadDec(dec, 0, 0, rad(90), 60, 3.3);
-    obs.push(sign('yield', -4.4, -4.6, 0));
+    obs.push(sign('yield', -4.4, -4.6, rad(180)));
     obs.push(actorCar(-27, -1.65, 90, PALETTE[3], [{u:27,v:-1.65}], 3.0, s=>s.v>-10));
     city.oncoming.push({u:-1.65, v:-9, yaw:0, w:3.3, l:9});
     city.turnZones.push({u:0.9, v:-2.6, yaw:0, w:7, l:6.5, blink:'R'});
-    city.yieldZones.push({u:0, v:-1.65, yaw:rad(90), w:3.3, l:6, dist:7.5});
+    city.yieldZones.push({u:0, v:-1.65, yaw:rad(90), w:3.3, l:10, dist:10});
     return { obs, dec, city, start:{u:1.65,v:-16,th:0},
       goal:{u:15,v:-1.65,w:3.0,l:5.6,th:rad(90),tol:rad(20)} }; },
   marks(){ return {
@@ -4862,7 +4931,7 @@ function examBriefHTML(){
 function examAbortHTML(){
   return '<h2>Прервать экзамен?</h2>'
     +'<p>Прогресс попытки не сохранится — маршрут начнётся заново.</p>'
-    +'<button data-act="again">Да, прервать</button> '
+    +'<button data-act="exam-exit">Да, прервать</button> '
     +'<button data-act="resume" class="ghost">Продолжить экзамен</button>';
 }
 /* ---------- провал попытки (строгие уровни) ----------
@@ -5046,6 +5115,9 @@ function cityReset(){
                          o._seen=false; o._redSeen=false; } }
   blinkLog.L=-9; blinkLog.R=-9;
 }
+/* непропуск ловится по моменту наибольшего сближения: на сколько секунд вперёд смотрим,
+   насколько близко перед носом чужой машины и в какой её полосе оказался игрок */
+const YIELD_TCA=3.5, YIELD_GAP=4.0, YIELD_LAT=2.4;
 function violationsTick(dt){
   const c=level.city, b=bodyPos(), f=fuv(car.th);
   const nu=b.u+f.u*HALF_L, nv=b.v+f.v*HALF_L;
@@ -5198,10 +5270,29 @@ function violationsTick(dt){
     const s=(b.u-y.u)*yf.u+(b.v-y.v)*yf.v;
     const x=(b.u-y.u)*yr.u+(b.v-y.v)*yr.v;
     if(Math.abs(s)>=y.l/2 || Math.abs(x)>=y.w/2) continue;
+    const pv=fuv(car.th);
     for(const a of level.actors){
       if(!a.act.started || a.act.done) continue;
-      if(Math.hypot(a.u-b.u, a.v-b.v)<(y.dist||6)){
-        vio('yield','Не уступил дорогу — помеха справа была твоя'); y._fired=true; break; }
+      if(Math.hypot(a.u-b.u, a.v-b.v)>=(y.dist||6)) continue;
+      /* непропуск — это «заставил другого тормозить», а не «оказался рядом». Проверка
+         по одному расстоянию штрафовала за машину, которую честно пропустили: уходя со
+         своей траектории, она ещё десяток метров остаётся близко (кольцо, уровень 30).
+         Считаем момент наибольшего сближения при текущих скоростях: если он впереди по
+         времени и машины разойдутся ближе YIELD_MISS — игрок реально влез в поток */
+      const av=fuv(a.yaw), ar=ruv(a.yaw), sp=a.act.sp;
+      const rx=b.u-a.u, ry=b.v-a.v;
+      const vx=pv.u*car.vel-av.u*sp, vy=pv.v*car.vel-av.v*sp;
+      const vv=vx*vx+vy*vy; if(vv<1e-4) continue;
+      const t=-(rx*vx+ry*vy)/vv;
+      if(t<0 || t>YIELD_TCA) continue;
+      const mx=rx+vx*t, my=ry+vy*t;
+      /* в момент наибольшего сближения игрок обязан оказаться ПЕРЕД чужой машиной и в её
+         полосе — только тогда ей пришлось бы тормозить. Разъезд бортами помехой не является:
+         на косом перекрёстке (уровень 31) показ расходился со статистом в 3,1 м вбок и
+         получал непропуск за собственный правильный проезд */
+      const fwd=mx*av.u+my*av.v, lat=mx*ar.u+my*ar.v;
+      if(fwd<-0.5 || fwd>YIELD_GAP || Math.abs(lat)>YIELD_LAT) continue;
+      vio('yield','Не уступил дорогу — помеха справа была твоя'); y._fired=true; break;
     }
   }
   for(const a of level.actors){
@@ -5373,7 +5464,7 @@ function mirrorCam(kind){
     /* камера стоит у стекла салонного зеркала (z 0,35, y 1,26) и смотрит назад: в кадре стойки C,
        подголовники и заднее стекло — как в живом зеркале. Корпус зеркала и козырьки позади камеры */
     const u=car.ru+f.u*(C2R+0.35), v=car.rv+f.v*(C2R+0.35);
-    const y=1.26+(RAMP_ON?groundH(u,v):0);
+    const y=1.26+(RAMP_ON?carLift(u,v):0);
     const g=fuv(angNorm(car.th+PI+a.yaw));
     /* 24°, не 38: при пропорции 0,30 это ≈70° по горизонтали, как у плоского зеркала; с 38° стойки C
        у самой камеры заполняли половину картинки */
@@ -5384,7 +5475,7 @@ function mirrorCam(kind){
      с камерой над корпусом его верхняя грань попадала в кадр и с ближней плоскостью 0,08 м
      ложилась белой полосой через всё зеркало */
   const u=car.ru+f.u*(C2R+0.63)+r.u*(s*1.04), v=car.rv+f.v*(C2R+0.63)+r.v*(s*1.04);
-  const y=1.01+(RAMP_ON?groundH(u,v):0);
+  const y=1.01+(RAMP_ON?carLift(u,v):0);
   const g=fuv(angNorm(car.th+PI-s*rad(13)+a.yaw));
   /* штатный наклон −2° и поле 46°: ручка задней двери попадает к внутреннему краю чуть ниже
      середины — как в живой настройке «по ручке»; при 52°/−6° она висела в самом центре */
@@ -5437,7 +5528,7 @@ function updateCamera(dt){
   if(m===CAM_FP){ camSm=null;
     const e=fpEye(), g=fuv(angNorm(car.th+headYaw())), D=10;
     /* глаз поднимается вместе с настилом — иначе warp в toCam поднял бы салон над камерой */
-    const ey=e.y+(RAMP_ON?groundH(e.u,e.v):0);
+    const ey=e.y+(RAMP_ON?carLift(e.u,e.v):0);
     setCam({x:-e.u,y:ey,z:e.v},
            {x:-(e.u+g.u*D), y:ey+Math.tan(opt.fpPitch)*D, z:e.v+g.v*D}, null, opt.fpFov);
     return; }
@@ -5450,7 +5541,7 @@ function updateCamera(dt){
   const hy = 0.65 + d*Math.sin(opt.pitch) + (h0-hz)*0.45;
   const dp={u:c.u-f.u*hz, v:c.v-f.v*hz, y:hy};
   const dg={u:c.u+f.u*1.5, v:c.v+f.v*1.5, y:0.90};
-  if(RAMP_ON){ dp.y+=groundH(dp.u,dp.v); dg.y+=groundH(c.u,c.v); }
+  if(RAMP_ON){ dp.y+=groundH(dp.u,dp.v); dg.y+=carLift(c.u,c.v); }
   if(!camSm) camSm={p:{u:dp.u,v:dp.v,y:dp.y}, t:{u:dg.u,v:dg.v,y:dg.y}};
   const k=1-Math.exp(-8*Math.max(dt,1e-3));
   camSm.p.u=lerp(camSm.p.u,dp.u,k); camSm.p.v=lerp(camSm.p.v,dp.v,k); camSm.p.y=lerp(camSm.p.y,dp.y,k);
@@ -5842,57 +5933,67 @@ function emitTrafficLight(o){
 function emitSign(o){
   pushBox(o.u,1.0,o.v,0.035,1.0,0.035,o.yaw,[132,138,146]);
   const f=fwd(o.yaw), R=rgt(o.yaw), cx=-o.u, cz=o.v, y=SIGN_H-0.42;
+  const nf=Math.hypot(f.x*0.55,0.83,f.z*0.55);
+  const nrm={x:f.x*0.55/nf, y:0.83/nf, z:f.z*0.55/nf};
   /* нормаль щита приподнята к свету: эмалевый знак должен читаться, а честная
      горизонтальная нормаль тыльной к солнцу стороны гасила цвет до 42 %.
      Тыльная серая грань одна (back=true у каймы) и сдвинута на 12 мм назад,
      иначе painter's algorithm мерцает на гранях одной глубины */
   const mk=(pts2,col,off,back)=>{
     const at=(o)=>pts2.map(([lat,dy])=>({x:cx+R.x*lat+f.x*o, y:y+dy, z:cz+R.z*lat+f.z*o}));
-    const nf=Math.hypot(f.x*0.55,0.83,f.z*0.55);
-    pushFace(at(off), {x:f.x*0.55/nf, y:0.83/nf, z:f.z*0.55/nf}, col);
+    pushFace(at(off), nrm, col);
     if(back) pushFace(at(off-0.012).reverse(), {x:-f.x, y:0, z:-f.z}, [108,112,120]);
   };
+  /* картинка пиктограммы: +lat уходит ВЛЕВО от смотрящего, поэтому ширина изображения
+     идёт от +hw к −hw, иначе знак печатается зеркально */
+  const picq=(hw,hh,off,img,col)=>{
+    if(!img) return;
+    const at=(lat,dy)=>({x:cx+R.x*lat+f.x*off, y:y+dy, z:cz+R.z*lat+f.z*off});
+    pushFace([at(hw,hh), at(-hw,hh), at(-hw,-hh), at(hw,-hh)], nrm, col, 0, {img});
+  };
+  const disc=(r,n,a0)=>{ const p=[]; for(let i=0;i<n;i++){ const a=(a0||0)+i/n*TAU;
+    p.push([Math.cos(a)*r, Math.sin(a)*r]); } return p; };
+  const oct=(r)=>disc(r,8,PI/8);   /* восьмиугольник STOP стоит плоской гранью вверх */
+  const diamond=(r)=>[[0,r],[r,0],[0,-r],[-r,0]];
+  /* ломаная линия «главной дороги» собирается из двух выпуклых четырёхугольников:
+     одной вогнутой фигурой она вырождалась в невидимую полоску */
+  const bend=(sg,off)=>{
+    const t=0.042;
+    mk([[-t,-0.21],[t,-0.21],[t,0.02],[-t,0.02]],[26,28,32],off);
+    const dx=sg*0.19, dy=0.20, L=Math.hypot(dx,dy), px=-dy/L*t*1.15, py=dx/L*t*1.15;
+    mk([[px,py],[-px,-py],[dx-px,dy-py],[dx+px,dy+py]],[26,28,32],off+0.014);
+  };
   switch(o.pic){
-    case 'stop': {
-      const p=[]; for(let i=0;i<8;i++){ const a=Math.PI/8+i*Math.PI/4;
-        p.push([Math.cos(a)*0.34, Math.sin(a)*0.34]); }
-      mk(p,[198,40,44],0.020,true);
-      mk([[-0.19,-0.05],[0.19,-0.05],[0.19,0.05],[-0.19,0.05]],[244,246,248],0.033);
-      break; }
+    case 'stop':
+      mk(oct(0.36),[242,244,248],0.020,true);
+      mk(oct(0.305),[198,40,44],0.036);
+      picq(0.19,0.19,0.052,signPic('stop'),[198,40,44]);
+      break;
     case 'yield':
       mk([[-0.37,0.30],[0.37,0.30],[0,-0.36]],[204,46,50],0.020,true);
-      mk([[-0.24,0.22],[0.24,0.22],[0,-0.21]],[242,244,246],0.033);
+      mk([[-0.24,0.22],[0.24,0.22],[0,-0.21]],[242,244,246],0.036);
       break;
     case 'main':
-      mk([[0,0.37],[0.37,0],[0,-0.37],[-0.37,0]],[240,242,246],0.020,true);
-      mk([[0,0.27],[0.27,0],[0,-0.27],[-0.27,0]],[236,186,44],0.033);
+      mk(diamond(0.37),[240,242,246],0.020,true);
+      mk(diamond(0.27),[236,186,44],0.036);
       break;
     case 'ped':
       mk([[-0.31,0.31],[0.31,0.31],[0.31,-0.31],[-0.31,-0.31]],[38,88,196],0.020,true);
-      mk([[-0.20,-0.18],[0.20,-0.18],[0,0.18]],[242,244,246],0.033);
+      picq(0.29,0.29,0.036,signPic('ped'),[38,88,196]);
       break;
-    /* круговое движение: синий круг и три стрелки по часовой — в РФ движение по кольцу
-       против часовой, но знак смотрит на въезжающего, и на щите стрелки идут по кругу */
-    case 'circle': {
-      const p=[]; for(let i=0;i<14;i++){ const a=i/14*TAU;
-        p.push([Math.cos(a)*0.36, Math.sin(a)*0.36]); }
-      mk(p,[38,88,196],0.020,true);
-      for(let k=0;k<3;k++){
-        const a=k*TAU/3+0.5, ca=Math.cos(a), sa=Math.sin(a);
-        const rr=0.20, tw=0.055;
-        mk([[ca*rr-sa*tw, sa*rr+ca*tw],[ca*rr+sa*tw, sa*rr-ca*tw],
-           [ca*(rr+0.10)+sa*0.02, sa*(rr+0.10)-ca*0.02]],[242,244,246],0.033);
-      }
-      break; }
+    /* круговое движение: синий круг и три белые стрелки по кольцу */
+    case 'circle':
+      mk(disc(0.375,16),[240,242,246],0.020,true);
+      mk(disc(0.345,16),[38,88,196],0.036);
+      picq(0.24,0.24,0.052,signPic('circle'),[38,88,196]);
+      break;
     /* главная дорога с изменением направления: жёлтый ромб плюс чёрная ломаная —
        на косом узле без неё непонятно, кто кому уступает */
-    case 'main-r': case 'main-l': {
-      mk([[0,0.37],[0.37,0],[0,-0.37],[-0.37,0]],[240,242,246],0.020,true);
-      mk([[0,0.27],[0.27,0],[0,-0.27],[-0.27,0]],[236,186,44],0.033);
-      const sg=(o.pic==='main-r')?1:-1;
-      mk([[-sg*0.20,-0.045],[0.0,-0.045],[sg*0.13,0.20],[sg*0.05,0.235],[-0.02,0.02],[-sg*0.20,0.045]],
-         [26,28,32],0.040);
-      break; }
+    case 'main-r': case 'main-l':
+      mk(diamond(0.37),[240,242,246],0.020,true);
+      mk(diamond(0.27),[236,186,44],0.036);
+      bend((o.pic==='main-r')?-1:1, 0.052);
+      break;
   }
 }
 /* настил эстакады красится плоскими декалями: warp в toCam сам кладёт их на склон */
@@ -5922,10 +6023,13 @@ function drawSceneInto(o){
   if(inside) flushFaces();
   if(!o.noSelf){
     const c=bodyPos();
-    emitCarMesh(c.u,c.v,car.th,[206,214,226],car.steer,
-                {brake:input.back, rev:car.sel==='R'});
-    if(inside) emitInterior(c.u,c.v,car.th);
-    if(opt.refs>=1) emitCornerPosts();
+    carRampUse=true;
+    try{
+      emitCarMesh(c.u,c.v,car.th,[206,214,226],car.steer,
+                  {brake:input.back, rev:car.sel==='R'});
+      if(inside) emitInterior(c.u,c.v,car.th);
+      if(opt.refs>=1) emitCornerPosts();
+    } finally { carRampUse=false; }
   }
   flushFaces();
   if(o.labels) drawMarkLabels(curS);
@@ -6042,6 +6146,7 @@ function renderMirror(rect, kind, draw){
 let mirBot=-1;
 function render(dt){
   setVP(0,0,W,H);
+  carRampSync();
   decDrawn=0;
   updateCamera(dt);
   saveViewCam();
@@ -6724,6 +6829,10 @@ function doAct(a){
     showOv(exam&&exam.done ? (exam.failed?examFailHTML():examPassHTML())
          : (attempt&&attempt.failed) ? levelFailHTML() : winHTML()); return; }
   if(a==='pick'){ helpOpen=false; showLevelPick(); return; }
+  /* «прервать» обязано выводить ИЗ экзамена. Раньше кнопка вела в 'again': маршрут
+     начинался заново, игрок оставался в экзамене — со стороны это выглядело как
+     «нажал прервать, ничего не произошло» */
+  if(a==='exam-exit'){ helpOpen=false; restart(); showLevelPick(); return; }
   if(a && a.indexOf('train:')===0){ loadLevel(+a.slice(6)); hideOv(); return; }
   if(a==='help'){ helpOpen=true; showOv(helpHTML()); return; }
   if(a==='task'){ helpOpen=false; showTask(); return; }
@@ -7303,15 +7412,20 @@ const DEMOS = {
     {g:'D', s:0, slow:true, dist:1.2, max:6},
     {g:'P', time:2.2, say:'Стоп у бордюра и P: высадка пассажира — только на тротуар'}
   ]},
-  22: { segs:[   /* повороты: правый к краю, левый от центра */
-    {g:'D', blink:'R', s:0, vmax:2.5, vGte:-6, max:12, say:'Правый поворотник заранее — и к перекрёстку'},
-    {g:'D', aim:{u:2.2,v:-0.6}, slow:true, vGte:-2.8, max:8},
-    {g:'D', aim:{u:6.5,v:1.65}, slow:true, uGte:2.6, max:9, say:'Направо по малой дуге — держись своего края'},
-    {g:'D', blink:'L', aim:{u:30,v:1.65}, vmax:2.5, uGte:13.4, max:12, say:'Теперь левый поворотник — и смещайся к осевой'},
-    {g:'D', aim:{u:19.6,v:1.5}, slow:true, uGte:16.9, max:8},
-    {g:'D', aim:{u:22.2,v:6.5}, slow:true, vGte:2.6, max:9, say:'Налево от центра — и сразу на свою полосу'},
-    {g:'D', aim:{u:21.75,v:8.0}, slow:true, vGte:7.0, max:8},
-    {g:'D', aim:{u:21.65,v:19}, slow:true, goal:true, max:14, say:'Прямо до зоны и стоп'},
+  22: { segs:[   /* повороты: правый к краю, левый от центра.
+                    Обе дуги — полный руль от места: радиус задней оси 3,84 м, поворот на 90°
+                    смещает машину на те же 3,84 м вперёд и вбок. Значит правый начинают,
+                    когда центр кузова на v=−4,2 (задняя ось −5,5), и он выводит РОВНО в
+                    правую полосу v=−1,65. Прежние «морковки» на v=+1,65 вели показ по
+                    ВСТРЕЧНОЙ половине, и детектор честно штрафовал за образцовый проезд */
+    {g:'D', blink:'R', s:0, vmax:2.5, vGte:-9, max:12, say:'Правый поворотник заранее — и к перекрёстку'},
+    {g:'D', s:0, slow:true, vGte:-4.2, max:10},
+    {g:'D', s:1, slow:true, th:rad(90), max:14, say:'Направо по малой дуге — держись своего края'},
+    {g:'D', aim:{u:14,v:-1.65}, vmax:2.5, uGte:12, max:14},
+    {g:'D', blink:'L', aim:{u:20,v:-1.65}, slow:true, uGte:19.0, max:12,
+     say:'Теперь левый поворотник — и к центру перекрёстка'},
+    {g:'D', s:-1, slow:true, th:rad(0), max:14, say:'Налево от центра — и сразу на свою полосу'},
+    {g:'D', aim:{u:21.65,v:22}, slow:true, goal:true, max:18, say:'Прямо до зоны и стоп'},
     {g:'P', time:0.9, say:'Правый — коротко к краю; левый — от центра на свою полосу'}
   ]},
   23: { segs:[   /* разворот: прижаться правее, полный левый */
@@ -7326,7 +7440,9 @@ const DEMOS = {
     {g:'D', s:0, vmax:2.5, vGte:-3.6, max:10, say:'Переход со стоп-линией: остановимся у неё'},
     {g:'D', s:0, slow:true, vGte:-0.6, max:8},
     {g:'D', s:0, vmax:2.2, vGte:13.4, max:14, sayT:2.4, say:'Стоп у линии, осмотрелись — и зебру проезжаем не задерживаясь'},
-    {g:'D', s:0, slow:true, vGte:22.5, max:12, say:'Второй переход без линии: сбавляем заранее и просматриваем'},
+    /* пауза-пояснение следующего сегмента начинается здесь, поэтому кончаем его за зеброй:
+       хвост машины на переходе дольше 1,2 с — это «остановка на переходе», и показ штрафовал сам себя */
+    {g:'D', s:0, slow:true, vGte:24.5, max:14, say:'Второй переход без линии: сбавляем заранее и просматриваем'},
     {g:'D', s:0, slow:true, goal:true, max:12, say:'И в зону'},
     {g:'P', time:0.9, say:'Линия — граница бампера; на самой зебре не стоят'}
   ]},
@@ -7341,7 +7457,7 @@ const DEMOS = {
   26: { segs:[   /* светофор: тормозим на красный, трогаемся на зелёный */
     {g:'D', s:0, vmax:2.4, vGte:-88, max:14, say:'Красный впереди — газ отпускаем заранее'},
     {g:'D', s:0, slow:true, vGte:-85.6, max:10, say:'Тормозим так, чтобы бампер не залез за линию'},
-    {g:'P', time:9.0, sayT:3.0, say:'Стоим ДО линии. Жёлтый тоже запрещающий — на него не проскакивают'},
+    {g:'P', green:true, max:34, sayT:3.0, say:'Стоим ДО линии. Жёлтый тоже запрещающий — на него не проскакивают'},
     {g:'D', s:0, vmax:2.6, vGte:-60, max:18, say:'Зелёный — трогаемся и проезжаем перекрёсток не задерживаясь'},
     {g:'D', s:0, slow:true, goal:true, max:14, say:'И в зону'},
     {g:'P', time:0.9, say:'Стоп-линия — граница бампера, а не середины машины'}
@@ -7450,6 +7566,16 @@ function demoDone(seg){
   if(seg.rightLt!==undefined && cl.right<=seg.rightLt) return true;
   if(seg.dist!==undefined && demo.dist>=seg.dist) return true;
   if(seg.goal && goalReached()) return true;
+  /* ждём именно зелёного, а не фиксированных секунд: цикл светофора 24 с идёт от game.t,
+     пауза в 9 с разъезжалась с ним, и показ сам проезжал на красный (уровень 27).
+     Трогаемся только когда до жёлтого остаётся не меньше 4 с */
+  if(seg.green){
+    const L=(level.city&&level.city.lights||[])[0];
+    if(!L) return demo.t>=(seg.time||6);
+    const base=(L.group==='EW'?LIGHT_CYCLE/2:0)+(L.offset||0);
+    const t=((game.t+base)%LIGHT_CYCLE+LIGHT_CYCLE)%LIGHT_CYCLE;
+    if(t<LIGHT_GREEN-4) return true;
+  }
   if(seg.time!==undefined && demo.t>=seg.time) return true;
   return false;
 }
@@ -7520,8 +7646,11 @@ function computeIdealPath(){
   if(d.start) setBody(d.start.u, d.start.v, d.start.th);
   demo={i:0, t:0, dist:0, guard:0, say:0};
   const pts=[]; let lp=null, T=0;
+  game.t=0;                          /* светофорный цикл идёт от game.t: без хода времени фаза
+                                        замирает, и сегмент «ждём зелёного» висит до таймаута */
   while(demo && T<160){
     demo.say=0;                      /* без пауз-пояснений */
+    game.t+=1/60;
     game.hitCd=1;                    /* касания в офлайн-прогоне не считаем и не озвучиваем */
     demoStep(1/60);
     let rem=1/60;
