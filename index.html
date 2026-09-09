@@ -239,6 +239,9 @@ body.touch #tgear{display:flex}
   width:44px;height:44px;font-size:16px;font-weight:800;border-radius:12px;
   opacity:.72;pointer-events:auto}
 #tgear span.on{opacity:1;background:rgba(56,132,214,.72);border-color:#7ab7ff}
+/* ◀ ▶ (U+25C0/25B6), а не ⯇ ⯈ (U+2BC7/2BC8): системный шрифт macOS/iOS последние не
+   покрывает и рисует их стопкой полосок — увидели это, только когда кнопки перестали быть
+   накрыты соседями. Жёлтый цвет отличает поворотник от белых стрелок руля */
 #tgear span[data-blink]{color:#ffd34d;font-size:18px}
 #tgear span[data-blink].on{opacity:1;background:rgba(184,148,38,.5);border-color:#ffd34d;animation:blinkA .76s step-end infinite}
 #blinkers{position:fixed;z-index:8;left:50%;transform:translateX(-50%);bottom:calc(74px + var(--bot,0px));
@@ -255,10 +258,13 @@ body.fp #handbrake{bottom:calc(50px + var(--bot,0px))}
 .cbl{color:#ffd34d;margin-right:4px;vertical-align:middle;animation:blinkA .76s step-end infinite}
 #tgear span.on[data-gear="R"]{background:rgba(190,52,52,.75);border-color:#ff9a9a}
 #tgear span.on[data-gear="D"]{background:rgba(34,150,80,.75);border-color:#5ee39b}
-/* ряд по центру: 4 буквы по 44 + 3 зазора по 5 = 191, половина 95,5 → соседи от ±101 */
-#tmenubtn{left:50%;transform:translateX(-145px);bottom:calc(12px + var(--bot,0px));width:44px;height:44px;
+/* Соседи считаются по ВСЕМУ ряду, а не по одним буквам передач: в #tgear шесть плиток —
+   четыре передачи и две стрелки поворотников, 6*44 + 5*5 = 289, половина 144,5. Старые ±101
+   были посчитаны по четырём буквам, и ≡ с ⟲ ложились ровно на стрелки: поворотник на телефоне
+   нажать было нечем, а ритуал поворотника оценивает детектор городских уровней и экзамена. */
+#tmenubtn{left:50%;transform:translateX(-197px);bottom:calc(12px + var(--bot,0px));width:44px;height:44px;
   font-size:18px;border-radius:12px;display:flex;align-items:center;justify-content:center}
-#trestart{left:50%;transform:translateX(101px);bottom:calc(12px + var(--bot,0px));width:44px;height:44px;
+#trestart{left:50%;transform:translateX(153px);bottom:calc(12px + var(--bot,0px));width:44px;height:44px;
   font-size:18px;border-radius:12px;display:flex;align-items:center;justify-content:center}
 
 /* ---------- редактор площадки ---------- */
@@ -352,10 +358,29 @@ body.hud-off #coach,body.hud-off #hint{display:none}
   .tbtnp.twide{width:70px;font-size:11.5px}
   #tgear span{width:40px;height:40px;font-size:15px}
   #tgear{gap:4px}
-  #tmenubtn{width:40px;height:40px;font-size:16px;transform:translateX(-131px)}
-  #trestart{width:40px;height:40px;font-size:16px;transform:translateX(91px)}
+  #tmenubtn{width:40px;height:40px;font-size:16px;transform:translateX(-177px)}
+  #trestart{width:40px;height:40px;font-size:16px;transform:translateX(137px)}
   #tview{width:132px;height:32px;font-size:11px;bottom:calc(70px + var(--bot,0px))}
   #tclutch{width:132px;height:32px;font-size:11px;bottom:calc(70px + var(--bot,0px))}
+}
+/* Узкий экран (iPhone SE и подобные в альбомной): нижняя полоса шире экрана. По ширине
+   в ней 14 целей — руль (3), ≡, передачи и поворотники (6), ⟲, газ с тормозом (3), — и на
+   667 px они не помещаются в исходных размерах: ряд передач налезал на кластер газа.
+   Размеры считаны под 667: 14 + 120 + 39 + 231 + 6 + 38 + 8 + 152 + 14 = 622, запас 45 px
+   на зазоры. Уменьшать пришлось всё, но ни одна цель не ушла ниже 36 px — это лучше, чем
+   44 px, полностью накрытые соседней кнопкой. Брейкпоинт по ШИРИНЕ: компактный блок выше
+   смотрит на высоту и такой экран не ловит. */
+@media (max-width:760px){
+  .tbtnp{width:44px;height:50px;font-size:13px}
+  .tbtnp.tmid{width:32px;font-size:11px}
+  .tbtnp.twide{width:54px;font-size:10.5px}
+  #tstart{font-size:9.5px}
+  #tgear span{width:36px;height:36px;font-size:14px}
+  #tgear{gap:3px}
+  #tmenubtn{width:38px;height:38px;font-size:15px;transform:translateX(-160px)}
+  #trestart{width:38px;height:38px;font-size:15px;transform:translateX(122px)}
+  #tclutch,#tview{width:120px;height:30px;font-size:10.5px;bottom:calc(66px + var(--bot,0px))}
+  #tview span{font-size:9.5px}
 }
 body.compact #overlay{padding:10px}
 body.compact #overlay .card{padding:14px 16px}
@@ -427,10 +452,10 @@ body.fp #hint{display:none}
   <div id="tclutch" data-hold="clutch">СЦЕПЛЕНИЕ</div>
   <div id="tview">ВИД<span id="tviewlbl">3-е лицо</span></div>
   <div id="tgear">
-    <span data-blink="L">⯇</span>
+    <span data-blink="L">◀</span>
     <span data-gear="P">P</span><span data-gear="R">R</span>
     <span data-gear="N">N</span><span data-gear="D">D</span>
-    <span data-blink="R">⯈</span>
+    <span data-blink="R">▶</span>
   </div>
   <div id="tmenubtn">≡</div>
   <div id="trestart">⟲</div>
@@ -8203,7 +8228,9 @@ loadLevel(0);
 showOv(startHTML());
 requestAnimationFrame(frame);
 /* PWA: офлайн и мгновенный повторный вход; с file:// и без https молча пропускается */
-try{ if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js'); }catch(e){}
+/* .catch обязателен: на file:// (и в любом origin без https) регистрация отвергается,
+   и без обработчика это всплывает как Uncaught (in promise) в консоли игрока */
+try{ if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{}); }catch(e){}
 </script>
 </body>
 </html>

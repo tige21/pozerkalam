@@ -448,6 +448,31 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -8203,7 +8228,9 @@ loadLevel(0);
 showOv(startHTML());
 requestAnimationFrame(frame);
 /* PWA: офлайн и мгновенный повторный вход; с file:// и без https молча пропускается */
-try{ if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js'); }catch(e){}
+/* .catch обязателен: на file:// (и в любом origin без https) регистрация отвергается,
+   и без обработчика это всплывает как Uncaught (in promise) в консоли игрока */
+try{ if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{}); }catch(e){}
 
 
 
