@@ -37,7 +37,7 @@ page.on('pageerror', e => { if (!/ServiceWorker/.test(e.message)) errors.push(e.
 
 const url = (URL_OVERRIDE || 'file://' + path.join(ROOT, 'index.html')) + '?nocache=' + Date.now();
 await page.goto(url);
-await page.evaluate(() => { for (const k of ['trainer_seen', 'trainer_hint', 'trainer_drive']) localStorage.setItem(k, '1');
+await page.evaluate(() => { for (const k of ['trainer_seen', 'trainer_hint', 'trainer_drive', 'trainer_drive_mt']) localStorage.setItem(k, '1');
   localStorage.setItem('trainer_runs', '9'); localStorage.setItem('trainer_touch', '0'); localStorage.removeItem('trainer_gearbox'); });
 await page.goto(url + 'r');
 await page.waitForTimeout(500);
@@ -54,13 +54,16 @@ const results = [];
 const check = (name, ok, detail) => { results.push({ name, ok: !!ok, detail }); console.log((ok ? '  ok   ' : 'ПРОВАЛ ') + name + (detail ? ' — ' + detail : '')); };
 
 /* 1. включение механики со стартового экрана */
-const gbBtn = await page.evaluate(() => { const b = [...document.querySelectorAll('button[data-act="gearbox"]')][0]; return b ? b.textContent : null; });
-check('кнопка коробки есть на стартовом экране', gbBtn && /автомат/i.test(gbBtn), gbBtn || 'кнопки нет');
-await page.evaluate(() => doAct('gearbox'));
+const gbSeg = await page.evaluate(() => [...document.querySelectorAll('.gbseg button')]
+  .map(b => b.dataset.act + '|' + b.textContent + '|' + (b.classList.contains('on') ? 'on' : '')));
+check('на старте виден выбор из двух коробок с отмеченной текущей',
+  gbSeg.length === 2 && /gearbox:AT\|автомат\|on/.test(gbSeg[0]) && /gearbox:MT\|механика\|$/.test(gbSeg[1]), gbSeg.join(' '));
+await page.evaluate(() => doAct('gearbox:MT'));
 const afterToggle = await page.evaluate(() => ({ g: opt.gearbox, ls: localStorage.getItem('trainer_gearbox'),
-  btn: (document.querySelector('button[data-act="gearbox"]') || {}).textContent || '',
+  on: ([...document.querySelectorAll('.gbseg button.on')][0] || {}).dataset || {},
   bullet: (document.querySelector('.startlist') || { textContent: '' }).textContent.includes('Механика') }));
-check('переключение на механику сохраняется и подписано', afterToggle.g === 'MT' && afterToggle.ls === 'MT' && /МЕХАНИКА/.test(afterToggle.btn), JSON.stringify(afterToggle));
+check('переключение на механику сохраняется и подписано',
+  afterToggle.g === 'MT' && afterToggle.ls === 'MT' && afterToggle.on.act === 'gearbox:MT', JSON.stringify(afterToggle));
 check('подсказка на старте меняется под механику', afterToggle.bullet);
 
 await page.evaluate(() => { doAct('start'); loadLevel(0); });
@@ -167,6 +170,7 @@ await page.waitForTimeout(300);
 const ui = await page.evaluate(() => {
   const bar = (document.getElementById('gearVal') || {}).textContent || '';
   const lbl = (document.getElementById('gearLbl') || {}).textContent || '';
+  const rpmLbl = ((document.getElementById('rpmCell') || {}).querySelector ? document.getElementById('rpmCell').querySelector('.k').textContent : '');
   /* кэш чистим и рисуем кадр из салона: важно, какие буквы щиток запросит СЕЙЧАС,
      а не что осталось от прошлых шагов теста */
   for (const k of Object.keys(imgCache)) if (k.startsWith('dial-')) delete imgCache[k];
@@ -178,12 +182,74 @@ const ui = await page.evaluate(() => {
   pushBox = function (u, y, v, hw, hh, hl, yaw, col, bias, o) { seen.push(v); return keep.apply(null, arguments); };
   try { emitSelector(cabinCtx(bodyPos().u, bodyPos().v, car.th)); } finally { pushBox = keep; }
   lever = seen.length;
-  return { bar, lbl, keys, lever, touch: [...document.querySelectorAll('#tgear span[data-gear]')].map(e => e.textContent) };
+  return { bar, lbl, rpmLbl, keys, lever, touch: [...document.querySelectorAll('#tgear span[data-gear]')].map(e => e.textContent) };
 });
 check('в панели передачи механики, а не P R N D', /R\s*N\s*1\s*2/.test(ui.bar.replace(/\s+/g, ' ')) && !/P/.test(ui.bar), 'панель="' + ui.bar.trim() + '"');
-check('подпись панели про сцепление', /сцеплен/i.test(ui.lbl), 'подпись="' + ui.lbl + '"');
+check('подпись панели предлагает сменить коробку', /механик/i.test(ui.lbl) && /смен/i.test(ui.lbl), 'подпись="' + ui.lbl + '"');
+check('ячейка оборотов называет клавишу сцепления', /сцеплен/i.test(ui.rpmLbl) && /Shift/.test(ui.rpmLbl), 'подпись="' + ui.rpmLbl + '"');
 check('щиток в салоне рисует буквы механики', ui.keys.length > 0 && ui.keys.every(k => k.startsWith('dial-MT')), ui.keys.join(',') || 'щиток не рисовался');
 check('рычаг на тоннеле рисуется по передаче механики', ui.lever > 0, 'граней рычага=' + ui.lever);
+
+/* 17. Enter из нейтрали даёт первую, а не заднюю: новичок жмёт его, чтобы поехать */
+await page.evaluate(() => { restart(); });
+await page.waitForTimeout(300);
+await down('ShiftLeft'); await page.waitForTimeout(300); await tap('Enter'); await up('ShiftLeft');
+s = await st();
+check('Enter из нейтрали включает первую, а не заднюю', s.mgear === 1, 'mgear=' + s.mgear);
+
+/* 18. коробка переключается всеми видимыми путями, а не только со стартового экрана */
+const paths = await page.evaluate(() => {
+  const out = { start: opt.gearbox };
+  document.getElementById('gearLbl').click(); out.byLabel = opt.gearbox;
+  pressKey('Backquote'); out.byKey = opt.gearbox;
+  buildMenu();
+  const menu = [...document.querySelectorAll('#tmGrid button')].map(b => b.textContent);
+  out.menuHas = menu.indexOf('Автомат') >= 0 && menu.indexOf('Механика') >= 0;
+  out.menuTop = menu.indexOf('Механика') >= 0 && menu.indexOf('Механика') < 6;
+  return out;
+});
+check('клик по подписи панели меняет коробку', paths.start === 'MT' && paths.byLabel === 'AT', JSON.stringify(paths));
+check('клавиша ` меняет коробку', paths.byKey === 'MT', 'после клавиши=' + paths.byKey);
+check('в меню ≡ коробка отдельным блоком в начале', paths.menuHas && paths.menuTop, JSON.stringify(paths));
+
+/* 19. телефон: сцепление слева, стартер вместо ручника, подсветка адресная */
+const touch = await page.evaluate(() => {
+  restart(); setTouch(true); noteT = 0; selWarnT = 0; updateHUD();
+  const el = document.getElementById('tclutch'), b = el.getBoundingClientRect();
+  const r = { clutchShown: getComputedStyle(el).display !== 'none',
+              clutchLeft: b.left < innerWidth / 2,
+              needbrake: document.body.classList.contains('needbrake'),
+              needclutch: document.body.classList.contains('needclutch') };
+  car.stalled = true; updateHUD();
+  r.startShown = document.getElementById('tstart').style.display !== 'none';
+  r.handHidden = document.getElementById('thand').style.display === 'none';
+  r.needstart = document.body.classList.contains('needstart');
+  car.clu = 1; mtStart(); r.started = !car.stalled;
+  updateHUD(); r.startHidden = document.getElementById('tstart').style.display === 'none';
+  setTouch(false); noteT = 0;
+  return r;
+});
+check('на телефоне сцепление видно и лежит в левой половине экрана', touch.clutchShown && touch.clutchLeft, JSON.stringify(touch));
+check('на механике не горит ложный ТОРМОЗ, горит СЦЕПЛЕНИЕ', touch.needbrake === false && touch.needclutch === true, JSON.stringify(touch));
+check('заглох на телефоне: появляется ЗАВЕСТИ вместо РУЧН', touch.startShown && touch.handHidden && touch.needstart, JSON.stringify(touch));
+check('кнопка ЗАВЕСТИ заводит двигатель и прячется', touch.started && touch.startHidden, JSON.stringify(touch));
+
+/* 20. гайд первого троганья на механике исполним: раньше он ждал car.sel==='D' и залипал */
+await page.evaluate(() => { localStorage.removeItem('trainer_drive_mt');
+  loadLevel(0); tut = null; noteT = 0; selWarnT = 0; maybeStartTut(); });
+await page.waitForTimeout(300);
+const card = () => page.evaluate(() => (document.getElementById('coach') || {}).textContent || '');
+const cards = [await card()];
+await down('ShiftLeft'); await page.waitForTimeout(500); cards.push(await card());
+await tap('Enter'); await page.waitForTimeout(400); cards.push(await card());
+await down('KeyW'); await page.waitForTimeout(300); await up('ShiftLeft'); await page.waitForTimeout(2000);
+cards.push(await card());
+await page.waitForTimeout(2500); await up('KeyW');
+const tutEnd = await page.evaluate(() => ({ live: !!tut, ls: localStorage.getItem('trainer_drive_mt'),
+  mgear: car.mgear, vel: +car.vel.toFixed(2) }));
+check('гайд троганья на механике доходит до конца', tutEnd.live === false && tutEnd.ls === '1', JSON.stringify(tutEnd));
+check('гайд механики нигде не зовёт включать D', !cards.some(t => /включится D|тапни D/.test(t)), cards.join(' ⟶ '));
+check('первый шаг гайда механики — про сцепление', /1\/4/.test(cards[0]) && /сцеплен/i.test(cards[0]), cards[0]);
 
 /* 16. настройка графики: «максимум» отключает регулятор */
 const gfx = await page.evaluate(() => { const before = opt.gfx; opt.gfx = 'max'; qBest = 0; qApply(0); frameGap = 40; qCoolT = 0;
