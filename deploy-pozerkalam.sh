@@ -13,15 +13,29 @@ DOCROOT=/var/www/pozerkalam
 [ -f .deploy.env ] && source .deploy.env
 : "${METRIKA_ID:=}"
 
+# При включённом VPN (Happ) маршрут по умолчанию уходит в utun, и ssh к серверу
+# виснет на banner exchange, а curl не доходит до сайта. Привязываем к физическому
+# интерфейсу — деплой перестаёт зависеть от того, включён VPN или нет.
+BIND_IF=""
+if [ -n "${DEPLOY_IF:-}" ]; then BIND_IF="$DEPLOY_IF"
+elif route -n get default 2>/dev/null | grep -q 'interface: utun' && ipconfig getifaddr en0 >/dev/null 2>&1; then
+  BIND_IF=en0
+fi
+SSH_BIND=(); CURL_BIND=()
+if [ -n "$BIND_IF" ]; then
+  SSH_BIND=(-o "BindInterface=$BIND_IF"); CURL_BIND=(--interface "$BIND_IF")
+  echo "==> VPN активен: соединения через $BIND_IF"
+fi
+
 sshr(){ # ssh с ретраями
   for i in 1 2 3 4 5; do
-    if ssh -o ConnectTimeout=10 -o BatchMode=yes "$HOST" "$@"; then return 0; fi
+    if ssh -o ConnectTimeout=10 -o BatchMode=yes ${SSH_BIND[@]+"${SSH_BIND[@]}"} "$HOST" "$@"; then return 0; fi
     echo "   ssh-ретрай $i"; sleep 25
   done; return 1
 }
 scpr(){
   for i in 1 2 3 4 5; do
-    if scp -q -o ConnectTimeout=10 "$@"; then return 0; fi
+    if scp -q -o ConnectTimeout=10 ${SSH_BIND[@]+"${SSH_BIND[@]}"} "$@"; then return 0; fi
     echo "   scp-ретрай $i"; sleep 25
   done; return 1
 }
@@ -123,14 +137,14 @@ sshr "nginx -t >/dev/null 2>&1 && systemctl reload nginx && echo RELOADED"
 echo "==> смоук"
 sleep 1
 for path in "/" "/play/" "/metodika/" "/avtoshkolam/"; do
-  code=$(curl -s -m 15 -o /dev/null -w "%{http_code}" "https://pozerkalam.space${path}")
+  code=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} -o /dev/null -w "%{http_code}" "https://pozerkalam.space${path}")
   echo "    ${path} -> ${code}"
   [ "$code" = "200" ] || { echo "СМОУК ПРОВАЛЕН на ${path}"; exit 1; }
 done
-curl -s -m 15 https://pozerkalam.space/play/ -o /tmp/pz_play.html
+curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} https://pozerkalam.space/play/ -o /tmp/pz_play.html
 sha_l=$(shasum -a 256 build/play/index.html | cut -d' ' -f1)
 sha_r=$(shasum -a 256 /tmp/pz_play.html | cut -d' ' -f1)
 [ "$sha_l" = "$sha_r" ] && echo "    /play/ sha256: СОВПАДАЕТ" || { echo "    /play/ sha256 РАЗЛИЧАЕТСЯ"; exit 1; }
 grep -q "По зеркалам" /tmp/pz_play.html && echo "    игра на /play/: ДА"
-curl -s -m 15 https://pozerkalam.space/ | grep -q 'rel="canonical" href="https://pozerkalam.space/"' && echo "    лендинг на корне: ДА"
+curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} https://pozerkalam.space/ | grep -q 'rel="canonical" href="https://pozerkalam.space/"' && echo "    лендинг на корне: ДА"
 echo "ГОТОВО: лендинг https://pozerkalam.space/ · игра https://pozerkalam.space/play/ (build ${BUILD_SHA})"
