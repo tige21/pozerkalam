@@ -1,49 +1,325 @@
 ---
 import Base from '../layouts/Base.astro';
+
+const penalties = [
+  { n: '5', what: 'Проезд на красный, не уступил дорогу, наезд на препятствие' },
+  { n: '3', what: 'Пересёк сплошную, не включил поворотник, выехал на встречную' },
+  { n: '1', what: 'Откат на подъёме больше 30 см, заглох, забыл ручник' },
+];
 ---
-<Base title="По зеркалам — тренажёр парковки и подготовки к экзамену"
-      description="Бесплатный браузерный тренажёр манёвров: параллельная парковка, эстакада, экзаменационный маршрут с инспектором. Реальная физика, методика автошколы, работает на телефоне.">
-<div class="hero">
-  <h1>Научись парковаться<br><em>по зеркалам</em> — до экзамена</h1>
-  <p class="lead">Браузерный тренажёр с честной физикой и методикой автошколы:
-  ориентиры в зеркалах, точки поворота руля, чувство габаритов.
-  Без установки, бесплатно, прямо на телефоне.</p>
-  <a class="btn big" href="/play/">Играть сейчас</a>
-  <p style="color:var(--mut);font-size:13px;margin-top:12px">27 уровней · экзамен с инспектором · АКПП и МКПП</p>
-</div>
+<Base
+  title="По зеркалам — тренажёр парковки и подготовки к экзамену в ГИБДД"
+  description="Браузерный тренажёр манёвров с настоящей физикой: параллельная парковка по зеркалам, чувство габаритов, эстакада, экзаменационный маршрут с баллами по регламенту 2026. Бесплатно, без установки, работает на телефоне."
+>
+  <script type="application/ld+json" is:inline set:html={JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: 'По зеркалам',
+    applicationCategory: 'GameApplication',
+    operatingSystem: 'Web',
+    url: 'https://pozerkalam.space/play/',
+    inLanguage: 'ru',
+    description: 'Браузерный тренажёр манёвров: параллельная парковка по зеркалам, чувство габаритов, эстакада и экзаменационный маршрут с баллами по регламенту.',
+    offers: { '@type': 'Offer', price: '0', priceCurrency: 'RUB' },
+  })} />
 
-<section>
-  <div class="grid">
-    <div class="card"><div class="n">🅿️</div><h3>Все манёвры экзамена</h3>
-      <p>Параллельная и перпендикулярная парковка, разворот в три приёма, эстакада
-      с контролем отката, повороты на перекрёстке, «уступи дорогу».</p></div>
-    <div class="card"><div class="n">🎓</div><h3>Экзамен как в ГИБДД</h3>
-      <p>Маршрут с командами инспектора, штрафные баллы по регламенту 2026,
-      протокол ошибок с картой заезда — и кнопка «отработать» для каждой.</p></div>
-    <div class="card"><div class="n">🪞</div><h3>Методика, а не аркада</h3>
-      <p>Подсказки ведут манёвр по шагам: какой ориентир ждать в зеркале, когда
-      крутить руль, где остановиться. Как объясняет хороший инструктор.</p></div>
-    <div class="card"><div class="n">🚗</div><h3>Честная физика</h3>
-      <p>Настоящие радиусы поворота, автомат с блокировкой селектора, механика
-      со сцеплением и заглохом, откат на подъёме — всё как в машине.</p></div>
-  </div>
-</section>
+  <section class="hero" id="hero">
+    <div class="hero-stage">
+      <canvas class="hero-canvas" aria-hidden="true"></canvas>
+      <div class="hero-scrim" aria-hidden="true"></div>
+      <noscript>
+        <img class="hero-fallback" src="/shots/parallel.webp" width="2000" height="1250"
+             alt="Параллельная парковка в тренажёре: машина под 45 градусов к бордюру, на экране габаритная рамка и зазоры до соседних машин." />
+      </noscript>
 
-<section>
-  <h2>Как это работает</h2>
-  <div class="grid steps">
-    <div class="card"><h3>Выбери манёвр</h3><p>От «почувствуй габариты» до полного
-      экзаменационного маршрута — уровни выстроены от простого к сложному.</p></div>
-    <div class="card"><h3>Веди по подсказкам</h3><p>Карточка сверху говорит, что делать
-      и по какому ориентиру. Не понял — жми «показать демонстрацию».</p></div>
-    <div class="card"><h3>Сдай экзамен</h3><p>Инспектор случайно меняет маршрут.
-      До 6 штрафных баллов — сдал. Ошибся — протокол покажет, где именно.</p></div>
-  </div>
-</section>
+      <div class="hero-copy">
+        <h1>Парковка&nbsp;— это не чувство машины. <br />Это ориентиры.</h1>
+        <p class="lead lede">Браузерный тренажёр манёвров: показывает, что ждать в зеркале,
+          когда крутить руль и где остановиться. Физика настоящая, установка не нужна.</p>
+        <p class="hero-cta">
+          <a class="btn lg" href="/play/">Начать тренировку</a>
+        </p>
+        <p class="hero-note">Бесплатно, без регистрации, прямо в браузере</p>
+      </div>
 
-<section style="text-align:center;padding-bottom:44px">
-  <h2>Перед экзаменом по городу — прогони манёвры здесь</h2>
-  <p style="color:var(--mut)">Час с инструктором стоит 2000 ₽. Тренажёр — бесплатный, и он не устаёт повторять.</p>
-  <a class="btn big" href="/play/">Начать тренировку</a>
-</section>
+      <div class="hero-coach" aria-hidden="true">
+        <span class="hero-wheel"></span>
+        <b data-step-title>Едешь вдоль ряда</b>
+        <span data-step-act>Держи до машин 0,8 м и смотри в правое зеркало.</span>
+      </div>
+      <div class="hero-tel" aria-hidden="true">
+        <div><span class="tel-k">до бордюра</span><span class="tel-v" data-tel="kerb">3,00</span><span class="tel-u">м</span></div>
+        <div><span class="tel-k">до задней</span><span class="tel-v" data-tel="rear">3,00</span><span class="tel-u">м</span></div>
+        <div><span class="tel-k">руль</span><span class="tel-v tel-w" data-tel="wheel">прямо</span></div>
+        <div><span class="tel-k">передача</span><span class="tel-v" data-tel="gear">D</span></div>
+      </div>
+      <div class="hero-prog" aria-hidden="true"><i></i></div>
+    </div>
+  </section>
+
+  <section class="scene">
+    <div class="wrap">
+      <h2>Зеркало показывает ровно то, <br />что показало бы в машине</h2>
+      <div class="prose scene-body">
+        <p>Три зеркала, и каждое настраивается перетаскиванием, как в настоящей машине.
+          В боковом своя полоска борта занимает четверть кадра, а ручка задней двери стоит
+          у внутреннего края — тот самый ориентир, по которому зеркала выставляют в жизни.</p>
+        <p>Пресет «вниз на бордюр» опускает зеркало так, что видно заднее колесо и поребрик.
+          Так прижимаются вплотную и не царапают диски — и тренажёр объясняет, почему.</p>
+      </div>
+      <figure class="shot">
+        <img src="/shots/cockpit.webp" width="2000" height="1250" loading="lazy" decoding="async"
+             alt="Вид из салона тренажёра: руль, приборная панель, три зеркала и подсказка «Вперёд до голубой стоп-линии»." />
+        <figcaption>Вид из-за руля. Салонное зеркало сверху, боковые по краям, подсказка ведёт манёвр.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="scene">
+    <div class="wrap">
+      <h2>Из-за руля не видно <br />5,4 метра дороги</h2>
+      <div class="prose scene-body">
+        <p>Не видно бампера. Не видно бордюра под дверью. Поэтому машину задевают не от плохой
+          реакции, а потому что она заканчивается там, куда не смотрят.</p>
+        <p>Тренажёр сначала обводит машину по контуру прямо на асфальте, а потом забирает
+          подсказку: подъезжаешь к стене и останавливаешься там, где, по-твоему, осталось 20 см.</p>
+      </div>
+
+      <dl class="facts">
+        <div><dt class="tel-k">не видно спереди</dt><dd class="tel-v">5,4 <i>м</i></dd></div>
+        <div><dt class="tel-k">не видно сзади</dt><dd class="tel-v">8,2 <i>м</i></dd></div>
+        <div><dt class="tel-k">радиус разворота</dt><dd class="tel-v">11,8 <i>м</i></dd></div>
+        <div><dt class="tel-k">руль от упора до упора</dt><dd class="tel-v">1,49 <i>об.</i></dd></div>
+      </dl>
+
+      <div class="card scene-card">
+        <p>Пока ты не остановился, зазор спереди закрыт знаком вопроса. С цифрой на экране
+          целишься в число, а не учишься видеть машину. Остановка и есть ответ.</p>
+      </div>
+
+      <figure class="shot">
+        <img src="/shots/drill.webp" width="2000" height="1250" loading="lazy" decoding="async"
+             alt="Упражнение «Габарит: нос к стене»: показание зазора спереди скрыто знаком вопроса." />
+        <figcaption>Упражнение на габариты: цифра спереди скрыта, ответ засчитывается по остановке.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="scene">
+    <div class="wrap">
+      <h2>Экзамен не старается тебя завалить. <br />Он считает баллы.</h2>
+      <div class="prose scene-body">
+        <p>32 уровня выстроены до экзаменационного маршрута: команда инспектора приходит
+          заранее — «через 60 метров направо», — штрафные баллы идут по регламенту 2026,
+          семь баллов означают «не сдал».</p>
+        <p>Протокол в конце показывает карту заезда с красными точками там, где были ошибки,
+          и рядом с каждой — кнопку «отработать приём», которая открывает нужное упражнение.</p>
+      </div>
+
+      <ul class="pen">
+        {penalties.map((p) => (
+          <li><span class="pen-n tel-v">{p.n}</span><span class="pen-w">{p.what}</span></li>
+        ))}
+      </ul>
+
+      <div class="card stop scene-card">
+        <p>Грубая ошибка отменяет попытку целиком, как в жизни. А касание бордюра засчитывают,
+          но попытку не отменяют: городская улица шириной 6,6 метра, новичок его заденет —
+          и выгонять за это некого.</p>
+      </div>
+
+      <figure class="shot">
+        <img src="/shots/city.webp" width="2000" height="1250" loading="lazy" decoding="async"
+             alt="Городской уровень тренажёра: перестроение до сплошной, разметка полос и подсказка с целью 1,5 метра." />
+        <figcaption>Город на общей карте: перекрёстки со светофорами, трамвайные пути, кольцо, сплошная.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="scene solo">
+    <div class="wrap">
+      <h2>Аппаратный тренажёр стоит 214 000 ₽ <br />и занимает класс</h2>
+      <div class="card kerb scene-card wide">
+        <p>Этот работает в браузере на телефоне ученика. Параллельную парковку и эстакаду он
+          отрабатывает дома, между занятиями, — на площадке вы шлифуете, а не учите с нуля.
+          White-label со списком упражнений школы, бесплатный пилот на группу.</p>
+        <p><a href="/avtoshkolam/">Условия для автошкол</a></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="final">
+    <div class="wrap">
+      <h2>Открывается по ссылке. <br />Ставить ничего не нужно.</h2>
+      <p class="lead">32 уровня, экзаменационный маршрут, АКПП и МКПП. Работает на телефоне,
+        и офлайн тоже — после первого открытия.</p>
+      <p><a class="btn lg" href="/play/">Начать тренировку</a></p>
+      <p class="final-alt">Хочешь сперва разобрать метод — <a href="/metodika/">как парковаться по зеркалам</a>.</p>
+    </div>
+  </section>
 </Base>
+
+<style>
+  /* Герой: длинная прокрутка тянет один прикреплённый кадр — это и есть манёвр.
+     Высота задаёт «сколько скролла» уходит на показ; 300vh = примерно три экрана. */
+  .hero { height: 240vh; position: relative; padding: 0; }
+  @media (prefers-reduced-motion: reduce) { .hero { height: auto; } }
+  .hero-stage {
+    position: sticky; top: 0; height: 100vh; height: 100svh;
+    overflow: hidden; background: var(--asphalt);
+  }
+  .hero-canvas { position: absolute; inset: 0; display: block; }
+  /* Затемнение под текстом: сцена стоит на месте всю прокрутку, уходит только
+     копия — поэтому читаемость даёт градиент, а не сдвиг картинки. */
+  /* Границы затемнения ставит скрипт по реальному низу блока копии (--scrim-a/b):
+     проценты от высоты расходились с текстом на низких и узких экранах. */
+  .hero-scrim {
+    position: absolute; inset: 0; z-index: 1; pointer-events: none;
+    background: linear-gradient(180deg,
+      var(--asphalt) 0 var(--scrim-a, 30%),
+      rgba(11,15,20,.55) calc(var(--scrim-a, 30%) + (var(--scrim-b, 60%) - var(--scrim-a, 30%)) * 0.55),
+      rgba(11,15,20,0) var(--scrim-b, 60%));
+    transition: opacity .55s ease;
+  }
+  .hero.open .hero-scrim { opacity: 0; }
+  .hero-fallback { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: .55; }
+
+  /* Заголовок стоит по центру, как афиша, и уходит один раз — дальше кадром
+     распоряжается сцена. Остальная страница остаётся по левой оси. */
+  .hero-copy {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    top: clamp(44px, 8.5vh, 104px); width: min(100% - var(--gut) * 2, 900px);
+    text-align: center; z-index: 2;
+    transition: opacity .5s ease, transform .5s ease;
+  }
+  .hero-copy h1 { font-size: clamp(2.05rem, 4.6vw, 4.1rem); margin: 0 auto .5em; max-width: 17ch; }
+  .hero-copy .lead { margin: 0 auto 1.9em; }
+  .hero-copy .lede { max-width: 46ch; }
+  .hero-cta { margin: 0 0 .8em; }
+  .hero-note { color: var(--faint); font-size: .88rem; margin: 0; }
+  .hero.open .hero-copy {
+    opacity: 0; transform: translate(-50%, -22px); pointer-events: none; visibility: hidden;
+    transition: opacity .5s ease, transform .5s ease, visibility 0s linear .5s;
+  }
+
+  /* HUD героя занимает те же места, что в игре: карточка сверху по центру,
+     полоса телеметрии внизу слева, зеркало (его рисует canvas) внизу справа. */
+  .hero-coach, .hero-tel {
+    position: absolute; z-index: 2; opacity: 0;
+    transition: opacity .45s ease, transform .45s ease;
+  }
+  .hero-coach { transform: translate(-50%, -10px); }
+  .hero-tel { transform: translateY(10px); }
+  .hero.open .hero-coach { opacity: 1; transform: translate(-50%, 0); }
+  .hero.open .hero-tel { opacity: 1; transform: none; }
+
+  .hero-coach {
+    left: 50%; top: calc(58px + clamp(14px, 2.2vh, 26px)); width: min(100% - var(--gut) * 2, 620px);
+    background: var(--glass); border: 1px solid rgba(120,190,255,.30);
+    border-left: 4px solid rgba(120,190,255,.7); border-radius: 0 10px 10px 0;
+    padding: 10px 16px; font-size: .93rem; line-height: 1.45; color: #e2f2ff; text-align: left;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  }
+  .hero-coach b { font-weight: 650; }
+  .hero-coach b::after { content: '.'; margin-right: .32em; }
+  .hero-coach span[data-step-act] { color: #b9d6ee; }
+  .hero-wheel {
+    width: 15px; height: 15px; border: 2px solid var(--beam); border-radius: 50%;
+    display: inline-block; position: relative; vertical-align: -2px; margin-right: 8px;
+    transition: transform .3s ease;
+  }
+  .hero-wheel::before {
+    content: ''; position: absolute; left: 50%; top: 50%; width: 2px; height: 7px;
+    background: var(--beam); transform: translate(-50%, -100%);
+  }
+
+  .hero-tel { left: var(--gut); bottom: clamp(22px, 3.5vh, 38px); display: flex; flex-wrap: wrap; gap: 8px; }
+  .hero-tel > div {
+    background: var(--glass); border: 1px solid var(--edge); border-radius: 8px;
+    padding: 6px 11px; display: flex; align-items: baseline; gap: 6px;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  }
+  .hero-tel .tel-v { font-size: .95rem; color: #fff; }
+  .hero-tel .tel-w { font-size: .84rem; font-weight: 550; }
+  .hero-tel .tel-u { color: var(--faint); font-size: .78rem; }
+
+  .hero-prog { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: rgba(255,255,255,.06); z-index: 3; }
+  .hero-prog i { display: block; height: 100%; background: var(--beam); transform-origin: 0 50%; transform: scaleX(0); }
+
+  /* Низкое окно ноутбука: заголовок и лид ужимаются, иначе кнопка уходит за край. */
+  @media (min-width: 900px) and (max-height: 780px) {
+    .hero-copy { top: clamp(40px, 7vh, 78px); }
+    .hero-copy h1 { font-size: clamp(1.9rem, 3.5vw, 2.9rem); }
+    .hero-copy .lead { font-size: 1.02rem; margin-bottom: 1.4em; }
+    .btn.lg { font-size: 1rem; padding: .82em 1.7em; }
+  }
+
+  @media (max-width: 899px) {
+    .hero-copy { top: clamp(40px, 7vh, 88px); }
+    .hero-copy h1 { max-width: 14ch; }
+    .hero-coach { top: calc(58px + 12px); font-size: .87rem; padding: 9px 13px; }
+    .hero-tel { left: var(--gut); right: var(--gut); bottom: clamp(14px, 2.4vh, 26px); gap: 6px; }
+    .hero-tel > div { flex: 1 1 0; }
+    .hero-tel > div:nth-child(n+3) { display: none; }
+  }
+
+  /* Сцены: заголовок у той же левой оси, что и всё остальное; текст, затем
+     доказательство кадром. Никаких въездов по скроллу — движение только в герое. */
+  .scene h2 { max-width: 20ch; }
+  .scene-body { margin-top: clamp(20px, 2.6vw, 32px); color: var(--mute); }
+
+  @media (min-width: 1000px) {
+    .scene .wrap {
+      display: grid;
+      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+      column-gap: clamp(36px, 5vw, 84px);
+      align-items: start;
+    }
+    .scene h2 { grid-column: 1; }
+    .scene .scene-body { grid-column: 2; margin-top: .35em; }
+    .scene .facts,
+    .scene .pen,
+    .scene .scene-card,
+    .scene .shot { grid-column: 1 / -1; }
+    .scene.solo h2 { grid-column: 1 / -1; max-width: 26ch; }
+  }
+
+  /* На двух колонках подпись «руль от упора до упора» уходит в две строки и
+     роняет своё число ниже соседних — держим строку подписи одной высоты. */
+  @media (max-width: 780px) {
+    .facts dt { min-height: 2.5em; }
+  }
+  .scene-card { margin-top: clamp(24px, 3vw, 36px); max-width: 60ch; }
+  .scene-card.wide { max-width: 68ch; margin-top: clamp(26px, 3vw, 38px); }
+  .scene-card p { color: var(--mute); }
+
+  .facts {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+    gap: 0; margin: clamp(30px, 4vw, 46px) 0 0; border-top: 1px solid var(--edge);
+  }
+  .facts > div { padding: 16px 18px 18px 0; border-bottom: 1px solid var(--edge); }
+  .facts dt { margin-bottom: 6px; }
+  .facts dd { margin: 0; font-size: clamp(1.7rem, 3.2vw, 2.4rem); letter-spacing: -.04em; color: var(--ink); }
+  .facts dd i { font-style: normal; font-size: .42em; font-weight: 500; color: var(--faint); letter-spacing: 0; margin-left: .2em; }
+
+  .pen { list-style: none; padding: 0; margin: clamp(30px, 4vw, 46px) 0 0; max-width: 64ch; }
+  .pen li { display: flex; gap: 18px; align-items: baseline; padding: 15px 0; border-top: 1px solid var(--edge); }
+  .pen li:last-child { border-bottom: 1px solid var(--edge); }
+  .pen-n { font-size: 1.5rem; color: var(--stop); min-width: 1.4ch; letter-spacing: -.03em; }
+  .pen-w { color: var(--mute); font-size: .98rem; }
+
+  .shot { margin: clamp(34px, 4.6vw, 60px) 0 0; }
+  .shot img { border-radius: 14px; border: 1px solid var(--edge); background: var(--asphalt-2); }
+  .shot figcaption { margin-top: 12px; color: var(--faint); font-size: .87rem; max-width: 62ch; }
+
+  .final { text-align: center; padding-bottom: clamp(20px, 4vw, 48px); }
+  .final h2 { max-width: 22ch; margin: 0 auto .5em; }
+  .final .lead { max-width: 46ch; margin: 0 auto 2em; }
+  .final-alt { margin-top: 22px; color: var(--faint); font-size: .92rem; }
+</style>
+
+<script>
+  import { mount } from '../scripts/park.js';
+  const hero = document.getElementById('hero');
+  if (hero) mount(hero);
+</script>

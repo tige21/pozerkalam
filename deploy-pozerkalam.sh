@@ -82,16 +82,24 @@ json.dump(m, open('build/play/manifest.webmanifest','w'), ensure_ascii=False, in
 PYEOF
 cp icon-192.png icon-512.png build/play/
 
-echo "==> CSP-хэши инлайн-скриптов игры"
-CSP_HASHES=$(python3 - <<'PYEOF'
-import re, hashlib, base64
-s = open('build/play/index.html').read()
+echo "==> CSP-хэши инлайн-скриптов игры и лендинга"
+# Astro инлайнит маленькие бандлы, и такой скрипт режется CSP уровня server —
+# поэтому хэши считаем по всем отдаваемым HTML, а не только по игре.
+CSP_HASHES=$(python3 - <<'PYCSP'
+import re, hashlib, base64, glob
+files = ['build/play/index.html'] + sorted(glob.glob('landing/dist/**/*.html', recursive=True))
 out = []
-for m in re.finditer(r'<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>', s, re.S):
-    h = base64.b64encode(hashlib.sha256(m.group(1).encode()).digest()).decode()
-    out.append("'sha256-%s'" % h)
+for f in files:
+    s = open(f).read()
+    for m in re.finditer(r'<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>', s, re.S):
+        if 'ld+json' in m.group(0):
+            continue
+        h = base64.b64encode(hashlib.sha256(m.group(1).encode()).digest()).decode()
+        q = "'sha256-%s'" % h
+        if q not in out:
+            out.append(q)
 print(' '.join(out))
-PYEOF
+PYCSP
 )
 
 echo "==> заголовки"
@@ -124,5 +132,5 @@ sha_l=$(shasum -a 256 build/play/index.html | cut -d' ' -f1)
 sha_r=$(shasum -a 256 /tmp/pz_play.html | cut -d' ' -f1)
 [ "$sha_l" = "$sha_r" ] && echo "    /play/ sha256: СОВПАДАЕТ" || { echo "    /play/ sha256 РАЗЛИЧАЕТСЯ"; exit 1; }
 grep -q "По зеркалам" /tmp/pz_play.html && echo "    игра на /play/: ДА"
-curl -s -m 15 https://pozerkalam.space/ | grep -q "Научись парковаться" && echo "    лендинг на корне: ДА"
+curl -s -m 15 https://pozerkalam.space/ | grep -q 'rel="canonical" href="https://pozerkalam.space/"' && echo "    лендинг на корне: ДА"
 echo "ГОТОВО: лендинг https://pozerkalam.space/ · игра https://pozerkalam.space/play/ (build ${BUILD_SHA})"

@@ -1,2 +1,3 @@
-landing/node_modules/
-landing/dist/
+node_modules/
+dist/
+.astro/

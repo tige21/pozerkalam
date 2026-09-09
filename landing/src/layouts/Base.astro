@@ -1,5 +1,6 @@
 ---
-const { title, description } = Astro.props;
+const { title, description, page = '' } = Astro.props;
+const canonical = new URL(Astro.url.pathname, 'https://pozerkalam.space').href;
 ---
 <!DOCTYPE html>
 <html lang="ru">
@@ -8,70 +9,171 @@ const { title, description } = Astro.props;
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 <meta name="description" content={description}>
+<link rel="canonical" href={canonical}>
 <meta property="og:title" content={title}>
 <meta property="og:description" content={description}>
 <meta property="og:type" content="website">
-<meta property="og:image" content="/icon-512.png">
+<meta property="og:url" content={canonical}>
+<meta property="og:locale" content="ru_RU">
+<meta property="og:image" content="https://pozerkalam.space/og.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#0b0f14">
 <link rel="icon" type="image/png" href="/icon-192.png">
+<link rel="preload" href="/font/onest-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
 <style is:global>
+@font-face{font-family:Onest;font-style:normal;font-weight:300 900;font-display:swap;
+  src:url(/font/onest-cyrillic.woff2) format('woff2');
+  unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
+@font-face{font-family:Onest;font-style:normal;font-weight:300 900;font-display:swap;
+  src:url(/font/onest-latin.woff2) format('woff2');
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+
+/* Палитра — грунт, приборный свет и цвета передач самой игры: страница и продукт
+   должны читаться как одна вещь, поэтому ни один оттенок здесь не придуман заново. */
 :root{
-  --bg:#0d141d; --panel:#141d29; --panel2:#1b2735; --ink:#e8eef5; --mut:#93a7bd;
-  --acc:#7dd8ff; --acc2:#4ade80; --warn:#ffd63c; --line:rgba(255,255,255,.09);
+  --asphalt:#0b0f14; --asphalt-2:#10171f; --asphalt-3:#151f2a;
+  --glass:rgba(13,20,28,.72); --edge:rgba(255,255,255,.09); --edge-2:rgba(255,255,255,.16);
+  --ink:#e8eef6; --mute:#93a7bd; --faint:#7b8fa5;
+  --beam:#9fd0ff; --beam-lo:#58b0ff; --go:#4ade80; --kerb:#ffd63c; --stop:#f87171;
+  --gut:clamp(20px,5vw,64px); --maxw:1240px;
+  --gap-sec:clamp(58px,6.4vw,112px);
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);
-  font:16px/1.65 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-a{color:var(--acc)}
-.wrap{max-width:960px;margin:0 auto;padding:0 20px}
-header.site{display:flex;align-items:center;justify-content:space-between;padding:18px 0}
-.logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--ink);text-decoration:none}
-.logo img{width:34px;height:34px;border-radius:8px}
-nav a{color:var(--mut);text-decoration:none;margin-left:18px;font-size:14.5px}
-nav a:hover{color:var(--ink)}
-.btn{display:inline-block;background:#1b5faa;color:#fff;text-decoration:none;
-  padding:13px 28px;border-radius:10px;font-weight:600;font-size:16.5px;border:1px solid rgba(125,216,255,.35)}
-.btn:hover{background:#2571c4}
-.btn.big{padding:16px 40px;font-size:19px}
-.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--mut)}
-.hero{text-align:center;padding:56px 0 40px}
-.hero h1{font-size:clamp(30px,5.5vw,46px);line-height:1.15;margin:0 0 14px;letter-spacing:-.5px}
-.hero h1 em{color:var(--acc);font-style:normal}
-.hero p.lead{color:var(--mut);font-size:19px;max-width:640px;margin:0 auto 28px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;margin:34px 0}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px}
-.card h3{margin:0 0 8px;font-size:17px}
-.card p{margin:0;color:var(--mut);font-size:14.5px}
-.card .n{font-size:26px;margin-bottom:8px}
-section{padding:26px 0}
-h2{font-size:26px;margin:6px 0 18px}
-.steps{counter-reset:s}
-.steps .card{position:relative;padding-left:58px}
-.steps .card::before{counter-increment:s;content:counter(s);position:absolute;left:18px;top:20px;
-  width:26px;height:26px;border-radius:50%;background:var(--acc);color:var(--bg);
-  font-weight:700;display:flex;align-items:center;justify-content:center;font-size:14px}
-footer.site{border-top:1px solid var(--line);margin-top:48px;padding:26px 0;color:var(--mut);font-size:13.5px;
-  display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between}
-article{max-width:680px}
-article h2{margin-top:34px}
-article li{margin-bottom:8px}
-blockquote{border-left:3px solid var(--warn);margin:18px 0;padding:6px 18px;color:var(--mut);background:var(--panel)}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--asphalt);color:var(--ink);
+  font-family:Onest,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  font-size:17px;line-height:1.62;font-weight:400;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  overflow-x:clip}
+img{max-width:100%;height:auto;display:block}
+a{color:var(--beam);text-decoration:none}
+a:hover{text-decoration:underline;text-underline-offset:3px}
+:focus-visible{outline:2px solid var(--beam);outline-offset:3px;border-radius:4px}
+::selection{background:rgba(159,208,255,.24)}
+
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 var(--gut)}
+.prose{max-width:58ch}
+.lede{max-width:38ch}
+
+/* Типографика: одна семья, весь характер — в контрасте кегля и трекинга. */
+h1,h2,h3{margin:0;font-weight:800;letter-spacing:-.035em;line-height:1.04;text-wrap:balance}
+@media (max-width:760px){h1 br,h2 br{display:none}}
+h1{font-size:clamp(2.15rem,5.3vw,4.5rem);letter-spacing:-.038em;line-height:1.0;font-weight:800}
+h2{font-size:clamp(1.95rem,4.4vw,3.4rem)}
+h3{font-size:1.3rem;letter-spacing:-.02em;line-height:1.25;font-weight:700}
+p{margin:0 0 1.1em}
+.lead{font-size:clamp(1.06rem,1.7vw,1.32rem);line-height:1.5;color:var(--mute);font-weight:400}
+strong,b{font-weight:650;color:var(--ink)}
+
+/* Подпись телеметрии — единственное место, где остаётся капс: так подписаны
+   ячейки HUD в игре, и цифра под ней должна выравниваться по разрядам. */
+.tel-k{font-size:.69rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
+.tel-v{font-variant-numeric:tabular-nums;font-weight:650;letter-spacing:-.01em}
+
+.btn{display:inline-flex;align-items:center;gap:.5em;background:var(--beam);color:#08111b;
+  padding:.86em 1.65em;border-radius:999px;font-weight:650;font-size:1.02rem;letter-spacing:-.01em;
+  border:0;cursor:pointer;transition:background .18s ease,transform .18s ease}
+.btn:hover{background:#c2e3ff;text-decoration:none}
+.btn:active{transform:scale(.975)}
+.btn.lg{font-size:1.1rem;padding:1em 2em}
+.btn.quiet{background:transparent;color:var(--ink);box-shadow:inset 0 0 0 1px var(--edge-2)}
+.btn.quiet:hover{background:rgba(255,255,255,.06)}
+
+/* Кромка слева кодирует тип блока — ровно как #coach.k-* в игре кодирует тип
+   сообщения: синяя — голос инструктора, красная — цена ошибки, жёлтая — школам. */
+.card{border-left:4px solid var(--beam-lo);background:var(--asphalt-2);
+  border-radius:0 12px 12px 0;padding:clamp(18px,2.4vw,26px) clamp(20px,2.6vw,30px)}
+.card.stop{border-left-color:var(--stop)}
+.card.kerb{border-left-color:var(--kerb)}
+.card.go{border-left-color:var(--go)}
+.card p:last-child{margin-bottom:0}
+
+header.site{position:sticky;top:0;z-index:40;background:rgba(11,15,20,.78);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border-bottom:1px solid transparent;transition:border-color .3s ease}
+header.site.stuck{border-bottom-color:var(--edge)}
+header.site .wrap{display:flex;align-items:center;gap:14px;height:58px}
+.brand{display:flex;align-items:center;gap:10px;color:var(--ink);font-weight:700;
+  letter-spacing:-.02em;font-size:1.02rem;min-height:44px}
+.brand:hover{text-decoration:none}
+.brand img{width:26px;height:26px;border-radius:7px;flex:none}
+.brand{white-space:nowrap}
+header.site nav{margin-left:auto;display:flex;align-items:center;gap:clamp(14px,2.4vw,26px)}
+header.site nav a{color:var(--mute);font-size:.94rem;font-weight:500;
+  display:inline-flex;align-items:center;min-height:44px}
+header.site nav a:hover{color:var(--ink);text-decoration:none}
+header.site nav a[aria-current]{color:var(--ink)}
+header.site nav a.btn{color:#08111b;padding:.5em 1.15em;font-size:.92rem;font-weight:650}
+header.site nav a.btn:hover{color:#08111b}
+@media (max-width:620px){header.site nav a.nav-hide{display:none}}
+@media (max-width:400px){.brand span{display:none}}
+
+/* Отступ только сверху: так между секциями ровно один интервал, а прикреплённый
+   герой не получает паддинг, который сдвигал бы всю сцену вниз. */
+section{padding-block:var(--gap-sec) 0;scroll-margin-top:74px}
+section:last-of-type{padding-bottom:var(--gap-sec)}
+
+footer.site{border-top:1px solid var(--edge);margin-top:var(--gap-sec);padding:36px 0 44px;
+  color:var(--faint);font-size:.9rem}
+footer.site .wrap{display:flex;flex-wrap:wrap;gap:16px 32px;align-items:baseline}
+footer.site nav{margin-left:auto;display:flex;gap:22px}
+footer.site a{color:var(--mute)}
+
+article{max-width:64ch}
+article h1{font-size:clamp(1.9rem,4vw,3rem);margin-bottom:.5em}
+article h2{margin:2em 0 .55em;font-size:clamp(1.35rem,2.6vw,1.85rem);letter-spacing:-.03em}
+article h2:first-of-type{margin-top:1.4em}
+article p{color:var(--mute)}
+article ol,article ul{padding-left:1.2em;margin:0 0 1.3em;color:var(--mute)}
+article li{margin-bottom:.6em}
+article li::marker{color:var(--faint);font-variant-numeric:tabular-nums}
+article li b{color:var(--ink)}
+.page-head{padding-block:clamp(52px,9vw,110px) 0}
+.page-head h1{max-width:18ch}
+.page-head .lead{max-width:44ch;margin-top:.9em}
+.cta-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:clamp(28px,4vw,44px) 0 0}
+.cta-note{color:var(--faint);font-size:.88rem;margin:14px 0 0}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:0;
+  margin:clamp(30px,4vw,48px) 0 0;border-top:1px solid var(--edge)}
+.cols>div{padding:20px 24px 24px 0;border-bottom:1px solid var(--edge)}
+.cols h3{margin-bottom:.45em}
+.cols p{color:var(--mute);font-size:.96rem;margin:0}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;
+    transition-duration:.001ms!important;scroll-behavior:auto!important}
+}
 </style>
 </head>
 <body>
-<div class="wrap">
-<header class="site">
-  <a class="logo" href="/"><img src="/icon-192.png" alt="По зеркалам">По зеркалам</a>
-  <nav>
-    <a href="/metodika/">Методика</a>
-    <a href="/avtoshkolam/">Автошколам</a>
-    <a class="btn" style="padding:9px 20px;font-size:14.5px" href="/play/">Играть</a>
-  </nav>
+<header class="site" id="sitehead">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/icon-192.png" alt="" width="26" height="26"><span>По зеркалам</span></a>
+    <nav>
+      <a href="/metodika/" aria-current={page === 'metodika' ? 'page' : undefined}>Методика</a>
+      <a class="nav-hide" href="/avtoshkolam/" aria-current={page === 'schools' ? 'page' : undefined}>Автошколам</a>
+      <a class="btn" href="/play/">Играть</a>
+    </nav>
+  </div>
 </header>
-<slot />
+
+<main><slot /></main>
+
 <footer class="site">
-  <span>«По зеркалам» — браузерный тренажёр манёвров. Бесплатно, без установки.</span>
-  <span><a href="/play/">Играть</a> · <a href="/avtoshkolam/">Автошколам</a></span>
+  <div class="wrap">
+    <span>«По зеркалам» — браузерный тренажёр манёвров. Бесплатно, без установки.</span>
+    <nav>
+      <a href="/play/">Тренажёр</a>
+      <a href="/metodika/">Методика</a>
+      <a href="/avtoshkolam/">Автошколам</a>
+    </nav>
+  </div>
 </footer>
-</div>
+
+<script>
+  /* Импортом, а не телом: инлайновый скрипт режет CSP сайта (script-src 'self'
+     плюс хэши игры), поэтому весь JS лендинга обязан уезжать в отдельный файл. */
+  import '../scripts/head.js';
+</script>
 </body>
 </html>
