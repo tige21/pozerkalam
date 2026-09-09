@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="По зеркалам">
+  <rect width="32" height="32" rx="7" fill="#08111b"/>
+  <rect x="4.5" y="9.5" width="23" height="13" rx="6" fill="none" stroke="#ffffff" stroke-width="3"/>
+  <path d="M16 12.4 L21 21 L16 18.3 L11 21 Z" fill="#ffd63c"/>
+</svg>

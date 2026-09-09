@@ -16,9 +16,15 @@ const canonical = new URL(Astro.url.pathname, 'https://pozerkalam.space').href;
 <meta property="og:url" content={canonical}>
 <meta property="og:locale" content="ru_RU">
 <meta property="og:image" content="https://pozerkalam.space/og.jpg">
+<meta property="og:image:width" content="2400">
+<meta property="og:image:height" content="1260">
+<meta property="og:image:alt" content="Тренажёр манёвров «По зеркалам»: параллельная парковка с подсказкой в кадре">
+<meta property="og:site_name" content="По зеркалам">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="theme-color" content="#0b0f14">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" type="image/png" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preload" href="/font/onest-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
 <style is:global>
 @font-face{font-family:Onest;font-style:normal;font-weight:300 900;font-display:swap;
@@ -96,7 +102,7 @@ header.site .wrap{display:flex;align-items:center;gap:14px;height:58px}
 .brand{display:flex;align-items:center;gap:10px;color:var(--ink);font-weight:700;
   letter-spacing:-.02em;font-size:1.02rem;min-height:44px}
 .brand:hover{text-decoration:none}
-.brand img{width:26px;height:26px;border-radius:7px;flex:none}
+.brand img{width:40px;height:23px;flex:none}
 .brand{white-space:nowrap}
 header.site nav{margin-left:auto;display:flex;align-items:center;gap:clamp(14px,2.4vw,26px)}
 header.site nav a{color:var(--mute);font-size:.94rem;font-weight:500;
@@ -148,7 +154,7 @@ article li b{color:var(--ink)}
 <body>
 <header class="site" id="sitehead">
   <div class="wrap">
-    <a class="brand" href="/"><img src="/icon-192.png" alt="" width="26" height="26"><span>По зеркалам</span></a>
+    <a class="brand" href="/"><img src="/mark-small.svg" alt="" width="40" height="23"><span>По зеркалам</span></a>
     <nav>
       <a href="/metodika/" aria-current={page === 'metodika' ? 'page' : undefined}>Методика</a>
       <a class="nav-hide" href="/avtoshkolam/" aria-current={page === 'schools' ? 'page' : undefined}>Автошколам</a>

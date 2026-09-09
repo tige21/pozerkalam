@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 36" width="64" height="36" role="img" aria-label="По зеркалам">
+  <rect x="7" y="8.5" width="50" height="19" rx="9" fill="none" stroke="#ffffff" stroke-width="5"/>
+  <path d="M32 12.2 L38.5 24 L32 20.6 L25.5 24 Z" fill="#ffd63c"/>
+</svg>

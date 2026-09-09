@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-labelledby="t d">
+  <title id="t">По зеркалам</title>
+  <desc id="d">Иконка приложения: зеркало заднего вида с дорогой и стрелкой</desc>
+  <rect width="128" height="128" rx="28" fill="#08111b"/>
+  <g fill="none" fill-rule="evenodd">
+    <rect x="13" y="37" width="102" height="54" rx="22" stroke="#ffffff" stroke-width="10"/>
+    <path d="M36 86 H52 L58 55 H53 Z" fill="#ffffff"/>
+    <path d="M92 86 H76 L70 55 H75 Z" fill="#ffffff"/>
+    <path d="M64 59 L73 83 L64 76.5 L55 83 Z" fill="#ffd63c"/>
+  </g>
+</svg>

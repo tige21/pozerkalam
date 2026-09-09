@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 128" width="256" height="128" role="img" aria-labelledby="t d">
+  <title id="t">По зеркалам</title>
+  <desc id="d">Салонное зеркало заднего вида для светлого фона</desc>
+  <g fill="none" fill-rule="evenodd">
+    <rect x="10.5" y="24.5" width="235" height="79" rx="30" stroke="#08111b" stroke-width="13"/>
+    <path d="M42 97 H72 L118 50 H110 Z" fill="#08111b"/>
+    <path d="M214 97 H184 L138 50 H146 Z" fill="#08111b"/>
+    <path d="M128 56 L151 92 L128 80 L105 92 Z" fill="#ffd63c"/>
+  </g>
+</svg>
