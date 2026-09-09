@@ -84,8 +84,15 @@
 ## Как пользоваться
 
 ```bash
-python3 ~/.claude/skills/ru-copy-deslop/scripts/deslop-scan.py landing/src
+S=~/.claude/skills/ru-copy-deslop/scripts/deslop-scan.py
+python3 $S landing/src     # лендинг
+python3 $S index.html      # игра
+python3 $S docs            # питч и витрины
 ```
+
+Цель — **риторика: 0**. Корзины «контраст» и «комментарии» непустыми быть могут:
+в `index.html` контраста около полусотни, и это методика («стоп-линия — граница
+бампера, а не середины машины»). Массовая чистка контраста сломает обучение.
 
 Дальше — по скиллу `ru-copy-deslop`: инвентарь строк, счёт повторов формы,
 правка по таблице, повторный прогон до нуля.
