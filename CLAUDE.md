@@ -41,6 +41,30 @@ curl -s "$VIKUNJA_URL/api/v1/tasks/<id>" -H "Authorization: Bearer $T" | jq '.do
   "$VIKUNJA_URL/api/v1/tasks/<id>" -H "Authorization: Bearer $T" -H 'Content-Type: application/json' -d @-           # закрыть (полный payload)
 ```
 
+## Тексты для пользователя
+
+Голос продукта — `.ai-factory/references/pozerkalam-voice.md`: аудитория, регистр,
+словарь, проверяемые цифры и запреты. **Камертон уже внутри продукта** — подсказки
+инструктора в карточке манёвра (`phases[].act`, `STEPS` в `landing/src/scripts/park.js`):
+короткий императив, второе лицо, признак завершения в конце фразы. Любая строка,
+которую увидит пользователь, обязана звучать как продолжение этой речи.
+
+Перед правкой любого пользовательского текста — скилл `ru-copy-deslop`
+(`~/.claude/skills/ru-copy-deslop/`) и его сканер:
+
+```bash
+python3 ~/.claude/skills/ru-copy-deslop/scripts/deslop-scan.py landing/src
+```
+
+Он ловит машинные обороты; главный из них — противопоставление «это не X, это Y»
+(на первой версии лендинга оно стояло четыре раза и делало страницу машинной).
+Сканер отдельно предупреждает о **повторе одной формы в файле** — начинать правку
+надо оттуда, это заметнее любой отдельной фразы. Совпадения внутри комментариев
+кода помечаются и правки не требуют.
+
+Подсказки манёвров и тексты уровней в `index.html` — методика, выверенная прогонами
+`learner.js`: менять формулировки там только вместе с прогоном учебного теста.
+
 ## Code Search — codegraph
 
 Индекс `.codegraph/` живёт локально (gitignored; глобальный Stop-хук гоняет `codegraph sync`). codegraph **не читает `.html`** и пропускает gitignored-файлы, поэтому игра индексируется через **трекаемое зеркало `codegraph-src/index.js`**: содержимое `<script>` из `index.html` с построчным паддингом — `index.js:N` == `index.html:N`, строки вне скрипта пустые. Собирает `tools/mirror-script.sh` (`--check` — при дрейфе exit 1); пересборка автоматическая: `.githooks/pre-commit` (одноразово включить `git config core.hooksPath .githooks`) и Stop-хук в `.claude/settings.local.json`. **Править только `index.html`** — зеркало генерат, в диффах скрыто через `.gitattributes -diff`.
