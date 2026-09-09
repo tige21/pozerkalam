@@ -473,6 +473,22 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -4800,7 +4816,8 @@ function examFailHTML(){
     +'<ul class="startlist">'+examLogRows()+'</ul>'
     +'<p>На настоящем экзамене после трёх неудач пересдача — через полгода. Здесь — сразу.</p>'
     +'<button data-act="again">Попробовать снова</button> '
-    +'<button data-act="pick" class="ghost">К уровням</button>';
+    +'<button data-act="pick" class="ghost">К уровням</button> '
+    +'<button data-act="feedback:fail" class="ghost">✉ Что-то не так</button>';
 }
 /* брифинг: карта маршрута и список команд ДО старта. На настоящем экзамене инспектор
    тоже сообщает маршрут в общих чертах — молчит он про то, КАК ехать, а не КУДА */
@@ -4909,7 +4926,8 @@ function levelFailHTML(){
     +'<p>Грубая ошибка отменяет поездку целиком — так же, как на экзамене.</p>'
     +'<button data-act="again">Начать заново</button> '
     +(tr!==undefined?'<button data-act="train:'+tr+'" class="ghost">Отработать приём</button> ':'')
-    +'<button data-act="pick" class="ghost">К уровням</button>';
+    +'<button data-act="pick" class="ghost">К уровням</button> '
+    +'<button data-act="feedback:fail" class="ghost">✉ Что-то не так</button>';
 }
 
 /* начисления, не привязанные к городской геометрии, + ведение маршрута */
@@ -4999,7 +5017,8 @@ function examPassHTML(){
     +'<ul class="startlist">'+examLogRows()+'</ul>'
     +'<p>Время маршрута: <b>'+game.t.toFixed(0)+' с</b> · порядок манёвров в следующий раз может быть другим</p>'
     +'<button data-act="again">Ещё маршрут</button> '
-    +'<button data-act="pick" class="ghost">К уровням</button>';
+    +'<button data-act="pick" class="ghost">К уровням</button> '
+    +'<button data-act="feedback:win" class="ghost">✉ Что-то не так</button>';
 }
 /* когда поворотник в последний раз горел: перестроение засчитывается корректным,
    если сигнал был включён до начала манёвра, а не мигнул уже поперёк разметки */
@@ -6354,6 +6373,10 @@ function updateHUD(){
   setText($('demoBtn'), demo ? '■ остановить показ' : '▶ демонстрация');
   const demoVis = DEMOS[game.li] ? '' : 'none';
   if($('demoBtn').style.display!==demoVis) $('demoBtn').style.display=demoVis;
+  /* боковые зеркала начинаются не выше 0.4·H: в невысоком окне они доходят до кнопки,
+     а HTML-кнопка молча съедает тап, нацеленный в зеркало на канве */
+  const fbVis = (!opt.mirrors || mirrorRects().right.y>=206) ? '' : 'none';
+  if($('fbBtn').style.display!==fbVis) $('fbBtn').style.display=fbVis;
   $('gearVal').classList.toggle('deny', selBlockT>0);
   const gearKey = mtOn() ? 'M'+car.mgear+(car.stalled?'s':'') : car.sel;
   if(gearShown!==gearKey){
@@ -6552,6 +6575,140 @@ $('coach').addEventListener('click', e=>{
 /* ---------- оверлеи ---------- */
 const ovEl=$('overlay'), ovCard=$('ovCard');
 let helpOpen=false;
+
+/* ---------- обратная связь ---------- */
+/* Отчёт уходит на свой сервер, а тот уже в Telegram. Токена бота в странице нет и быть
+   не может: index.html отдаётся всем, а connect-src в CSP всё равно не пустит браузер
+   на api.telegram.org. Адрес абсолютный — тот же для веба, Яндекс Игр и старого зеркала. */
+const FB_URL='https://pozerkalam.space/api/feedback';
+const FB_KINDS=[['bug','Что-то сломалось'],['idea','Есть идея'],['note','Отзыв']];
+const FB_COOL=60;
+const FB_ERR={ 'rate':'Слишком часто. Подожди пару минут.',
+  'short-text':'Напиши хотя бы пару фраз.',
+  'too-long':'Отчёт великоват — сними галочку со снимка экрана.',
+  'busy':'Очередь занята. Попробуй через минуту.' };
+let fbKind='bug', fbShot=null, fbBack='game', fbBusy=false;
+
+function fbCtx(){
+  const d=LEVELS[game.li]||{};
+  let scr='';
+  try{ scr=innerWidth+'x'+innerHeight; }catch(e){}
+  return { level:d.name||'', li:game.li, gearbox:opt.gearbox, cam:opt.camMode,
+    q:qLevel, gap:+frameGap.toFixed(1), js:+frameCost.toFixed(1),
+    dpr:+(window.devicePixelRatio||1).toFixed(2), screen:scr, mob:!!MOB,
+    runs:runsCnt, t:+game.t.toFixed(1), build:window.BUILD||'dev',
+    ua:navigator.userAgent };
+}
+/* Снимок берём в момент нажатия, до showOv: оверлей ставит паузу, кадр перестаёт
+   перерисовываться, и переснять то, что игрок видел, будет уже нечем. */
+function fbGrab(){
+  try{
+    const src=$('view'), k=Math.min(1, 1280/src.width);
+    const c=document.createElement('canvas');
+    c.width=Math.round(src.width*k); c.height=Math.round(src.height*k);
+    c.getContext('2d').drawImage(src,0,0,c.width,c.height);
+    return c.toDataURL('image/jpeg',0.6);
+  }catch(e){ console.warn('[fb] снимок не снялся',e); return null; }
+}
+function fbHTML(){
+  const seg=FB_KINDS.map(k=>'<button data-act="fb-kind:'+k[0]+'"'
+    +(fbKind===k[0]?' class="on"':'')+'>'+k[1]+'</button>').join('');
+  return '<h1>Напиши, что случилось</h1>'
+  +'<p>Читаю всё сам. Что делал, что ожидал, что вышло — этого хватает, чтобы починить. '
+  +'Уровень, коробка и версия сборки приложатся сами.</p>'
+  +'<div class="gbrow"><span class="gbl">Это</span><span class="gbseg">'+seg+'</span></div>'
+  +'<textarea id="fbText" class="fbfield" maxlength="2000" placeholder="'
+  +'Например: на 8 уровне машина прошла сквозь бордюр, когда я сдавал назад с рулём до упора'
+  +'"></textarea>'
+  +'<input id="fbContact" class="fbfield" maxlength="120" '
+  +'placeholder="Телеграм или почта — если нужен ответ. Необязательно">'
+  +(fbShot?'<label class="fbrow"><input type="checkbox" id="fbShot" checked>'
+    +'Приложить снимок экрана</label>':'')
+  +'<input class="fbhp" id="fbHp" tabindex="-1" autocomplete="off" aria-hidden="true">'
+  +'<div class="fberr" id="fbErr" style="display:none"></div>'
+  +'<button data-act="fb-send" id="fbSend">Отправить</button> '
+  +'<button data-act="fb-close" class="ghost">Отмена</button>';
+}
+function openFeedback(src){
+  fbBack=src||'game';
+  fbShot=fbGrab();
+  fbKind='bug';
+  track('feedback-open:'+fbBack);
+  showOv(fbHTML());
+  const t=$('fbText'); if(t) setTimeout(()=>t.focus(),50);
+}
+function fbClose(){
+  /* при game.done физика заморожена: закрыть форму в пустоту — оставить игрока без выхода */
+  if(game.done){ doAct('resume'); return; }
+  if(fbBack==='start'){ showOv(startHTML()); return; }
+  hideOv();
+}
+function fbSetKind(k){
+  fbKind=k;
+  /* перерисовать всю форму нельзя — вместе с ней стёрся бы уже набранный текст */
+  ovCard.querySelectorAll('.gbseg button').forEach(b=>
+    b.classList.toggle('on', b.dataset.act==='fb-kind:'+fbKind));
+}
+function fbCopy(text){
+  const full=text+'\n\n'+JSON.stringify(fbCtx());
+  const manual=()=>{ const ta=$('fbText'); if(!ta) return;
+    ta.value=full; ta.focus(); ta.select(); toast('Выдели и скопируй: Ctrl+C',4); };
+  try{ navigator.clipboard.writeText(full).then(()=>toast('Скопировано.',2), manual); }
+  catch(e){ manual(); }
+}
+function fbSend(){
+  if(fbBusy) return;
+  const ta=$('fbText'), err=$('fbErr'), btn=$('fbSend');
+  const text=((ta&&ta.value)||'').trim();
+  /* написанное не теряем ни в одной ветке отказа: игрок уже потратил на это две минуты */
+  const fail=(msg)=>{
+    err.style.display=''; err.textContent=msg;
+    const b=document.createElement('button');
+    b.className='ghost'; b.textContent='Скопировать текст';
+    b.onclick=()=>fbCopy(text); err.appendChild(b);
+  };
+  if(text.length<10){ err.style.display=''; err.textContent=
+    'Напиши хотя бы пару фраз — по «не работает» починить нечего.';
+    if(ta) ta.focus(); return; }
+  let left=0;
+  try{ left=FB_COOL-(Date.now()-(+localStorage.getItem('trainer_fb_t')||0))/1000; }catch(e){}
+  if(left>0){ err.style.display=''; err.textContent=
+    'Только что отправил. Следующий отчёт — через '+Math.ceil(left)+' с.'; return; }
+  if(navigator.onLine===false){
+    fail('Сети нет. Скопируй текст и пришли, когда появится.'); return; }
+
+  fbBusy=true;
+  if(btn){ btn.disabled=true; btn.textContent='Отправляю…'; }
+  err.style.display='none';
+  const body={ kind:fbKind, text:text,
+    contact:(($('fbContact')&&$('fbContact').value)||'').trim(),
+    hp:($('fbHp')&&$('fbHp').value)||'', ctx:fbCtx() };
+  const shotOn=$('fbShot');
+  if(fbShot && (!shotOn || shotOn.checked)) body.shot=fbShot;
+  const ac=('AbortController' in window) ? new AbortController() : null;
+  const tm=setTimeout(()=>{ if(ac) ac.abort(); }, 15000);
+  const done=()=>{ clearTimeout(tm); fbBusy=false;
+    if(btn){ btn.disabled=false; btn.textContent='Отправить'; } };
+  fetch(FB_URL,{ method:'POST', headers:{'Content-Type':'application/json'},
+                 body:JSON.stringify(body), signal:ac?ac.signal:undefined })
+    .then(r=>r.json().catch(()=>({ok:r.ok, err:'http-'+r.status})))
+    .then(j=>{
+      if(!j||!j.ok) throw new Error((j&&j.err)||'нет ответа');
+      try{ localStorage.setItem('trainer_fb_t',String(Date.now())); }catch(e){}
+      track('feedback-sent');
+      done(); fbClose();
+      toast(body.contact ? 'Отправлено. Ответлю на указанный контакт.' : 'Отправлено. Спасибо.', 3.5);
+    })
+    .catch(e=>{
+      const code=(e&&e.message)||'';
+      console.warn('[fb] не отправилось:',code,e);
+      done();
+      fail(FB_ERR[code] || (e && e.name==='AbortError'
+        ? 'Сервер молчит дольше 15 секунд. Скопируй текст и попробуй позже.'
+        : 'Не отправилось — связи с сервером нет.'));
+    });
+}
+
 function showOv(html){ ovCard.innerHTML=html; ovEl.style.display='flex'; paused=true;
   document.body.classList.add('ov');
   for(const k in input) input[k]=false;
@@ -6578,6 +6735,11 @@ function doAct(a){
   if(a==='exammode'){ setExamMode(examTrain()?'real':'train');
     showOv(level.def.examRoute ? examBriefHTML() : (helpOpen? helpHTML() : startHTML())); return; }
   if(a==='brief'){ hideOv(); return; }
+  if(a && a.indexOf('feedback')===0){
+    openFeedback(a.indexOf(':')>0 ? a.split(':')[1] : 'game'); return; }
+  if(a && a.indexOf('fb-kind:')===0){ fbSetKind(a.slice(8)); return; }
+  if(a==='fb-send'){ fbSend(); return; }
+  if(a==='fb-close'){ fbClose(); return; }
   if(a==='start'||a==='resume'){ hideOv();
     /* счётчик запусков: первые 3 «почему» в карточке раскрыто само, дальше — по «?» */
     if(a==='start' && !game.runCounted){ game.runCounted=true; runsCnt++;
@@ -6682,6 +6844,7 @@ function startHTML(){
     +'Линии траекторий (дуги колёс, путь демо) — в меню, если захочется подсмотреть.</p>'
     + touchCtrlHTML() + lvlListHTML()
   +'<button data-act="touch" class="ghost">Экранное управление: '+(MOB?'ВКЛ':'выкл')+'</button>'
+    +'<button data-act="feedback:start" class="ghost">✉ Написать об ошибке или идее</button>'
     +'<button data-act="start">Поехали</button>';
   /* стена текста про Аккермана на старте отпугивала до первой поездки:
      4 буллета о главном, физика и полный список клавиш — в справке (H) */
@@ -6707,6 +6870,7 @@ function startHTML(){
   + lvlListHTML()
   +'<button data-act="help" class="ghost">Как это устроено (H)</button>'
   +'<button data-act="touch" class="ghost">Экранное управление: '+(MOB?'ВКЛ':'выкл')+'</button>'
+  +'<button data-act="feedback:start" class="ghost">✉ Написать об ошибке или идее</button>'
   +'<button data-act="start">Поехали</button>'; }
 function helpHTML(){
   if(MOB) return '<h1>Справка</h1>'
@@ -6757,7 +6921,8 @@ function winHTML(){
     +(level.def.transfer?'<h2>Запомни для реальной дороги</h2><p>'+level.def.transfer+'</p>':'')
     + lvlListHTML()
     +'<button data-act="next">Следующий уровень (N)</button> '
-    +'<button data-act="again" class="ghost">Повторить (R)</button>';
+    +'<button data-act="again" class="ghost">Повторить (R)</button> '
+    +'<button data-act="feedback:win" class="ghost">✉ Что-то не так</button>';
   }
   const rec = p ? '<p style="color:#93a7bd;font-size:13px">Этот уровень пройден <b>'+p.n+'</b> раз'
       +(p.clean?', из них <b>'+p.clean+'</b> без касаний':'')
@@ -6774,7 +6939,8 @@ function winHTML(){
   +(level.def.transfer?'<h2>Запомни для реальной дороги</h2><p>'+level.def.transfer+'</p>':'')
   + lvlListHTML()
   +'<button data-act="next">Следующий уровень (N)</button> '
-  +'<button data-act="again" class="ghost">Повторить (R)</button>'; }
+  +'<button data-act="again" class="ghost">Повторить (R)</button> '
+  +'<button data-act="feedback:win" class="ghost">✉ Что-то не так</button>'; }
 function toggleHelp(){
   if(helpOpen){ hideOv(); return; }
   if(!paused){ showOv(helpHTML()); helpOpen=true; return; }
@@ -7952,6 +8118,7 @@ function buildMenu(){
   add('Начать уровень заново', ()=>{ closeMenu(); pressKey('KeyR'); });
   add('Что делают кнопки', ()=>{ closeMenu(); setTimeout(showTouchHelp,120); });
   add('Справка и правила', ()=>{ closeMenu(); pressKey('KeyH'); });
+  add('✉ Сообщить об ошибке', ()=>{ closeMenu(); doAct('feedback:menu'); });
   h('Уровень');
   add('Выбрать уровень…', ()=>{ closeMenu(); showLevelPick(); });
   add('Редактор площадок', ()=>{ closeMenu(); openEditor(editorSource()); });
@@ -8098,6 +8265,7 @@ $('gearVal').addEventListener('click',e=>{
 });
 $('restartBtn').addEventListener('click',()=>{ initAudio(); pressKey('KeyR'); });
 $('demoBtn').addEventListener('click',()=>{ initAudio(); if(demo) stopDemo(); else startDemo(); });
+$('fbBtn').addEventListener('click',()=>{ initAudio(); doAct('feedback:game'); });
 $('trestart').addEventListener('pointerdown',e=>{ e.preventDefault(); initAudio();
   if(!paused) pressKey('KeyR'); },{passive:false});
 $('tmenu').addEventListener('pointerdown',e=>{ if(e.target.id==='tmenu') closeMenu(); });
