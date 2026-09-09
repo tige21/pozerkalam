@@ -285,10 +285,13 @@ const penalties = [
     const io = new IntersectionObserver((rows) => {
       for (const r of rows) {
         const v = r.target;
-        if (r.isIntersecting) { v.play().catch(() => {}); }
-        else v.pause();
+        if (!r.isIntersecting) { v.pause(); continue; }
+        /* preload включаем ЗДЕСЬ: выставленный заранее, он тянет оба ролика при
+           открытии страницы и preload="none" в разметке уже ничего не значит */
+        if (v.preload !== 'auto') v.preload = 'auto';
+        v.play().catch(() => {});
       }
     }, { rootMargin: '120px 0px', threshold: 0.25 });
-    for (const v of clips) { v.preload = 'auto'; io.observe(v); }
+    for (const v of clips) io.observe(v);
   }
 </script>
