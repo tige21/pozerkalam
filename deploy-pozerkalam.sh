@@ -173,9 +173,11 @@ sshr "nginx -t >/dev/null 2>&1 && systemctl reload nginx && echo RELOADED"
 echo "==> смоук"
 sleep 1
 for path in "/" "/play/" "/metodika/" "/avtoshkolam/"; do
-  code=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} -o /dev/null -w "%{http_code}" "https://pozerkalam.space${path}")
+  # `|| echo 000`: без него упавший curl под set -e убивает скрипт ВНУТРИ подстановки,
+  # смоук не печатает ни строчки, и в логе остаётся только «==> смоук» без причины
+  code=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} -o /dev/null -w "%{http_code}" "https://pozerkalam.space${path}" || echo 000)
   echo "    ${path} -> ${code}"
-  [ "$code" = "200" ] || { echo "СМОУК ПРОВАЛЕН на ${path}"; exit 1; }
+  [ "$code" = "200" ] || { echo "СМОУК ПРОВАЛЕН на ${path} (000 = сайт недоступен С ЭТОЙ машины; файлы уже залиты, проверить с сервера)"; exit 1; }
 done
 curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} https://pozerkalam.space/play/ -o /tmp/pz_play.html
 sha_l=$(shasum -a 256 build/play/index.html | cut -d' ' -f1)
