@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -264,6 +265,9 @@ def sender():
 def selfcheck():
     """Молчаливая смерть прокси на 194 выглядит как здоровый сервис — проверяем на старте."""
     proxy = os.environ.get('HTTPS_PROXY') or os.environ.get('https_proxy') or 'нет'
+    # У tinyproxy на 194 включён BasicAuth, и логин с паролем стоят прямо в адресе.
+    # Без маскировки они лежат открытым текстом в journal у всех, кто может его читать.
+    proxy = re.sub(r'//[^/@]+@', '//<логин:пароль>@', proxy)
     ok, res = tg('getMe')
     if ok:
         log.info('telegram доступен через прокси %s: @%s', proxy,
