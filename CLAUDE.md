@@ -179,6 +179,37 @@ The centre mirror's camera sits *inside* the body, so `drawSceneInto` takes `noS
 
 **Deployment (prod)**: основной прод — **https://pozerkalam.space/** (корень — лендинг Astro, игра — **/play/**) на хосте `vdsina` (~/.ssh/config; сервер делится с чужими vhost'ами — их не трогать). Деплой: `./deploy-pozerkalam.sh` — минифицирует артефакт в `build/` (html-minifier-terser, исходник остаётся единым читаемым файлом), вставляет тег Метрики (ID из `.deploy.env`, не в git), пересчитывает CSP-хэши инлайн-скриптов, вписывает версию в `sw.js` (без неё SW навсегда залипает в старом кэше), заливает и смоук-проверяет. Ловушка nginx, уже стоившая часа: `add_header` внутри location ОТКЛЮЧАЕТ все add_header уровня server — заголовки безопасности включаются `include snippets/pozerkalam-headers.conf` и в server, и в каждом location с собственным add_header. `/stats/` — GoAccess за basic auth (пароль в `.deploy.env`). Старый прод http://194.5.65.182/ (`deploy-62yun.sh`) — запасное зеркало без Метрики/PWA.
 
+**Гео-DNS и зарубежное зеркало (с 2026-09-10)**: `pozerkalam.space` больше не резолвится в один
+адрес. Зона переехала из reg.ru в **Gcore** (в reg.ru остались только NS `ns1.gcorelabs.net` /
+`ns2.gcdn.services`), апекс отдаёт разные адреса: из РФ — `vdsina` `83.217.215.66`, из остального
+мира — `194.5.65.182` (SSH-хост `assistant-box`). Сделано потому, что у юзеров с VPN трафик до
+РФ-хостинга не доходит и сайт не открывался. `www` — CNAME на апекс, гео наследует.
+
+⚠️ **`./deploy-pozerkalam.sh` заливает ТОЛЬКО на `vdsina`** (`HOST=vdsina`, `DOCROOT=/var/www/pozerkalam`).
+После каждого деплоя зеркало надо синхронизировать вручную, иначе зарубежные посетители и все, кто
+сидит под VPN, остаются на предыдущей сборке — и надолго, потому что `sw.js` закэширует её у них
+в браузере:
+
+```bash
+rsync -az --delete -e "ssh -J assistant-box" vdsina:/var/www/pozerkalam/ /tmp/pz-mirror/
+rsync -az --delete --rsync-path="sudo rsync" /tmp/pz-mirror/ assistant-box:/var/www/pozerkalam/
+```
+
+Зеркало — это отдельный вебрут `/var/www/pozerkalam` на 194 и **не то же самое**, что старый
+`deploy-62yun.sh` → `/var/www/car-trainer` (тот vhost отвечает только по IP, без Метрики и PWA).
+Сертификат зеркала — Let's Encrypt до 2026-12-09, продление через `webroot`; ACME проброшен между
+боксами в обе стороны (свой токен отдаётся локально, чужой проксируется соседу, заголовок
+`X-Acme-Relay` рвёт петлю), поэтому продлевается тот бокс, на который придёт проверка.
+
+⚠️ **На 194 нельзя занимать `listen 443` и нельзя запускать `certbot --nginx`**: порт держит
+stream-роутер соседнего проекта (spark), новые vhost'ы там ставятся на
+`listen 127.0.0.1:8543 ssl proxy_protocol` + `set_real_ip_from 127.0.0.1;`
+`real_ip_header proxy_protocol;` + `include snippets/acme-webroot.conf;`. Плагин `--nginx` при
+продлении возвращает `listen 443 ssl` и роняет перезагрузку nginx для всех сайтов бокса.
+
+Полный рунбук (гео-записи, проверки, откат): `~/Documents/projects/spark/docs/INFRA_GEODNS.md`,
+раздел «pozerkalam.space».
+
 **Landing clips**: `tools/landing-clips.mjs` records a level's демонстрация in a headless browser and encodes `landing/public/clips/<name>.{mp4,webp}` (h264, no audio, ~100 КБ each, poster via `cwebp` — homebrew's ffmpeg has no webp encoder). Recording happens at 1280×800 and is scaled to 960×600: at 960 the game's HUD falls into its narrow layout and the panels overlap. Service chrome is hidden with an injected stylesheet, never `remove()` — `updateHUD` writes into those nodes every frame — and `coachCard` is patched so the card shows the segment's instructor line instead of «Демо 3/7 · любая кнопка прерывает». A VP9 track is not built: on this material webm comes out twice the size of h264. The page loads them with `preload="none"` and starts playback from an IntersectionObserver, skipping it entirely under `prefers-reduced-motion`.
 
 **Distribution builds**: the repo now carries three delivery shapes. (1) Web (`./deploy-pozerkalam.sh`): landing (Astro, `landing/` → site root) + game at **/play/** — the script rewrites the game's root-absolute paths (manifest/icons/sw) to /play/, injects Метрика, versions the SW and ships a root `/sw.js` self-killer (the old root-scope SW would otherwise serve the cached game instead of the landing). (2) Yandex Games (`./build-yandex.sh` → `build/yandex.zip`): no Метрика/PWA/favicon, plus a Games-SDK adapter — `window.ADS` (interstitial/rewarded) and cloud saves mirroring `trainer_*` through `player.get/setData` (merge, локальный прогресс не затирается). (3) VK/TG use the /play/ URL directly (CSP frame-ancestors already allows them). In-game ad seam: `adsInterstitial(reason)` (no-op unless `window.ADS`; hard cooldown — never in the first 60 s, ≥180 s between shows) and `adsRewarded(cb)` (web: reward immediately). Publishing steps live in `docs/PUBLISH.md`.
