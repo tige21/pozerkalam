@@ -156,11 +156,15 @@ PYCSP
 )
 
 echo "==> заголовки"
-sshr "cat > /etc/nginx/snippets/pozerkalam-headers.conf" <<EOF
+# Файлом, а не heredoc'ом прямо в ssh: тот же самый набор хэшей нужен зеркалу, иначе оно
+# отдаёт новую сборку под старым CSP и режет собственный скрипт игры.
+mkdir -p build
+cat > build/pozerkalam-headers.conf <<EOF
 add_header Content-Security-Policy "default-src 'self'; script-src 'self' ${CSP_HASHES} https://mc.yandex.ru; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://mc.yandex.ru; connect-src 'self' https://mc.yandex.ru https://*.mc.yandex.ru; worker-src 'self' blob:; child-src blob: https://mc.yandex.ru; frame-ancestors 'self' https://yandex.ru https://*.yandex.net https://playhop.com https://vk.com https://*.vk.com https://web.telegram.org; base-uri 'self'" always;
 add_header X-Content-Type-Options "nosniff" always;
 add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 EOF
+scpr build/pozerkalam-headers.conf "$HOST:/etc/nginx/snippets/pozerkalam-headers.conf"
 
 echo "==> nginx: location для /play/"
 sshr 'grep -q "location = /play/index.html" /etc/nginx/sites-available/pozerkalam.space || \
@@ -204,40 +208,69 @@ scpr build/play/index.html build/play/sw.js build/play/manifest.webmanifest buil
 scpr sw-root-killer.js "$HOST:$DOCROOT/sw.js"
 sshr "nginx -t >/dev/null 2>&1 && systemctl reload nginx && echo RELOADED"
 
-echo "==> смоук"
+# Домен под гео-DNS (Gcore): из РФ юзер приходит на vdsina, из-за рубежа и из-под VPN — на
+# зеркало. С машины деплоя имя резолвится куда угодно, поэтому КАЖДАЯ проверка идёт по явному
+# адресу: без этого смоук однажды весь прогон проверял зеркало вместо только что залитого прода.
+PROD_IP="${PROD_IP:-83.217.215.66}"
+MIRROR_HOST="${MIRROR_HOST:-assistant-box}"
+MIRROR_IP="${MIRROR_IP:-194.5.65.182}"
+RES_PROD=(--resolve "pozerkalam.space:443:$PROD_IP")
+
+# CSP-хэши пересчитываются на каждой сборке. Страница с новыми инлайн-скриптами под старым
+# заголовком не запускается вообще: браузер режет скрипт игры молча, файлы при этом целы
+# и sha256 сходится — поймать это можно только сверкой хэшей с отданными заголовками.
+csp_check(){
+  python3 - "$1" "$2" "$3" <<'PYCSPCHK'
+import sys, re, hashlib, base64
+html, hdr, where = open(sys.argv[1]).read(), open(sys.argv[2]).read(), sys.argv[3]
+bad = []
+for m in re.finditer(r'<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>', html, re.S):
+    if 'ld+json' in m.group(0):
+        continue
+    q = "'sha256-%s'" % base64.b64encode(hashlib.sha256(m.group(1).encode()).digest()).decode()
+    if q not in hdr:
+        bad.append(q)
+if bad:
+    print("    CSP %s: %d инлайн-скрипт(ов) вне заголовка — страница не запустится" % (where, len(bad)))
+    sys.exit(1)
+print("    CSP %s: все инлайн-скрипты покрыты" % where)
+PYCSPCHK
+}
+
+echo "==> смоук (прод $PROD_IP)"
 sleep 1
 for path in "/" "/play/" "/metodika/" "/avtoshkolam/"; do
   # `|| echo 000`: без него упавший curl под set -e убивает скрипт ВНУТРИ подстановки,
   # смоук не печатает ни строчки, и в логе остаётся только «==> смоук» без причины
-  code=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} -o /dev/null -w "%{http_code}" "https://pozerkalam.space${path}" || echo 000)
+  code=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} "${RES_PROD[@]}" -o /dev/null -w "%{http_code}" "https://pozerkalam.space${path}" || echo 000)
   echo "    ${path} -> ${code}"
   [ "$code" = "200" ] || { echo "СМОУК ПРОВАЛЕН на ${path} (000 = сайт недоступен С ЭТОЙ машины; файлы уже залиты, проверить с сервера)"; exit 1; }
 done
-curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} https://pozerkalam.space/play/ -o /tmp/pz_play.html
+curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} "${RES_PROD[@]}" https://pozerkalam.space/play/ -o /tmp/pz_play.html -D /tmp/pz_play.hdr
 sha_l=$(shasum -a 256 build/play/index.html | cut -d' ' -f1)
 sha_r=$(shasum -a 256 /tmp/pz_play.html | cut -d' ' -f1)
 [ "$sha_l" = "$sha_r" ] && echo "    /play/ sha256: СОВПАДАЕТ" || { echo "    /play/ sha256 РАЗЛИЧАЕТСЯ"; exit 1; }
 grep -q "По зеркалам" /tmp/pz_play.html && echo "    игра на /play/: ДА"
-curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} https://pozerkalam.space/ | grep -q 'rel="canonical" href="https://pozerkalam.space/"' && echo "    лендинг на корне: ДА"
+curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} "${RES_PROD[@]}" https://pozerkalam.space/ -o /tmp/pz_root.html -D /tmp/pz_root.hdr
+grep -q 'rel="canonical" href="https://pozerkalam.space/"' /tmp/pz_root.html && echo "    лендинг на корне: ДА"
+csp_check /tmp/pz_play.html /tmp/pz_play.hdr "прод /play/"
+csp_check /tmp/pz_root.html /tmp/pz_root.hdr "прод /"
 if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
   # dry: эндпоинт проверяется целиком, но сообщение не уходит — иначе каждый деплой
   # присылал бы владельцу мусорный отчёт.
-  fb=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} -X POST https://pozerkalam.space/api/feedback \
+  fb=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} "${RES_PROD[@]}" -X POST https://pozerkalam.space/api/feedback \
        -H 'Content-Type: application/json' \
        -d '{"kind":"note","text":"смоук деплоя, отправка не выполняется","dry":true}')
   echo "    /api/feedback -> ${fb}"
   case "$fb" in *'"ok": true'*|*'"ok":true'*) ;; *) echo "СМОУК ПРОВАЛЕН на /api/feedback"; exit 1;; esac
-  pre=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} -o /dev/null -w "%{http_code}" \
+  pre=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} "${RES_PROD[@]}" -o /dev/null -w "%{http_code}" \
         -X OPTIONS https://pozerkalam.space/api/feedback)
   echo "    /api/feedback OPTIONS -> ${pre}"
   [ "$pre" = "204" ] || { echo "СМОУК ПРОВАЛЕН: preflight не 204"; exit 1; }
 fi
 # Домен под гео-DNS (Gcore): из РФ юзер приходит на vdsina, из-за рубежа и из-под VPN — на
-# зарубежное зеркало 194.5.65.182. Без этого шага зеркало застывает на прошлой сборке, причём
-# надолго: sw.js закрепляет её в браузере. Зеркало — байтовая копия прода, источник правды vdsina.
-MIRROR_HOST="${MIRROR_HOST:-assistant-box}"
-MIRROR_IP="${MIRROR_IP:-194.5.65.182}"
-
+# зарубежное зеркало. Без этого шага зеркало застывает на прошлой сборке, причём надолго:
+# sw.js закрепляет её в браузере. Зеркало — байтовая копия прода, источник правды vdsina.
 if [ "${SKIP_MIRROR:-0}" = "1" ]; then
   echo "==> зеркало: ПРОПУЩЕНО (SKIP_MIRROR=1) — зарубежные юзеры остаются на прошлой сборке"
 else
@@ -254,6 +287,14 @@ else
     echo "    $desc: ретрай без привязки к интерфейсу"
     rsync -az --delete -e "ssh -o ConnectTimeout=10 -o BatchMode=yes" "$@"
   }
+  mirror_ssh(){
+    if ssh -o ConnectTimeout=10 -o BatchMode=yes ${SSH_BIND[@]+"${SSH_BIND[@]}"} "$MIRROR_HOST" "$@"; then return 0; fi
+    ssh -o ConnectTimeout=10 -o BatchMode=yes "$MIRROR_HOST" "$@"
+  }
+  mirror_scp(){
+    if scp -q -o ConnectTimeout=10 -o BatchMode=yes ${SSH_BIND[@]+"${SSH_BIND[@]}"} "$1" "$MIRROR_HOST:$2"; then return 0; fi
+    scp -q -o ConnectTimeout=10 -o BatchMode=yes "$1" "$MIRROR_HOST:$2"
+  }
 
   MIRROR_OK=1
   mirror_rsync "выгрузка с vdsina" "$HOST:$DOCROOT/" "$MIRROR_TMP/" || MIRROR_OK=0
@@ -261,10 +302,25 @@ else
     mirror_rsync "заливка на зеркало" --rsync-path="sudo rsync" "$MIRROR_TMP/" "$MIRROR_HOST:$DOCROOT/" || MIRROR_OK=0
   fi
 
+  # Конфиг зеркала — не только файлы. CSP считается от содержимого страниц, а страницы
+  # у зеркала те же: со старым заголовком браузер режет скрипт игры, и зарубежный игрок
+  # видит пустую страницу при целых файлах и сошедшемся sha256.
+  if [ "$MIRROR_OK" = "1" ]; then
+    mirror_scp build/pozerkalam-headers.conf /tmp/pz-headers.conf || MIRROR_OK=0
+    mirror_ssh "sudo cp /tmp/pz-headers.conf /etc/nginx/snippets/pozerkalam-headers.conf" || MIRROR_OK=0
+    if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
+      # На зеркале своего приёмника нет: локация проксирует отчёт на прод.
+      mirror_scp server/nginx-feedback-mirror.conf /tmp/pz-feedback.conf || MIRROR_OK=0
+      mirror_ssh "sudo cp /tmp/pz-feedback.conf /etc/nginx/snippets/pozerkalam-feedback.conf" || MIRROR_OK=0
+      mirror_ssh "grep -q 'snippets/pozerkalam-feedback.conf' /etc/nginx/sites-available/pozerkalam.space || sudo sed -i 's|    location / { try_files|    include snippets/pozerkalam-feedback.conf;\n    location / { try_files|' /etc/nginx/sites-available/pozerkalam.space" || MIRROR_OK=0
+    fi
+    mirror_ssh "sudo nginx -t >/dev/null 2>&1 && sudo systemctl reload nginx && echo '    зеркало: nginx перезагружен'" || MIRROR_OK=0
+  fi
+
   if [ "$MIRROR_OK" = "1" ]; then
     # Смоук зеркала идёт через --resolve: гео-DNS с этой машины отдаст московский адрес,
     # а проверить надо именно зарубежное плечо.
-    m_code=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} -o /tmp/pz_mirror.html -w "%{http_code}" \
+    m_code=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} -o /tmp/pz_mirror.html -D /tmp/pz_mirror.hdr -w "%{http_code}" \
              --resolve "pozerkalam.space:443:$MIRROR_IP" https://pozerkalam.space/play/ || echo 000)
     m_sha=$(shasum -a 256 /tmp/pz_mirror.html | cut -d' ' -f1)
     echo "    зеркало /play/ -> ${m_code}"
@@ -272,6 +328,14 @@ else
       echo "    зеркало sha256: СОВПАДАЕТ с продом"
     else
       echo "ЗЕРКАЛО РАСХОДИТСЯ С ПРОДОМ (код ${m_code}) — зарубежные юзеры на другой сборке"; exit 1
+    fi
+    csp_check /tmp/pz_mirror.html /tmp/pz_mirror.hdr "зеркало /play/"
+    if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
+      m_fb=$(curl -s -m 20 ${CURL_BIND[@]+"${CURL_BIND[@]}"} --resolve "pozerkalam.space:443:$MIRROR_IP" \
+             -X POST https://pozerkalam.space/api/feedback -H 'Content-Type: application/json' \
+             -d '{"kind":"note","text":"смоук зеркала, отправка не выполняется","dry":true}' || echo err)
+      echo "    зеркало /api/feedback -> ${m_fb}"
+      case "$m_fb" in *'"ok": true'*|*'"ok":true'*) ;; *) echo "СМОУК ПРОВАЛЕН: зеркало не проксирует отчёты на прод"; exit 1;; esac
     fi
   else
     echo "ЗЕРКАЛО НЕ ОБНОВЛЕНО: не достучался до $MIRROR_HOST."

@@ -53,7 +53,11 @@
 | Зона лимита | `/etc/nginx/conf.d/pozerkalam-limits.conf` (http-контекст) |
 | **Секреты** | `/etc/pozerkalam-feedback.env` (600, root) на сервере; локально `.deploy.env` (в `.gitignore`) |
 
-`.deploy.env` — `TG_TOKEN`, `TG_CHAT_ID`, `TG_PROXY`. Без первых двух блок деплоя
+`.deploy.env` — `TG_TOKEN`, `TG_CHAT_ID`, `TG_PROXY`. **У tinyproxy на 194 включён `BasicAuth`**:
+адрес без логина и пароля (`http://194.5.65.182:8888`) даёт `407 Proxy Authentication Required`, и
+сервис стартует со строкой «telegram НЕДОСТУПЕН» в journal. Правильный вид —
+`http://<логин>:<пароль>@194.5.65.182:8888`, учётка берётся из `BasicAuth` в
+`/etc/tinyproxy/tinyproxy.conf` на боксе 194. Без первых двух блок деплоя
 пропускается с предупреждением, остальной деплой проходит как обычно.
 
 ## Контракт эндпоинта
