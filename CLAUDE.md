@@ -12,6 +12,14 @@ A browser car-maneuvering trainer (parking simulator) — one self-contained fil
 - Deploy: `./deploy-62yun.sh` — scp's `index.html` to the `assistant-box` SSH host (from `~/.ssh/config`), installs it to `/var/www/car-trainer/index.html`, reloads nginx, then verifies the served file byte-for-byte against the local one. Live URL: http://194.5.65.182/ (vhost answers only by IP; other domains on that server must not be touched).
 - Флоу задач: `/aif-plan → /aif-implement → /aif-verify → /aif-commit` (`.ai-factory/config.yaml`; планы в `.ai-factory/plans/`), каждая фаза плана — задача на доске Vikunja (см. Task Board). Одноразово после клона: `git config core.hooksPath .githooks`.
 
+### Перед деплоем — коммит и пуш (обязательно)
+
+На сервер уезжает ровно то, что лежит в репозитории. Деплой из грязного дерева кладёт на прод код,
+которого нет в git: его не воспроизвести, не отревьюить и не откатить. Все ручные деплой-скрипты
+проверяют это сами и падают до первой заливки — грязное дерево или неотправленные коммиты
+останавливают деплой. Аварийный обход `SKIP_GIT_GUARD=1` оставляет предупреждение в логе.
+Деплой через GitHub Actions это правило соблюдает по построению: CI собирает из запушенного коммита.
+
 ## Task Board — Vikunja (MANDATORY)
 
 **Канбан-доска — источник правды по порядку работ.** Board: `http://194.5.65.182:3456`, проект **«По зеркалам» (id=3)**; kanban view 12, бакеты To-Do=7 / Doing=8 / Done=9. Инстанс общий с проектом spark (id=2) — чужой проект не трогать. Креды агента: `~/.config/pozerkalam-vikunja.env` (URL/user/pass/project id/view/bucket id; НИКОГДА не коммитить). Сессии без этого файла пропускают синк — тогда сказать в ответе, что доска не сверялась.

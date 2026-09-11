@@ -8,6 +8,40 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# На сервер уезжает ровно то, что лежит в репозитории: иначе на проде оказывается код, которого
+# нет в git — не воспроизвести, не отревьюить, не откатить. Поэтому сначала коммит и пуш.
+# Аварийный обход: SKIP_GIT_GUARD=1 (в логе останется предупреждение).
+git_guard() {
+  if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "ВНИМАНИЕ: каталог не является git-репозиторием, проверка пропущена" >&2
+    return 0
+  fi
+  if [ -n "$(git status --porcelain)" ]; then
+    echo "ДЕПЛОЙ ОСТАНОВЛЕН: есть незакоммиченные изменения — сначала коммит, потом деплой." >&2
+    git status --short >&2
+    exit 1
+  fi
+  local upstream ahead
+  upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
+  if [ -z "$upstream" ]; then
+    echo "ВНИМАНИЕ: у ветки нет upstream — пушить некуда, деплой пойдёт из локальных коммитов" >&2
+    return 0
+  fi
+  git fetch -q origin 2>/dev/null || true
+  ahead=$(git rev-list --count "$upstream"..HEAD 2>/dev/null || echo 0)
+  if [ "$ahead" != "0" ]; then
+    echo "ДЕПЛОЙ ОСТАНОВЛЕН: $ahead коммит(ов) не отправлено в $upstream — сначала push, потом деплой." >&2
+    exit 1
+  fi
+  echo "==> git: дерево чисто, всё отправлено в $upstream"
+}
+
+if [ "${SKIP_GIT_GUARD:-0}" = "1" ]; then
+  echo "ВНИМАНИЕ: git-гард отключён (SKIP_GIT_GUARD=1) — на сервер может уехать код, которого нет в репозитории" >&2
+else
+  git_guard
+fi
+
 HOST=vdsina
 DOCROOT=/var/www/pozerkalam
 [ -f .deploy.env ] && source .deploy.env
