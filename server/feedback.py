@@ -268,13 +268,19 @@ def selfcheck():
     # У tinyproxy на 194 включён BasicAuth, и логин с паролем стоят прямо в адресе.
     # Без маскировки они лежат открытым текстом в journal у всех, кто может его читать.
     proxy = re.sub(r'//[^/@]+@', '//<логин:пароль>@', proxy)
-    ok, res = tg('getMe')
-    if ok:
-        log.info('telegram доступен через прокси %s: @%s', proxy,
-                 (res.get('result') or {}).get('username'))
-    else:
-        log.error('telegram НЕДОСТУПЕН (прокси %s): %s — отчёты будут копиться в journal',
-                  proxy, res)
+    # Первая попытка сразу после рестарта иногда отваливается по таймауту, хотя канал
+    # цел: журнальная строка про недоступность — первый пункт диагностики, и ложная
+    # тревога в ней стоит дороже трёх секунд ожидания.
+    for attempt in range(3):
+        ok, res = tg('getMe')
+        if ok:
+            log.info('telegram доступен через прокси %s: @%s', proxy,
+                     (res.get('result') or {}).get('username'))
+            return
+        if attempt < 2:
+            time.sleep(2)
+    log.error('telegram НЕДОСТУПЕН (прокси %s, 3 попытки): %s — отчёты будут копиться в journal',
+              proxy, res)
 
 
 def main():
