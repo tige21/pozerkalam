@@ -185,15 +185,14 @@ The centre mirror's camera sits *inside* the body, so `drawSceneInto` takes `noS
 мира — `194.5.65.182` (SSH-хост `assistant-box`). Сделано потому, что у юзеров с VPN трафик до
 РФ-хостинга не доходит и сайт не открывался. `www` — CNAME на апекс, гео наследует.
 
-⚠️ **`./deploy-pozerkalam.sh` заливает ТОЛЬКО на `vdsina`** (`HOST=vdsina`, `DOCROOT=/var/www/pozerkalam`).
-После каждого деплоя зеркало надо синхронизировать вручную, иначе зарубежные посетители и все, кто
-сидит под VPN, остаются на предыдущей сборке — и надолго, потому что `sw.js` закэширует её у них
-в браузере:
-
-```bash
-rsync -az --delete -e "ssh -J assistant-box" vdsina:/var/www/pozerkalam/ /tmp/pz-mirror/
-rsync -az --delete --rsync-path="sudo rsync" /tmp/pz-mirror/ assistant-box:/var/www/pozerkalam/
-```
+`./deploy-pozerkalam.sh` заливает на `vdsina` (`HOST=vdsina`, `DOCROOT=/var/www/pozerkalam`), а
+последним шагом **сам синхронизирует зеркало**: выгружает прод с vdsina и заливает на
+`assistant-box`, затем смоучит зеркало через `--resolve` и сверяет sha256 с продом. Если зеркало
+разойдётся или бокс окажется недостижим — скрипт падает и печатает ручную команду; тихо уехать
+только в РФ он больше не может. Отключается `SKIP_MIRROR=1` (тогда зарубежные юзеры остаются на
+прошлой сборке — и надолго, `sw.js` закрепит её в браузере). Каждый rsync пробуется дважды — с
+привязкой к физическому интерфейсу и без неё: из РФ напрямую не всегда виден зарубежный бокс, а
+из-под VPN — московский.
 
 Зеркало — это отдельный вебрут `/var/www/pozerkalam` на 194 и **не то же самое**, что старый
 `deploy-62yun.sh` → `/var/www/car-trainer` (тот vhost отвечает только по IP, без Метрики и PWA).

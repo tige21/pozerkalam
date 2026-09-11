@@ -198,4 +198,54 @@ if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
   echo "    /api/feedback OPTIONS -> ${pre}"
   [ "$pre" = "204" ] || { echo "СМОУК ПРОВАЛЕН: preflight не 204"; exit 1; }
 fi
+# Домен под гео-DNS (Gcore): из РФ юзер приходит на vdsina, из-за рубежа и из-под VPN — на
+# зарубежное зеркало 194.5.65.182. Без этого шага зеркало застывает на прошлой сборке, причём
+# надолго: sw.js закрепляет её в браузере. Зеркало — байтовая копия прода, источник правды vdsina.
+MIRROR_HOST="${MIRROR_HOST:-assistant-box}"
+MIRROR_IP="${MIRROR_IP:-194.5.65.182}"
+
+if [ "${SKIP_MIRROR:-0}" = "1" ]; then
+  echo "==> зеркало: ПРОПУЩЕНО (SKIP_MIRROR=1) — зарубежные юзеры остаются на прошлой сборке"
+else
+  echo "==> зарубежное зеркало ($MIRROR_HOST)"
+  MIRROR_TMP=$(mktemp -d)
+  trap 'rm -rf "$MIRROR_TMP"' EXIT
+
+  # Один из двух боксов недостижим при любом фиксированном маршруте: из РФ напрямую не везде
+  # виден зарубежный бокс, из-под VPN — московский. Поэтому каждый rsync пробуем дважды:
+  # с привязкой к физическому интерфейсу и без неё.
+  mirror_rsync(){
+    local desc="$1"; shift
+    if rsync -az --delete -e "ssh -o ConnectTimeout=10 -o BatchMode=yes ${SSH_BIND[*]-}" "$@"; then return 0; fi
+    echo "    $desc: ретрай без привязки к интерфейсу"
+    rsync -az --delete -e "ssh -o ConnectTimeout=10 -o BatchMode=yes" "$@"
+  }
+
+  MIRROR_OK=1
+  mirror_rsync "выгрузка с vdsina" "$HOST:$DOCROOT/" "$MIRROR_TMP/" || MIRROR_OK=0
+  if [ "$MIRROR_OK" = "1" ]; then
+    mirror_rsync "заливка на зеркало" --rsync-path="sudo rsync" "$MIRROR_TMP/" "$MIRROR_HOST:$DOCROOT/" || MIRROR_OK=0
+  fi
+
+  if [ "$MIRROR_OK" = "1" ]; then
+    # Смоук зеркала идёт через --resolve: гео-DNS с этой машины отдаст московский адрес,
+    # а проверить надо именно зарубежное плечо.
+    m_code=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} -o /tmp/pz_mirror.html -w "%{http_code}" \
+             --resolve "pozerkalam.space:443:$MIRROR_IP" https://pozerkalam.space/play/ || echo 000)
+    m_sha=$(shasum -a 256 /tmp/pz_mirror.html | cut -d' ' -f1)
+    echo "    зеркало /play/ -> ${m_code}"
+    if [ "$m_code" = "200" ] && [ "$m_sha" = "$sha_l" ]; then
+      echo "    зеркало sha256: СОВПАДАЕТ с продом"
+    else
+      echo "ЗЕРКАЛО РАСХОДИТСЯ С ПРОДОМ (код ${m_code}) — зарубежные юзеры на другой сборке"; exit 1
+    fi
+  else
+    echo "ЗЕРКАЛО НЕ ОБНОВЛЕНО: не достучался до $MIRROR_HOST."
+    echo "Прод в РФ уже обновлён, зарубежные юзеры остались на прошлой сборке. Догнать вручную:"
+    echo "  rsync -az --delete -e 'ssh -J assistant-box' vdsina:$DOCROOT/ /tmp/pz-mirror/"
+    echo "  rsync -az --delete --rsync-path='sudo rsync' /tmp/pz-mirror/ $MIRROR_HOST:$DOCROOT/"
+    exit 1
+  fi
+fi
+
 echo "ГОТОВО: лендинг https://pozerkalam.space/ · игра https://pozerkalam.space/play/ (build ${BUILD_SHA})"
