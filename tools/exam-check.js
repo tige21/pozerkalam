@@ -165,3 +165,99 @@ function routeCheck(runs){
   console.log(out.every(o=>o.stuck===null) ? 'routeCheck: всё зелено' : 'routeCheck: есть FAIL');
   return out;
 }
+
+/* Проверка навигационного слоя экзамена: линия маршрута, зоны манёвров, указатели улиц.
+   В консоли страницы:
+     navCheck()    // печатает PASS/FAIL и возвращает список нарушений
+   Ловит то, чего не видят ни routeCheck (он ходит по прямой между командами), ни
+   demo-vio (показа у экзамена нет): этап, к которому не строится путь; точку линии вне
+   асфальта или на островке кольца; линию по встречной половине; нерезолвящуюся зону
+   манёвра; карман, нарисованный не там, где засчитывается; улицу из команды, которой
+   нет в городе; указатель, вставший на проезжей части. */
+function navCheck(runs){
+  const N=runs||8, bad=[];
+  const say=(ok,txt)=>{ if(!ok){ bad.push(txt); console.log('FAIL · '+txt); } };
+  loadLevel(31); hideOv();
+  const g=cityGraph();
+  if(!g){ console.log('FAIL · графа города нет'); return ['нет графа']; }
+
+  /* указатели направлений стоят за бордюром: по общему городу ездят показы 27–31 */
+  for(const o of level.obs){
+    if(o.kind!=='guide') continue;
+    let onRoad=false;
+    for(const e of g.E){ const A=g.V[e.a], B=g.V[e.b];
+      const du=B.u-A.u, dv=B.v-A.v, L2=du*du+dv*dv;
+      const t=Math.max(0,Math.min(1,((o.u-A.u)*du+(o.v-A.v)*dv)/L2));
+      if(Math.hypot(o.u-(A.u+du*t), o.v-(A.v+dv*t))<=e.hw+0.35) onRoad=true; }
+    say(!onRoad, 'указатель на проезжей части: '+o.u.toFixed(1)+','+o.v.toFixed(1));
+  }
+
+  const onRoad=(p)=>{
+    for(const id in g.V){ const N2=g.V[id];
+      if(N2.r && Math.hypot(p.u-N2.u, p.v-N2.v)<=N2.r+0.5) return true; }
+    for(const e of g.E){ const A=g.V[e.a], B=g.V[e.b];
+      const du=B.u-A.u, dv=B.v-A.v, L2=du*du+dv*dv;
+      const t=Math.max(0,Math.min(1,((p.u-A.u)*du+(p.v-A.v)*dv)/L2));
+      if(Math.hypot(p.u-(A.u+du*t), p.v-(A.v+dv*t))<=e.hw-0.3) return true; }
+    return false; };
+  const inRect=(p,z)=>{ const f=fuv(z.yaw||0), rt=ruv(z.yaw||0), du=p.u-z.u, dv=p.v-z.v;
+    return Math.abs(du*rt.u+dv*rt.v)<=z.w/2 && Math.abs(du*f.u+dv*f.v)<=z.l/2; };
+  const stems={};
+  for(const e of g.E) if(e.name) stems[e.name.toLowerCase().slice(0,5)]=e.name;
+
+  const seen=new Set();
+  for(let r=0; r<N*6 && seen.size<N; r++){
+    loadLevel(31); hideOv();
+    const sig=exam.route.map(s=>s.short+s.at.u+','+s.at.v).join('|');
+    if(seen.has(sig)) continue; seen.add(sig);
+    const onc=level.city.oncoming, ring=g.V.N4;
+    let prev={u:level.start.u, v:level.start.v};
+    for(let i=0;i<exam.route.length;i++){
+      exam.stage=i;
+      const st=exam.route[i], tag='этап '+(i+1)+' «'+st.short+'»';
+
+      /* команда обязана называть улицу так же, как щит у перекрёстка */
+      const m=(st.cmd+' '+st.short).match(/(?:^|\s)(?:на|по|с)\s+([А-ЯЁ][а-яё]+)/g) || [];
+      for(const frag of m){
+        const w=frag.trim().split(/\s+/).pop().toLowerCase().slice(0,5);
+        say(!!stems[w], tag+': улицы «'+frag.trim()+'» нет в городе');
+      }
+
+      const z=examZoneOf(st);
+      if(st.turn!=='straight'){
+        say(!!z, tag+': зона манёвра не резолвится');
+        if(z) say(Math.hypot(z.u-st.at.u, z.v-st.at.v)<3.2,
+                  tag+': точка команды в '+Math.hypot(z.u-st.at.u,z.v-st.at.v).toFixed(1)+' м от зоны');
+      }
+      if(z && (st.turn==='stop'||st.turn==='park')){
+        /* встать в центр НАРИСОВАННОГО кармана — этап обязан засчитаться */
+        const S=(vel)=>({u:z.u, v:z.v, vel, th:0, gear:0, steer:0, front:9, rear:9, left:9, right:9});
+        let ok=false;
+        for(let k=0;k<140 && !ok;k++) ok=st.done(S(0));
+        if(!ok) ok=st.done(S(1.0));
+        say(ok, tag+': центр нарисованного кармана не засчитывается');
+      }
+
+      car.ru=prev.u; car.rv=prev.v; car.th=0; examLegBuild(); prev=st.at;
+      say(!!exam.leg, tag+': маршрут не строится');
+      if(!exam.leg) continue;
+      const pts=exam.leg.pts;
+      let off=0, isle=0, onCome=0;
+      for(let j=1;j<pts.length;j++){
+        const a=pts[j-1], q=pts[j];
+        if(!onRoad(q)) off++;
+        if(ring && Math.hypot(q.u-ring.u, q.v-ring.v) < ring.round-6.5) isle++;
+        const du=q.u-a.u, dv=q.v-a.v, L=Math.hypot(du,dv)||1, d={u:du/L, v:dv/L};
+        for(const zz of onc){ const f=fuv(zz.yaw);
+          if(inRect(q,zz) && d.u*f.u+d.v*f.v>0.4) onCome++; }
+      }
+      say(off===0, tag+': '+off+' точек линии вне асфальта');
+      say(isle===0, tag+': линия заходит на островок кольца');
+      say(onCome===0, tag+': линия идёт по встречной половине');
+      say(exam.leg.dist<400, tag+': длина этапа '+exam.leg.dist.toFixed(0)+' м');
+    }
+  }
+  loadLevel(0);
+  console.log(bad.length ? 'navCheck: нарушений '+bad.length : 'navCheck: всё зелено ('+seen.size+' раскладов)');
+  return bad;
+}

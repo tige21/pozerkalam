@@ -231,7 +231,7 @@ Rationale: экзаменационный курс — то, что продаё
 
 ### Фаза 4 · Проверки и документация
 
-- [ ] **Задача 7. `navCheck` + прогоны + `CLAUDE.md`** _(зависит от 1–6)_
+- [x] **Задача 7. `navCheck` + прогоны + `CLAUDE.md`** _(зависит от 1–6)_
 
   Сделать:
   1. `tools/exam-check.js` — новая `navCheck()` рядом с `examCheck`/`detectorCheck`/`routeCheck`.

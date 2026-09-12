@@ -5473,7 +5473,7 @@ function examLegBuild(){
   if(exam.zoneStage!==exam.stage){ exam.zoneStage=exam.stage; exam.zone=examZoneOf(st); }
 }
 function examLegTick(dt){
-  exam.legT=(exam.legT||0)-dt;
+  exam.legT=(exam.legT||0)-(dt||0);   /* headless-прогоны зовут examTick без dt */
   if(!exam.leg || exam.leg.stage!==exam.stage || exam.legT<=0) examLegBuild();
 }
 /* ---------- зона манёвра ----------
