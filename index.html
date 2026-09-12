@@ -1955,7 +1955,7 @@ function roundDec(dec, u, v, rOut, rIn){
 function cityWorld(spec){
   const obs=[], dec=[],
         city={stoplines:[],zebras:[],oncoming:[],turnZones:[],yieldZones:[],
-              lanes:[],trams:[],rounds:[],lights:[]};
+              lanes:[],trams:[],rounds:[],lights:[],pockets:[]};
   const pt=(e)=> Array.isArray(e) ? {u:e[0], v:e[1]} : spec.nodes[e];
   const arms={};
   for(const k in spec.nodes) arms[k]=[];
@@ -1999,7 +1999,184 @@ function cityWorld(spec){
       const k=kerb(ku,kv,0.5,len); k.yaw=r._yaw; obs.push(k);
     }
   }
+  /* граф улиц в явном виде — узлы, свободные концы и рёбра с именами. Спек уже описывает
+     город графом, но build() уровня отдаёт наружу только obs/dec/city, поэтому граф кладём
+     в city: маршрутизатор экзамена достаёт его из level.city на любом уровне */
+  const V={}, adj={}, E=[];
+  const vid=(e)=> Array.isArray(e) ? '@'+e[0].toFixed(1)+','+e[1].toFixed(1) : e;
+  for(const k in spec.nodes){ const n=spec.nodes[k];
+    V[k]={id:k, u:n.u, v:n.v, round:n.round||0, r:radius[k]||0}; }
+  for(const r of spec.roads) for(const e of [r.a, r.b]) if(Array.isArray(e)){
+    const id=vid(e); if(!V[id]) V[id]={id, u:e[0], v:e[1], round:0, r:0}; }
+  for(const id in V) adj[id]=[];
+  for(const r of spec.roads){
+    const e={a:vid(r.a), b:vid(r.b), name:r.name||'', yaw:r._yaw, len:r._len,
+             hw:r._hw, lanes:r.lanes||1, tram:!!r.tram};
+    E.push(e); adj[e.a].push(e); adj[e.b].push(e);
+  }
+  city.graph={V, adj, E};
   return {obs, dec, city, nodes:spec.nodes, radius};
+}
+
+/* ---------- маршрут по улицам ----------
+   Инспектор называет улицу, а не координаты, и «через 60 м направо» по прямой врёт на
+   каждом изгибе. Граф крошечный (8 узлов, 17 улиц), поэтому Дейкстра по спискам смежности
+   считается за микросекунды — путь можно перестраивать несколько раз в секунду */
+const ROUTE_STEP=2.0;              /* шаг дискретизации полилинии, м */
+const LANE_SHIFT=26;               /* за сколько метров до манёвра линия уходит в нужный ряд */
+function cityGraph(){ return (level && level.city && level.city.graph) || null; }
+/* привязка точки к ближайшей улице: ребро и путь s от его начала. Точка внутри кольца
+   не принадлежит ни одной улице — там снап отдаёт сам узел, иначе машину на кольце
+   притягивало к ближайшему лучу и линия уезжала за спину через островок */
+function citySnap(p){
+  const g=cityGraph(); if(!g) return null;
+  for(const id in g.V){ const N=g.V[id];
+    const d=Math.hypot(p.u-N.u, p.v-N.v);
+    if(!N.round || d>N.round+1) continue;
+    /* точка прижимается к проезжей части кольца: центр узла — это островок, и линия,
+       начатая оттуда, шла бы через бордюр */
+    const a=Math.atan2(p.v-N.v, p.u-N.u), rr=clamp(d, N.round-5.5, N.round-0.8);
+    return {ring:N, u:N.u+Math.cos(a)*rr, v:N.v+Math.sin(a)*rr, d:0}; }
+  let best=null;
+  for(const e of g.E){
+    const A=g.V[e.a], B=g.V[e.b], du=B.u-A.u, dv=B.v-A.v, L2=du*du+dv*dv;
+    if(L2<1e-6) continue;
+    const t=clamp(((p.u-A.u)*du+(p.v-A.v)*dv)/L2, 0, 1);
+    const pu=A.u+du*t, pv=A.v+dv*t, d=Math.hypot(p.u-pu, p.v-pv);
+    if(!best || d<best.d) best={e, s:t*e.len, u:pu, v:pv, d};
+  }
+  return best;
+}
+/* центр полосы по ходу движения. Крайняя правая — как в жизни; крайняя левая — перед
+   поворотом налево; трамвайное полотно — перед разворотом (этого и требует команда
+   «разворот выполняют с трамвайных путей»). Формула сходится с авторскими числами:
+   стартовая поза экзамена u=8.15 — это ровно 3.2 + 3.3*1.5 на Ленина, а карман на
+   Садовой v=-68.35 — это 3.3*0.5 справа от осевой v=-70 при движении на запад */
+function laneOffset(e, side){
+  const b=e.tram?TRAM_HW:0;
+  if(side==='tram') return e.tram ? TRAM_HW/2 : b+LANE_W*0.5;
+  if(side==='left') return b+LANE_W*0.5;
+  return b+LANE_W*(e.lanes-0.5);
+}
+/* Дейкстра по узлам. from/to — карты «узел → цена входа/выхода»: в них сидят только концы
+   рёбер, на которые легли точки привязки, поэтому путь не может начаться посреди города */
+function cityPathNodes(g, from, to){
+  const dist={}, prev={}, left=new Set();
+  for(const id in g.V){ dist[id]= (from[id]!==undefined? from[id] : Infinity); prev[id]=null; left.add(id); }
+  while(left.size){
+    let cur=null, cd=Infinity;
+    for(const id of left) if(dist[id]<cd){ cd=dist[id]; cur=id; }
+    if(cur===null) break;
+    left.delete(cur);
+    for(const e of g.adj[cur]){
+      const nx = e.a===cur ? e.b : e.a;
+      if(!left.has(nx) || cd+e.len>=dist[nx]) continue;
+      dist[nx]=cd+e.len; prev[nx]={id:cur, e};
+    }
+  }
+  let end=null, bd=Infinity;
+  for(const id in to) if(dist[id]+to[id]<bd){ bd=dist[id]+to[id]; end=id; }
+  if(end===null || bd===Infinity) return null;
+  const chain=[]; let id=end;
+  while(prev[id]){ chain.unshift({e:prev[id].e, from:prev[id].id, to:id}); id=prev[id].id; }
+  return {startId:id, endId:end, chain};
+}
+/* дуга по кольцу: правостороннее движение — островок остаётся слева, то есть обход против
+   часовой стрелки в осях (u на восток, v на север). Проверяется маршрутами экзамена:
+   вход с юга, «второй съезд» — на запад; вход с запада, «первый съезд» — на юг */
+function ringArc(N, p0, p1, out){
+  const R=Math.max(2, N.round-3.5);
+  const a0=Math.atan2(p0.v-N.v, p0.u-N.u), a1=Math.atan2(p1.v-N.v, p1.u-N.u);
+  let d=a1-a0; while(d<=0.05) d+=TAU; while(d>TAU) d-=TAU;
+  const n=Math.max(2, Math.ceil(d/rad(12)));
+  for(let i=0;i<=n;i++){ const a=a0+d*i/n; out({u:N.u+Math.cos(a)*R, v:N.v+Math.sin(a)*R}); }
+}
+/* поворот внутри перекрёстка: квадратичная кривая с контрольной точкой в центре узла —
+   линия входит и выходит дугой, а не углом, и не срезает по газону */
+function cornerArc(N, p0, p1, out){
+  if(N.round){ ringArc(N, p0, p1, out); return; }
+  for(let i=1;i<=6;i++){ const t=i/7, it=1-t;
+    out({u:it*it*p0.u+2*it*t*N.u+t*t*p1.u, v:it*it*p0.v+2*it*t*N.v+t*t*p1.v}); }
+}
+/* точка на оси полосы в метре s от начала ребра */
+function lanePt(g, e, s, off){
+  const A=g.V[e.a], f=fuv(e.yaw), rt=ruv(e.yaw);
+  return {u:A.u+f.u*s+rt.u*off, v:A.v+f.v*s+rt.v*off};
+}
+function edgeRun(g, e, sa, sb, sideA, sideB, out){
+  /* смещение берётся ВПРАВО ПО ХОДУ: назад по ребру правая сторона зеркальна оси улицы */
+  const dir=(sb>=sa?1:-1), oA=laneOffset(e,sideA)*dir, oB=laneOffset(e,sideB)*dir;
+  const L=Math.abs(sb-sa), n=Math.max(1, Math.ceil(L/ROUTE_STEP));
+  /* перестроение занимает последние LANE_SHIFT метров: линия показывает не только КУДА
+     ехать, но и КОГДА уходить в нужный ряд — телепорт в соседнюю полосу учил бы обратному */
+  const shift=Math.min(LANE_SHIFT, L) || 1;
+  for(let i=0;i<=n;i++){
+    const s=sa+(sb-sa)*i/n;
+    const k = oA===oB ? 0 : clamp((Math.abs(s-sa)-(L-shift))/shift, 0, 1);
+    out(lanePt(g, e, s, oA+(oB-oA)*(k*k*(3-2*k))));
+  }
+}
+/* путь от точки к точке по проезжей части. o.side — полоса на ПОСЛЕДНЕМ участке
+   ('right' | 'left' | 'tram'): подъезд к манёвру и есть то, чему учит линия */
+function cityRoute(from, to, o){
+  o=o||{};
+  const g=cityGraph(); if(!g) return null;
+  const s0=citySnap(from), s1=citySnap(to);
+  if(!s0 || !s1) return null;
+  /* обе точки на одном кольце — просто дуга между ними: графу здесь искать нечего */
+  if(s0.ring && s1.ring && s0.ring===s1.ring){
+    const arc=[{u:s0.u, v:s0.v}];
+    ringArc(s0.ring, s0, s1, p=>arc.push(p));
+    let l=0; for(let i=1;i<arc.length;i++) l+=Math.hypot(arc[i].u-arc[i-1].u, arc[i].v-arc[i-1].v);
+    return arc.length>1 ? {pts:arc, len:l, legs:[]} : null;
+  }
+  const runs=[];
+  if(!s0.ring && !s1.ring && s0.e===s1.e) runs.push({e:s0.e, sa:s0.s, sb:s1.s});
+  else{
+    const seed=(s)=>{ const m={};
+      if(s.ring) m[s.ring.id]=0;
+      else { m[s.e.a]=s.s; m[s.e.b]=Math.max(0, s.e.len-s.s); }
+      return m; };
+    const path=cityPathNodes(g, seed(s0), seed(s1));
+    if(!path){ console.warn('[city] маршрут не найден'); return null; }
+    if(!s0.ring) runs.push({e:s0.e, sa:s0.s, sb:(path.startId===s0.e.a?0:s0.e.len), nodeEnd:path.startId});
+    for(const c of path.chain){
+      if((!s0.ring && c.e===s0.e) || (!s1.ring && c.e===s1.e)) continue;
+      runs.push({e:c.e, sa:(c.from===c.e.a?0:c.e.len), sb:(c.to===c.e.a?0:c.e.len),
+                 nodeStart:c.from, nodeEnd:c.to});
+    }
+    if(!s1.ring) runs.push({e:s1.e, sa:(path.endId===s1.e.a?0:s1.e.len), sb:s1.s, nodeStart:path.endId});
+  }
+  if(!runs.length) return null;
+  const pts=[], legs=[];
+  const out=(p)=>{ const n=pts.length;
+    if(!n || Math.hypot(pts[n-1].u-p.u, pts[n-1].v-p.v)>0.05) pts.push(p); };
+  /* линия начинается там, где стоит машина, а не на оси полосы: диагональ от капота к
+     своему ряду — это и есть указание «встань правее» */
+  out(s0.ring ? {u:s0.u, v:s0.v} : {u:from.u, v:from.v});
+  for(let i=0;i<runs.length;i++){
+    const r=runs[i], last=(i===runs.length-1);
+    const sideB = last ? (o.side||'right') : 'right';
+    const dir = r.sb>=r.sa ? 1 : -1;
+    /* участок обрезается радиусом перекрёстка с обоих концов: внутри узла полос нет,
+       там линию ведёт cornerArc */
+    let sa=r.sa, sb=r.sb;
+    if(r.nodeStart) sa += dir*(g.V[r.nodeStart].r+0.6);
+    if(r.nodeEnd)   sb -= dir*(g.V[r.nodeEnd].r+0.6);
+    const prev=pts[pts.length-1];
+    /* смещённая пара узлов стоит теснее суммы радиусов — прямого участка не остаётся */
+    if((sb-sa)*dir<=0.2){ if(r.nodeEnd) cornerArc(g.V[r.nodeEnd], prev, g.V[r.nodeEnd], out); continue; }
+    if(r.nodeStart) cornerArc(g.V[r.nodeStart], prev, lanePt(g, r.e, sa, laneOffset(r.e,'right')*dir), out);
+    edgeRun(g, r.e, sa, sb, 'right', sideB, out);
+    legs.push({name:r.e.name, len:Math.abs(sb-sa)});
+  }
+  /* цель внутри кольца — это сам островок: вести линию в его центр значило бы вести
+     через бордюр, поэтому там маршрут кончается у въезда на кольцо */
+  if(!s1.ring) out({u:to.u, v:to.v});
+  if(pts.length<2) return null;
+  let len=0;
+  for(let i=1;i<pts.length;i++) len+=Math.hypot(pts[i].u-pts[i-1].u, pts[i].v-pts[i-1].v);
+  return {pts, len, legs};
 }
 
 /* Единый город ~200×175 м: на нём живут тренировочные уровни 27–31 и все
@@ -2060,6 +2237,22 @@ function lightStops(o){ const p=lightPhase(o); return p==='R'||p==='Y'; }
    должен выглядеть одинаково на тренировке и на экзамене — заученный ориентир
    обязан работать в обоих местах */
 function cityBase(){ return cityWorld(CITY_SPEC); }
+
+/* карманы у тротуара на экзамене: один источник правды для команды этапа, зоны приёма и
+   голубого пунктира на асфальте. Раньше пунктир жил своими числами в build() и разъехался
+   с зоной: южные карманы были нарисованы на v=-50 и -38, а засчитывались на -56 и -47 —
+   игрок вставал ровно в нарисованный прямоугольник, и «остановка у тротуара» не
+   завершалась. Жребий выбирает, какой из двух назовут */
+const EXAM_POCK={
+  lenS:[{u:8.15, v:-56,    w:3.0,  l:6.0}, {u:8.15, v:-47, w:3.0,  l:6.0}],
+  lenN:[{u:8.15, v:50,     w:3.0,  l:6.0}, {u:8.15, v:36,  w:3.0,  l:6.0}],
+  sadW:[{u:-40,  v:-68.35, w:10.0, l:3.0}, {u:-28,  v:-68.35, w:10.0, l:3.0}]
+};
+/* допуск чуть шире нарисованного прямоугольника: попадание считается по центру кузова,
+   а встать в карман миллиметр в миллиметр не требуется ни на одном экзамене */
+function inPocket(p){
+  return s=>Math.abs(s.u-p.u)<p.w/2+1.0 && Math.abs(s.v-p.v)<p.l/2+0.15;
+}
 /* фазе «уступи» нужно знать, когда путь освободился: без этого карточка держала бы
    «стой» вечно, и ученик стоял у кольца до таймаута */
 function actorNear(u, v, d){
@@ -4087,23 +4280,19 @@ const LEVELS = [
         if(inZone(s)&&Math.abs(s.vel)<0.1) return ++held>70; held=0; return false; }}; };
     const go=(cmd,short,at,turn,done)=>({cmd, short, at, turn, done});
     const R=Math.floor(Math.random()*3), A=Math.random()<0.5, B=Math.random()<0.5;
-    /* карманы у тротуара: два на проспекте, два на Садовой — какой назовут, решает жребий */
-    const POCK={
-      /* карман обязан лежать ЗА точкой, где закрывается предыдущий этап: с карманом на
-         v=−64 команда «остановись» приходила, когда он уже был позади, и маршрут вставал */
-      /* полоса для кармана зажата с двух сторон: севернее −44 начинается зона разворота
-         (карман на v=−38 лежал внутри неё, в 3,2 м от точки разворота — игрок вставал у
-         бордюра уже в зоне и получал «развернись», не имея метра на перестроение к путям),
-         южнее — точка, где закрывается предыдущий этап маршрута */
-      lenS:{u:8.15, v:A?-56:-47, w:s=>s.u>6.6&&s.v>(A?-59:-50)&&s.v<(A?-53:-44)},
-      lenN:{u:8.15, v:B?50:36,   w:s=>s.u>6.6&&s.v>(B?47:33)&&s.v<(B?53:39)},
-      sadW:{u:A?-40:-28, v:-68.35, w:s=>s.v>-70&&s.v<-66.7&&s.u>(A?-46:-34)&&s.u<(A?-34:-22)}
-    };
+    /* какой из двух карманов назовут, решает жребий. Геометрия — в EXAM_POCK, там же,
+       откуда build() берёт пунктир на асфальте.
+       Карман обязан лежать ЗА точкой, где закрывается предыдущий этап: с карманом на
+       v=−64 команда «остановись» приходила, когда он уже был позади, и маршрут вставал.
+       Полоса зажата и с другой стороны: севернее −44 начинается зона разворота (карман на
+       v=−38 лежал внутри неё, в 3,2 м от точки разворота — игрок вставал у бордюра уже в
+       зоне и получал «развернись», не имея метра на перестроение к путям) */
+    const POCK={ lenS:EXAM_POCK.lenS[A?0:1], lenN:EXAM_POCK.lenN[B?0:1], sadW:EXAM_POCK.sadW[A?0:1] };
     if(R===0) return [
       go('Тронься и веди по проспекту на север','прямо по проспекту',{u:8.15,v:-84},'straight',
          s=>s.v>-78&&s.vel>0.5),
       stopGo('Остановись у тротуара справа — и продолжай движение','остановка у тротуара',
-         {u:POCK.lenS.u,v:POCK.lenS.v}, POCK.lenS.w),
+         {u:POCK.lenS.u,v:POCK.lenS.v}, inPocket(POCK.lenS)),
       /* короткая форма несёт «с путей»: полная команда видна только дальше 75 м и ближе 10 м,
          а перестраиваться на полотно надо ровно в промежутке, где карточка её не показывает */
       go('Развернись на проспекте — разворот выполняют с трамвайных путей','разворот с трамвайных путей',
@@ -4119,7 +4308,7 @@ const LEVELS = [
       go('На перекрёстке с проспектом — направо, на север','направо',{u:0,v:0},'R',
          s=>s.v>12&&hd(s,0)),
       stopEnd('Финиш: останови машину у тротуара в кармане','финиш у тротуара',
-         {u:POCK.lenN.u,v:POCK.lenN.v}, POCK.lenN.w)
+         {u:POCK.lenN.u,v:POCK.lenN.v}, inPocket(POCK.lenN))
     ];
     if(R===1) return [
       go('Тронься и веди по проспекту на север','прямо по проспекту',{u:8.15,v:-84},'straight',
@@ -4127,7 +4316,7 @@ const LEVELS = [
       go('На перекрёстке — налево, на Садовую','налево',{u:0,v:-70},'L',
          s=>s.u<-12&&hd(s,270)),
       stopGo('Остановись у тротуара справа — и продолжай движение','остановка у тротуара',
-         {u:POCK.sadW.u,v:POCK.sadW.v}, POCK.sadW.w),
+         {u:POCK.sadW.u,v:POCK.sadW.v}, inPocket(POCK.sadW)),
       go('На перекрёстке — направо, на Западную','направо',{u:-78,v:-70},'R',
          s=>s.v>-60&&hd(s,0)),
       go('На косом перекрёстке — направо, на Заводскую','направо на Заводскую',{u:-78,v:0},'R',
@@ -4141,7 +4330,7 @@ const LEVELS = [
       go('На перекрёстке — направо, на Садовую','направо',{u:78,v:-70},'R',
          s=>s.u<66&&hd(s,270)),
       stopEnd('Финиш: останови машину у тротуара в кармане','финиш у тротуара',
-         {u:POCK.sadW.u,v:POCK.sadW.v}, POCK.sadW.w)
+         {u:POCK.sadW.u,v:POCK.sadW.v}, inPocket(POCK.sadW))
     ];
     return [
       go('Тронься и веди по проспекту на север','прямо по проспекту',{u:8.15,v:-84},'straight',
@@ -4151,7 +4340,7 @@ const LEVELS = [
       go('Светофор на перекрёстке — проезжай прямо','прямо через светофор',{u:0,v:-70},'straight',
          s=>s.v>-64),
       stopGo('Остановись у тротуара справа — и продолжай движение','остановка у тротуара',
-         {u:POCK.lenS.u,v:POCK.lenS.v}, POCK.lenS.w),
+         {u:POCK.lenS.u,v:POCK.lenS.v}, inPocket(POCK.lenS)),
       go('Развернись на проспекте — с трамвайных путей','разворот с трамвайных путей',{u:0,v:-35},'U',
          s=>s.v<-46&&hd(s,180)),
       go('На перекрёстке — направо, на Садовую','направо',{u:0,v:-70},'R',
@@ -4163,7 +4352,7 @@ const LEVELS = [
       go('На перекрёстке с проспектом — налево, на север','налево',{u:0,v:0},'L',
          s=>s.v>12&&hd(s,0)),
       stopEnd('Финиш: останови машину у тротуара в кармане','финиш у тротуара',
-         {u:POCK.lenN.u,v:POCK.lenN.v}, POCK.lenN.w)
+         {u:POCK.lenN.u,v:POCK.lenN.v}, inPocket(POCK.lenN))
     ];
   },
   build(){
@@ -4196,7 +4385,11 @@ const LEVELS = [
     b.city.oncoming.push({u:-4.9, v:-20, yaw:0, w:9.8, l:14});
     b.city.oncoming.push({u:4.9,  v:-58, yaw:rad(180), w:9.8, l:20});
     b.city.oncoming.push({u:36,   v:3.3, yaw:rad(90), w:6.6, l:44});
-    b.city.oncoming.push({u:-40,  v:-3.3, yaw:rad(90), w:6.6, l:44});
+    /* на Заводской едущему на восток чужая половина — СЕВЕРНАЯ, по обе стороны от Ленина.
+       Западный прямоугольник стоял на южной (v:-3.3) и штрафовал за свою же полосу: этап
+       «перестройся вправо» сам требует v<-3.3, то есть ровно того, за что шли 5 баллов.
+       Показа у экзамена нет, поэтому demo-vio эту зону никогда не проезжал */
+    b.city.oncoming.push({u:-40,  v:3.3, yaw:rad(90), w:6.6, l:44});
     b.city.turnZones.push({u:0, v:-70, yaw:0, w:22, l:22, blink:'R', dir:0});
     b.city.turnZones.push({u:0, v:-70, yaw:0, w:22, l:22, blink:'L', dir:rad(180)});
     b.city.turnZones.push({u:0, v:0,   yaw:0, w:22, l:22, blink:'R', dir:rad(270)});
@@ -4208,12 +4401,12 @@ const LEVELS = [
     b.city.turnZones.push({u:0, v:-35, yaw:0, w:19.6, l:18, uturn:true, blink:'L', dir:0});
     b.city.yieldZones.push({u:61, v:-4.95, yaw:rad(90), w:6.6, l:9, dist:13});
     b.city.yieldZones.push({u:-78, v:-11, yaw:0, w:6.6, l:7, dist:14});
-    /* карманы у тротуара — голубым пунктиром, как на прежнем маршруте */
-    const pocket=(u,v,w,l)=>b.dec.push({line:true, stroke:'rgba(125,216,255,.55)', lw:2, dash:[7,6],
-      pts:rectPts(u,v,w,l,0).concat([rectPts(u,v,w,l,0)[0]])});
-    pocket(8.6,-50,3.0,6.0); pocket(8.6,-38,3.0,6.0);
-    pocket(8.6,50,3.0,6.0);  pocket(8.6,36,3.0,6.0);
-    pocket(-40,-68.35,10.0,3.0); pocket(-28,-68.35,10.0,3.0);
+    /* карманы у тротуара — голубым пунктиром, ровно там, где их засчитывает этап */
+    for(const k in EXAM_POCK) for(const p of EXAM_POCK[k]){
+      const pts=rectPts(p.u,p.v,p.w,p.l,0);
+      b.dec.push({line:true, stroke:'rgba(125,216,255,.55)', lw:2, dash:[7,6], pts:pts.concat([pts[0]])});
+      b.city.pockets.push(p);
+    }
     return { obs:b.obs, dec:b.dec, city:b.city, ramps,
              start:{u:8.15,v:-100,th:0}, goal:null }; }
   }
@@ -5087,8 +5280,9 @@ function levelFailHTML(){
 }
 
 /* начисления, не привязанные к городской геометрии, + ведение маршрута */
-function examTick(){
+function examTick(dt){
   if(!examActive()) return;
+  examLegTick(dt);
   if(car.roll>0.3 && !exam.rollFired){ exam.rollFired=true; examPenalty('rollback'); }
   if(car.hand && Math.abs(car.vel)>1.0 && !exam.handFired){
     exam.handFired=true; examPenalty('handbrake-drive'); }
@@ -5099,6 +5293,7 @@ function examTick(){
   const st=exam.route[exam.stage];
   if(st && st.done(curS)){
     exam.stage++;
+    examLegBuild();
     tone(880,0.08,0.06,'sine');
     if(exam.stage>=exam.route.length) examPass();
   }
@@ -5113,7 +5308,11 @@ function examNav(){
   if(!st) return {glyph:'🎓', text:'—', dist:null};
   const g=TURN_GLYPH[st.turn]||'🎓';
   if(!st.at) return {glyph:g, text:st.cmd, dist:null};
-  const c=bodyPos(), d=Math.hypot(st.at.u-c.u, st.at.v-c.v);
+  /* расстояние считается ПО МАРШРУТУ: по прямой «через 60 м направо» врёт на каждом
+     изгибе, а именно эту цифру игрок использует, чтобы понять, когда перестраиваться */
+  const c=bodyPos();
+  const d=(exam.leg && exam.leg.stage===exam.stage) ? exam.leg.dist
+        : Math.hypot(st.at.u-c.u, st.at.v-c.v);
   if(d>75) return {glyph:g, text:st.cmd, dist:d};
   /* короткую форму даём только манёвру: на этапе «веди прямо» точка at — это конец
      участка, игрок стоит от неё в десятках метров, и «прямо по проспекту» вместо полной
@@ -5125,6 +5324,132 @@ function examNav(){
 }
 /* короткая форма команды: до манёвра нужен глагол, а не абзац */
 function examShort(st){ return st.short || st.cmd; }
+/* ---------- линия маршрута ----------
+   У экзамена нет демо, значит нет и level.idealDraw: на всех остальных уровнях линия пути
+   лежит на асфальте, а на экзамене он был пуст — отсюда «непонятно, куда ехать». Линия
+   идёт по графу улиц до точки текущей команды и продолжается до следующей: за поворотом
+   должно быть видно, куда дальше. Рисуется в ОБОИХ режимах — в жизни инспектор тоже
+   говорит, куда ехать, и повторяет; проверяется вождение, а не память на маршрут. */
+const EXAM_LEG_COL='rgba(125,216,255,.62)';
+const EXAM_LEG_MAX=160;            /* дальше игрок не смотрит, а точки стоят кадров в зеркалах */
+const EXAM_LEG_T=0.35;             /* пересчёт три раза в секунду: две Дейкстры ≈ 0,2 мс */
+/* полоса подъезда — половина урока манёвра: налево перестраиваются влево, разворот
+   выполняют с трамвайных путей. Глиф 'U' носят и разворот, и кольцо, поэтому полотно
+   выбирается по САМОЙ улице, а не по виду манёвра */
+function examLegSide(st){
+  if(!st || !st.at) return 'right';
+  if(st.turn==='L') return 'left';
+  if(st.turn==='U'){ const s=citySnap(st.at); if(s && s.e && s.e.tram) return 'tram'; }
+  return 'right';
+}
+function examLegBuild(){
+  exam.legT=EXAM_LEG_T; exam.leg=null;
+  const st=exam.route[exam.stage]; if(!st || !st.at) return;
+  const nx=exam.route[exam.stage+1];
+  /* точка команды «на кольце — такой-то съезд» стоит в центре кольца, то есть на островке:
+     вести линию туда нельзя, да и «доехал» там значит «съехал». Поэтому линия идёт СКВОЗЬ
+     кольцо к следующей команде, а цифра на карточке считается до въезда на кольцо. Без
+     этого линия пропадала ровно там, где игрок выбирает съезд: обе точки лежали на кольце,
+     графу было нечего искать, и cityRoute отдавал null */
+  const rs=citySnap(st.at), N=rs && rs.ring;
+  const tgt=(N && nx && nx.at) ? nx.at : st.at;
+  const a=cityRoute(bodyPos(), tgt, {side:examLegSide((N&&nx)?nx:st)});
+  if(!a) return;
+  const pts=a.pts.slice();
+  if(N){
+    let L=0;
+    for(let i=1;i<a.pts.length;i++){
+      const p=a.pts[i];
+      if(Math.hypot(p.u-N.u, p.v-N.v)<=N.round+1){ a.len=L; break; }
+      L+=Math.hypot(p.u-a.pts[i-1].u, p.v-a.pts[i-1].v);
+    }
+  } else if(nx && nx.at){
+    const b=cityRoute(st.at, nx.at, {side:examLegSide(nx)});
+    if(b) for(let i=1;i<b.pts.length;i++) pts.push(b.pts[i]);
+  }
+  let L=0, cut=pts.length;
+  for(let i=1;i<pts.length;i++){ L+=Math.hypot(pts[i].u-pts[i-1].u, pts[i].v-pts[i-1].v);
+    if(L>EXAM_LEG_MAX){ cut=i+1; break; } }
+  const use=pts.slice(0,cut);
+  exam.leg={pts:use, dist:a.len, stage:exam.stage, draw:buildIdealDraw(use)};
+  if(exam.zoneStage!==exam.stage){ exam.zoneStage=exam.stage; exam.zone=examZoneOf(st); }
+}
+function examLegTick(dt){
+  exam.legT=(exam.legT||0)-dt;
+  if(!exam.leg || exam.leg.stage!==exam.stage || exam.legT<=0) examLegBuild();
+}
+/* ---------- зона манёвра ----------
+   «Где разворачиваться» — второй вопрос владельца. Линия ведёт К точке, но сама точка была
+   маячком без размеров: ни границ зоны, ни трамвайного полотна, ни направления дуги.
+   Геометрия не выдумывается — берётся из того же города, по которому считает детектор */
+const EXAM_ZONE_COL='rgba(255,207,77,.85)';
+function examZoneOf(st){
+  if(!st || !st.at) return null;
+  const c=level.city||{};
+  if(st.turn==='stop' || st.turn==='park'){
+    for(const p of (c.pockets||[]))
+      if(Math.hypot(p.u-st.at.u, p.v-st.at.v)<1.5)
+        return {kind:'pocket', u:p.u, v:p.v, w:p.w, l:p.l, yaw:0};
+    /* остановка на эстакаде — не карман, а стоп-линия на подъёме: показываем саму линию,
+       иначе у единственного этапа с настоящим «стоп здесь» не было бы никакой отметки */
+    for(const sl of (c.stoplines||[]))
+      if(Math.hypot(sl.u-st.at.u, sl.v-st.at.v)<3)
+        return {kind:'stopline', u:sl.u, v:sl.v, w:sl.w, l:0.9, yaw:sl.yaw||0};
+    return null;
+  }
+  if(st.turn==='U'){
+    for(const z of (c.turnZones||[]))
+      if(z.uturn && Math.hypot(z.u-st.at.u, z.v-st.at.v)<3)
+        return {kind:'uturn', u:z.u, v:z.v, w:z.w, l:z.l, yaw:z.yaw||0};
+  }
+  const g=cityGraph();
+  if(g) for(const id in g.V){ const N=g.V[id];
+    if(N.r && Math.hypot(N.u-st.at.u, N.v-st.at.v)<6)
+      return {kind:N.round?'ring':'node', u:N.u, v:N.v, r:N.round?N.round-3.5:N.r}; }
+  return null;
+}
+/* дуга разворота: полный вылет руля, радиус по задней оси (3,84 м). Начинается на правом
+   трамвайном пути по ходу и приходит на свою полосу встречного направления — ровно ту дугу
+   и надо проехать, поэтому она и нарисована, а не описана словами */
+function uturnArc(z, out){
+  const R=sweep(CAR.maxSteer).R, f=fuv(z.yaw), rt=ruv(z.yaw), cx=TRAM_HW/2-R, s0=-R/2;
+  for(let i=0;i<=18;i++){ const a=Math.PI*i/18, x=cx+Math.cos(a)*R, ss=s0+Math.sin(a)*R;
+    out({u:z.u+f.u*ss+rt.u*x, v:z.v+f.v*ss+rt.v*x}); }
+}
+function drawExamZone(){
+  const z=exam.zone; if(!z) return;
+  if(z.kind==='node' || z.kind==='ring'){
+    const p=[];
+    for(let i=0;i<=28;i++){ const a=i/28*TAU; p.push({u:z.u+Math.cos(a)*z.r, v:z.v+Math.sin(a)*z.r}); }
+    /* пятно перекрёстка — бледнее кармана и разворота: там линия уже показала, куда
+       поворачивать, и яркий круг во весь кадр только шумит */
+    strokeGroundPath(p, 'rgba(255,207,77,.42)', 2, [9,8], 0.042);
+    return;
+  }
+  const rp=rectPts(z.u,z.v,z.w,z.l,z.yaw); rp.push(rp[0]);
+  strokeGroundPath(rp, EXAM_ZONE_COL, 2.5, [9,8], 0.042);
+  if(z.kind!=='uturn') return;
+  const f=fuv(z.yaw), rt=ruv(z.yaw);
+  /* кромки полотна внутри зоны: команда говорит «с трамвайных путей», и путь должен быть виден */
+  for(const x of [-TRAM_HW, TRAM_HW])
+    strokeGroundPath([{u:z.u-f.u*z.l/2+rt.u*x, v:z.v-f.v*z.l/2+rt.v*x},
+                      {u:z.u+f.u*z.l/2+rt.u*x, v:z.v+f.v*z.l/2+rt.v*x}],
+      'rgba(255,207,77,.42)', 2, [5,6], 0.041);
+  const arc=[]; uturnArc(z, p=>arc.push(p));
+  strokeGroundPath(arc, EXAM_ZONE_COL, 3, null, 0.043);
+  const e=arc[arc.length-1], q=arc[arc.length-2];
+  const du=e.u-q.u, dv=e.v-q.v, L=Math.hypot(du,dv)||1, nu=du/L, nv=dv/L;
+  strokeGroundPath([{u:e.u-nu*0.9-nv*0.55, v:e.v-nv*0.9+nu*0.55}, e,
+                    {u:e.u-nu*0.9+nv*0.55, v:e.v-nv*0.9-nu*0.55}], EXAM_ZONE_COL, 3, null, 0.043);
+}
+function drawExamNav(){
+  if(!examActive()) return;
+  if(exam.leg && exam.leg.draw){
+    for(const s of exam.leg.draw.segs) strokeGroundPath(s.pts, EXAM_LEG_COL, 3, [10,9], 0.038);
+    for(const ch of exam.leg.draw.chev) strokeGroundPath(ch.pts, EXAM_LEG_COL, 2, null, 0.039);
+  }
+  drawExamZone();
+}
 /* маячок в точке текущей команды. Без него «через 30 м — разворот» не отвечает на вопрос,
    ГДЕ эти 30 метров кончаются: у экзамена нет ни goal, ни marks, и «угол к цели» пустой.
    Только тренировочный режим — настоящий инспектор ориентиров не расставляет.
@@ -5135,7 +5460,9 @@ function examMarks(){
   if(!st || !st.at) return null;
   if(exam._markStage!==exam.stage){
     exam._markStage=exam.stage;
-    exam._marks=[mpoint(st.at.u, st.at.v, examShort(st))];
+    /* без подписи: короткую команду над зоной печатает drawMarkLabels своим путём,
+       иначе над одной точкой висели бы две одинаковые пилюли */
+    exam._marks=[mpoint(st.at.u, st.at.v)];
   }
   return exam._marks;
 }
@@ -5157,7 +5484,8 @@ let examSavedOpts=null;
    минуя pressKey — тот пишет trainer_marks в localStorage и затёр бы настройки игрока */
 function examInit(){
   exam={score:0, log:[], done:false, failed:false, rollFired:false, handFired:false,
-        stage:0, route:level.def.examRoute(), trail:[], lu:null, lv:null};
+        stage:0, route:level.def.examRoute(), trail:[], lu:null, lv:null,
+        leg:null, legT:0, zone:null, zoneStage:-1};
   /* рестарт зовёт examInit повторно: сохранённые настройки уже лежат в saved,
      перезапись сохранила бы выключенные значения и teardown вернул бы «всё выключено» */
   if(!examSavedOpts) examSavedOpts={marks:opt.marks, guides:opt.guides, trails:opt.trails};
@@ -5831,6 +6159,11 @@ function drawMarkLabels(s){
               y:(hot.sf>0?1.20:0.96)},
              hot.d.toFixed(2).replace('.',',')+' м', PILL_HOT);
   }
+  /* короткая команда над зоной манёвра: своим путём, минуя markLabels — drawMarks
+     выключается вместе с opt.marks, а настоящий режим гасит маркеры в памяти */
+  if(examActive() && exam.zone)
+    drawPill({u:exam.zone.u, v:exam.zone.v, y:1.5},
+             examShort(exam.route[exam.stage]||{cmd:''}), PILL_DEF);
   for(const m of markLabels){
     const ok=m.kind==='ghost'&&ghostOk(m,s);
     const p=m.kind==='point'?{u:m.u,v:m.v,y:1.5}
@@ -6118,6 +6451,9 @@ function drawSceneInto(o){
   drawShadows(); drawGoal();
   if(o.trails) drawTrails();
   drawIdealPath();
+  /* линия экзамена — НЕ через drawMarks и не под opt.marks: настоящий режим гасит маркеры
+     в памяти (examInit), а команду инспектора показывать надо всё равно */
+  drawExamNav();
   if(opt.refs) drawRefs();
   if(o.guides) drawGuides();
   if(curPhase) drawMarks(curPhase._marks, curS, !!o.labels, !!(demo&&demo.say>0));
@@ -8599,7 +8935,7 @@ function frame(ts){
   /* при демо детекторы молчат — иначе показ сам себе начислял бы нарушения;
      headless-прогоны frame не зовут, там детекторов нет по построению */
   if(level.city && !paused && !game.done && !demo) violationsTick(dt);
-  if(!paused && !game.done && !demo) examTick();
+  if(!paused && !game.done && !demo) examTick(dt);
   phaseTick(dt);
   tutTick();
   parkBeep(dt);
