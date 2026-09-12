@@ -1577,6 +1577,29 @@ function signPic(pic){
     }
   });
 }
+/* указатель направлений 6.10.1: синий щит, белая кайма, строка «стрелка + улица» на каждое
+   направление перекрёстка. Имена улиц есть в CITY_SPEC с самого начала, но игрок их нигде не
+   видел: инспектор говорил «направо на Садовую», а опознать Садовую в мире было нечем.
+   Кэш по содержимому — щит с одинаковым набором строк рисуется один раз */
+const GUIDE_FONT='700 %spx -apple-system, "Segoe UI", Roboto, sans-serif';
+function guidePic(rows){
+  const RH=64, W=384;
+  return imgCanvas('guide-'+rows.map(r=>r.dir+r.name).join('|'), W, RH*rows.length, (g,w,h)=>{
+    g.fillStyle='#1d4f9f'; g.fillRect(0,0,w,h);
+    g.strokeStyle='#f4f6f8'; g.lineWidth=5; g.strokeRect(3,3,w-6,h-6);
+    g.fillStyle='#f4f6f8'; g.textBaseline='middle';
+    rows.forEach((r,i)=>{
+      const y=RH*i+RH/2;
+      g.textAlign='center'; g.font=GUIDE_FONT.replace('%s',42);
+      g.fillText(r.dir==='L'?'\u2190':r.dir==='R'?'\u2192':'\u2191', 42, y);
+      g.textAlign='left';
+      /* имя ужимается под щит: «Косой съезд» вдвое длиннее «Ленина», а щит один */
+      let fs=40; g.font=GUIDE_FONT.replace('%s',fs);
+      while(g.measureText(r.name).width>w-104 && fs>18){ fs-=2; g.font=GUIDE_FONT.replace('%s',fs); }
+      g.fillText(r.name, 82, y);
+    });
+  });
+}
 function plateCanvas(){
   return imgCanvas('plate', 104, 22, (g,w,h)=>{
     g.fillStyle='#f2f4f6'; g.fillRect(0,0,w,h); g.strokeStyle='#8a8f96'; g.lineWidth=2; g.strokeRect(1,1,w-2,h-2);
@@ -1905,7 +1928,8 @@ function roadDec2(dec, u, v, yaw, len, r){
             solidHere?null:[9,8]);
   }
   if(r.tram) tramDec(dec, u, v, yaw, len);
-  const meta={kind:'lanes', u, v, yaw, len, hw, edges, solid:edges.map(x=>laneSolid(r,x,hw))};
+  const meta={kind:'lanes', u, v, yaw, len, hw, edges, name:r.name||'',
+                solid:edges.map(x=>laneSolid(r,x,hw))};
   return meta;
 }
 /* трамвайное полотно: два пути посередине, на одном уровне с проезжей частью.
@@ -1964,8 +1988,8 @@ function cityWorld(spec){
     r._yaw=Math.atan2(B.u-A.u, B.v-A.v);
     r._len=Math.hypot(B.u-A.u, B.v-A.v);
     r._hw=roadHW(r);
-    if(!Array.isArray(r.a)) arms[r.a].push({yaw:r._yaw, hw:r._hw});
-    if(!Array.isArray(r.b)) arms[r.b].push({yaw:angNorm(r._yaw+Math.PI), hw:r._hw});
+    if(!Array.isArray(r.a)) arms[r.a].push({yaw:r._yaw, hw:r._hw, name:r.name||'', road:r});
+    if(!Array.isArray(r.b)) arms[r.b].push({yaw:angNorm(r._yaw+Math.PI), hw:r._hw, name:r.name||'', road:r});
   }
   const radius={};
   for(const k in spec.nodes){
@@ -1983,6 +2007,32 @@ function cityWorld(spec){
       for(let i=0;i<8;i++){ const a=i*TAU/8;
         const k=kerb(nd.u+Math.cos(a)*rIn, nd.v+Math.sin(a)*rIn, 0.5, ch);
         k.yaw=Math.atan2(-Math.sin(a), Math.cos(a)); obs.push(k); }
+    }
+  }
+  /* указатели направлений на подъездах к перекрёсткам: по одному на луч, справа по ходу,
+     лицом к водителю. Читаются в обоих режимах экзамена и на городских уровнях 27–31 —
+     ориентир, выученный на тренировке, обязан работать на экзамене. Стоят ЗА бордюром:
+     по общему городу ездят показы, а level-audit валит прогон на любом касании */
+  for(const k in spec.nodes){
+    const nd=spec.nodes[k], list=arms[k];
+    /* на кольце указателя нет: стрелки «налево/прямо/направо» там врут — съезды считают
+       по кругу, а не поворачивают. Кольцо обозначает свой знак 4.3 */
+    if(list.length<3 || nd.round) continue;  /* на тупике и простом изгибе указывать нечего */
+    for(const a of list){
+      const inYaw=angNorm(a.yaw+Math.PI);    /* курс подъезжающего водителя */
+      const d=radius[k]+8;
+      if(a.road._len < d+6) continue;        /* улица короче выноса указателя */
+      const rows=[];
+      for(const b of list){
+        if(b===a) continue;
+        const rel=angNorm(b.yaw-inYaw);
+        rows.push({rel, dir: Math.abs(rel)<rad(32) ? 'S' : (rel>0 ? 'R' : 'L'), name:b.name});
+      }
+      if(!rows.length) continue;
+      rows.sort((x,y)=>x.rel-y.rel);         /* слева направо, как читают щит */
+      const f=fuv(a.yaw), rt=ruv(inYaw);
+      const off=a.hw+1.2;
+      obs.push(guideSign(nd.u+f.u*d+rt.u*off, nd.v+f.v*d+rt.v*off, a.yaw, rows.slice(0,3)));
     }
   }
   for(const r of spec.roads){
@@ -2266,6 +2316,29 @@ function actorNear(u, v, d){
 const SIGN_H=2.15;
 function sign(pic,u,v,yaw){
   return {kind:'sign', pic, u, v, w:0.30, l:0.30, h:SIGN_H, yaw:yaw||0, solid:true, col:[120,126,134]};
+}
+const GUIDE_BOT=2.30;               /* низ щита над тротуаром: под ним проходит и человек, и машина */
+const GUIDE_HW=1.10, GUIDE_RH=0.34; /* полуширина щита и высота строки, м */
+function guideSign(u,v,yaw,rows){
+  return {kind:'guide', u, v, w:0.26, l:0.26, h:GUIDE_BOT+GUIDE_RH*rows.length,
+          yaw:yaw||0, solid:true, col:[120,126,134], rows};
+}
+function emitGuide(o){
+  const img=guidePic(o.rows); if(!img) return;
+  const HH=GUIDE_RH*o.rows.length/2, y=GUIDE_BOT+HH;
+  pushBox(o.u,(y-HH)/2,o.v,0.055,(y-HH)/2,0.055,o.yaw,[132,138,146]);
+  const f=fwd(o.yaw), R=rgt(o.yaw), cx=-o.u, cz=o.v;
+  /* нормаль приподнята к свету по той же причине, что у знаков: честная горизонтальная
+     нормаль тыльной к солнцу стороны гасит эмаль до нечитаемости */
+  const nf=Math.hypot(f.x*0.55,0.83,f.z*0.55);
+  const nrm={x:f.x*0.55/nf, y:0.83/nf, z:f.z*0.55/nf};
+  const at=(lat,dy,off)=>({x:cx+R.x*lat+f.x*off, y:y+dy, z:cz+R.z*lat+f.z*off});
+  /* +lat уходит ВЛЕВО от смотрящего, поэтому ширина идёт от +hw к −hw: иначе текст зеркалится */
+  pushFace([at(GUIDE_HW,HH,0), at(-GUIDE_HW,HH,0), at(-GUIDE_HW,-HH,0), at(GUIDE_HW,-HH,0)],
+           nrm, [29,79,159], 0, {img});
+  pushFace([at(GUIDE_HW,HH,-0.012), at(-GUIDE_HW,HH,-0.012),
+            at(-GUIDE_HW,-HH,-0.012), at(GUIDE_HW,-HH,-0.012)].reverse(),
+           {x:-f.x, y:0, z:-f.z}, [108,112,120]);
 }
 /* статист: обычная pcar с программой движения. trig(s) — предикат старта по curS;
    двигается waypoint-follow в actorsTick, столкновение с игроком = обычный хит,
@@ -4039,7 +4112,7 @@ const LEVELS = [
 
 { name:'29 · Разворот на трамвайных путях',
   strict:true,
-  task:'Развернуться на проспекте с трамвайными путями посередине. Разворот выполняют С ПУТЕЙ попутного направления — сначала перестройся на них. Грубая ошибка (встречная, столкновение) — попытка не засчитана.',
+  task:'Развернуться на проспекте Ленина с трамвайными путями посередине. Разворот выполняют С ПУТЕЙ попутного направления — сначала перестройся на них. Грубая ошибка (встречная, столкновение) — попытка не засчитана.',
   tip:'Пути посередине на одном уровне с дорогой — это ещё одна полоса. Разворот из правой полосы отсюда запрещён.',
   steps:[
     'Включи левый поворотник (Q) заранее.',
@@ -4289,35 +4362,35 @@ const LEVELS = [
        зоне и получал «развернись», не имея метра на перестроение к путям) */
     const POCK={ lenS:EXAM_POCK.lenS[A?0:1], lenN:EXAM_POCK.lenN[B?0:1], sadW:EXAM_POCK.sadW[A?0:1] };
     if(R===0) return [
-      go('Тронься и веди по проспекту на север','прямо по проспекту',{u:8.15,v:-84},'straight',
+      go('Тронься и веди по проспекту Ленина на север','прямо по Ленина',{u:8.15,v:-84},'straight',
          s=>s.v>-78&&s.vel>0.5),
       stopGo('Остановись у тротуара справа — и продолжай движение','остановка у тротуара',
          {u:POCK.lenS.u,v:POCK.lenS.v}, inPocket(POCK.lenS)),
       /* короткая форма несёт «с путей»: полная команда видна только дальше 75 м и ближе 10 м,
          а перестраиваться на полотно надо ровно в промежутке, где карточка её не показывает */
-      go('Развернись на проспекте — разворот выполняют с трамвайных путей','разворот с трамвайных путей',
+      go('Развернись на Ленина — разворот выполняют с трамвайных путей','разворот с трамвайных путей',
          {u:0,v:-35},'U', s=>s.v<-46&&hd(s,180)),
-      go('На перекрёстке — налево, на Садовую','налево',{u:0,v:-70},'L',
+      go('На перекрёстке — налево, на Садовую','налево на Садовую',{u:0,v:-70},'L',
          s=>s.u>12&&hd(s,90)),
-      go('По Садовой на восток, на перекрёстке — налево, на Восточную','налево',
+      go('По Садовой на восток, на перекрёстке — налево, на Восточную','налево на Восточную',
          {u:78,v:-70},'L', s=>s.v>-60&&hd(s,0)),
       stopGo('Эстакада: остановись у линии на подъёме и трогайся без отката','стоп на подъёме',
          {u:78,v:-50}, s=>s.v>-52&&s.v<-47.5&&s.u>74&&s.u<82),
-      go('На кольце — второй съезд, на Заводскую','второй съезд',{u:78,v:0},'U',
+      go('На кольце — второй съезд, на Заводскую','второй съезд на Заводскую',{u:78,v:0},'U',
          s=>s.u<62&&hd(s,270)),
-      go('На перекрёстке с проспектом — направо, на север','направо',{u:0,v:0},'R',
+      go('На Ленина — направо, на север','направо на Ленина',{u:0,v:0},'R',
          s=>s.v>12&&hd(s,0)),
       stopEnd('Финиш: останови машину у тротуара в кармане','финиш у тротуара',
          {u:POCK.lenN.u,v:POCK.lenN.v}, inPocket(POCK.lenN))
     ];
     if(R===1) return [
-      go('Тронься и веди по проспекту на север','прямо по проспекту',{u:8.15,v:-84},'straight',
+      go('Тронься и веди по проспекту Ленина на север','прямо по Ленина',{u:8.15,v:-84},'straight',
          s=>s.v>-78&&s.vel>0.5),
-      go('На перекрёстке — налево, на Садовую','налево',{u:0,v:-70},'L',
+      go('На перекрёстке — налево, на Садовую','налево на Садовую',{u:0,v:-70},'L',
          s=>s.u<-12&&hd(s,270)),
       stopGo('Остановись у тротуара справа — и продолжай движение','остановка у тротуара',
          {u:POCK.sadW.u,v:POCK.sadW.v}, inPocket(POCK.sadW)),
-      go('На перекрёстке — направо, на Западную','направо',{u:-78,v:-70},'R',
+      go('На перекрёстке — направо, на Западную','направо на Западную',{u:-78,v:-70},'R',
          s=>s.v>-60&&hd(s,0)),
       go('На косом перекрёстке — направо, на Заводскую','направо на Заводскую',{u:-78,v:0},'R',
          s=>s.u>-64&&hd(s,90)),
@@ -4327,13 +4400,13 @@ const LEVELS = [
          s=>s.v<-20&&hd(s,180)),
       stopGo('Эстакада: остановись у линии на подъёме и трогайся без отката','стоп на подъёме',
          {u:78,v:-38}, s=>s.v>-42&&s.v<-37&&s.u>74&&s.u<82),
-      go('На перекрёстке — направо, на Садовую','направо',{u:78,v:-70},'R',
+      go('На перекрёстке — направо, на Садовую','направо на Садовую',{u:78,v:-70},'R',
          s=>s.u<66&&hd(s,270)),
       stopEnd('Финиш: останови машину у тротуара в кармане','финиш у тротуара',
          {u:POCK.sadW.u,v:POCK.sadW.v}, inPocket(POCK.sadW))
     ];
     return [
-      go('Тронься и веди по проспекту на север','прямо по проспекту',{u:8.15,v:-84},'straight',
+      go('Тронься и веди по проспекту Ленина на север','прямо по Ленина',{u:8.15,v:-84},'straight',
          s=>s.v>-78&&s.vel>0.5),
       /* этап закрывается сразу за перекрёстком (его полотно кончается на −66,7), а не на −56:
          иначе команда «остановись у тротуара» приходит, когда карман уже под колёсами */
@@ -4341,15 +4414,15 @@ const LEVELS = [
          s=>s.v>-64),
       stopGo('Остановись у тротуара справа — и продолжай движение','остановка у тротуара',
          {u:POCK.lenS.u,v:POCK.lenS.v}, inPocket(POCK.lenS)),
-      go('Развернись на проспекте — с трамвайных путей','разворот с трамвайных путей',{u:0,v:-35},'U',
+      go('Развернись на Ленина — с трамвайных путей','разворот с трамвайных путей',{u:0,v:-35},'U',
          s=>s.v<-46&&hd(s,180)),
-      go('На перекрёстке — направо, на Садовую','направо',{u:0,v:-70},'R',
+      go('На перекрёстке — направо, на Садовую','направо на Садовую',{u:0,v:-70},'R',
          s=>s.u<-12&&hd(s,270)),
-      go('На перекрёстке — направо, на Западную','направо',{u:-78,v:-70},'R',
+      go('На перекрёстке — направо, на Западную','направо на Западную',{u:-78,v:-70},'R',
          s=>s.v>-60&&hd(s,0)),
       go('На косом перекрёстке — направо, на Заводскую','направо на Заводскую',{u:-78,v:0},'R',
          s=>s.u>-64&&hd(s,90)),
-      go('На перекрёстке с проспектом — налево, на север','налево',{u:0,v:0},'L',
+      go('На Ленина — налево, на север','налево на Ленина',{u:0,v:0},'L',
          s=>s.v>12&&hd(s,0)),
       stopEnd('Финиш: останови машину у тротуара в кармане','финиш у тротуара',
          {u:POCK.lenN.u,v:POCK.lenN.v}, inPocket(POCK.lenN))
@@ -4587,8 +4660,10 @@ function setBody(u,v,th){ const f=fuv(th); car.ru=u-f.u*C2R; car.rv=v-f.v*C2R; c
 function buildRenderList(obs){
   const out=[];
   for(const o of obs){
-    /* sign проходит целиком: сегментация копирует только базовые поля и потеряла бы pic */
-    if(o.kind==='car'||o.kind==='cone'||o.kind==='sign'||o.kind==='light'){ out.push(o); continue; }
+    /* sign и guide проходят целиком: сегментация копирует только базовые поля и потеряла
+       бы pic и rows */
+    if(o.kind==='car'||o.kind==='cone'||o.kind==='sign'||o.kind==='light'||o.kind==='guide'){
+      out.push(o); continue; }
     /* 3,5 м, не 7: у длинного сегмента бордюра центр ближе к камере, чем колесо соседа перед
        ним, и бордюр рисовался поверх колеса */
     const n=Math.max(1,Math.ceil(o.l/3.5)), m=Math.max(1,Math.ceil(o.w/3.5));
@@ -6337,6 +6412,7 @@ function emitObstacles(maxD){
       continue;
     }
     if(o.kind==='sign'){ emitSign(o); continue; }
+    if(o.kind==='guide'){ emitGuide(o); continue; }
     if(o.kind==='light'){ emitTrafficLight(o); continue; }
     pushBox(o.u,o.h/2,o.v,o.w/2,o.h/2,o.l/2,o.yaw,o.col);
   }
