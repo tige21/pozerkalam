@@ -7622,10 +7622,10 @@ function levelPickHTML(){
         +'Показание нужной стороны скрыто: остановись там, где считаешь нужным, — '
         +'и увидишь ошибку в сантиметрах. Попытка одна, повтор — R.</p><div class="lvgrid">'; }
     const nm=(l.name.split('· ')[1] || l.name).replace(/^★\s*/,'');
-    const pg=progOf(l.name);
-    s+='<div class="lvcard'+(i===game.li?' on':'')+(pg?' pass':'')
+    const pg=progOf(l.name), done=progPassed(l.name);
+    s+='<div class="lvcard'+(i===game.li?' on':'')+(done?' pass':'')
       +(weakSet.has(i)?' weak':'')+'" data-lvl="'+i+'">'
-      +'<div class="n">'+(l.custom?'★':(i+1))+(pg?' ✓':'')+'</div>'
+      +'<div class="n">'+(l.custom?'★':(i+1))+(done?' ✓':'')+'</div>'
       +'<div class="t">'+nm+'</div>'
       +'<div class="d">'+(l.strict?'⚠ грубая ошибка — заново · ':'')
       +(pg?progLine(l.name):(l.task||'').slice(0,90))+'</div></div>';
@@ -8444,6 +8444,14 @@ function progAll(){
     return a; }catch(e){ return {}; }
 }
 function progOf(name){ return progAll()[name] || null; }
+/* «пройден» — это ПРОЙДЕН, а не «есть запись». У экзамена запись заводится и на провале
+   (examFail зовёт progExam(false), чтобы посчитать попытку), и карточка уровня помечалась
+   галочкой до первой сдачи. У остальных уровней progAdd зовётся только из win(), поэтому
+   там достаточно самого факта записи */
+function progPassed(name){
+  const p=progOf(name); if(!p) return false;
+  return p.passed!==undefined ? p.passed>0 : (p.n||0)>0;
+}
 function progAdd(name, t, hits, err, blind){
   const a=progAll();
   const p=a[name] || {n:0, clean:0, best:null, bestHits:null};
@@ -8463,6 +8471,8 @@ function progAdd(name, t, hits, err, blind){
 }
 function progLine(name){
   const p=progOf(name); if(!p) return '';
+  /* попытки без единой сдачи — это не «0 из 3 маршрутов», это «ещё не сдан» */
+  if(p.passed===0) return 'попыток '+p.n+' · ещё не сдан';
   if(p.real || p.train){
     const rt=(p.real&&p.real.routes)||[0,0,0], done=rt.filter(x=>x>0).length;
     return 'настоящих маршрутов '+done+' из 3'
