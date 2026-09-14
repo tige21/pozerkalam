@@ -135,6 +135,9 @@ article li{margin-bottom:.6em}
 article li::marker{color:var(--faint);font-variant-numeric:tabular-nums}
 article li b{color:var(--ink)}
 .page-head{padding-block:clamp(52px,9vw,110px) 0}
+/* секция сразу за шапкой страницы своего отступа сверху не получает: её var(--gap-sec)
+   складывался с margin-top первого h2, и между лидом и первым заголовком зияло 157 px */
+.page-head + section{padding-top:0}
 .page-head h1{max-width:18ch}
 .page-head .lead{max-width:44ch;margin-top:.9em}
 .cta-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:clamp(28px,4vw,44px) 0 0}
