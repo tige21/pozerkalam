@@ -4,3 +4,6 @@
 build/
 .codegraph/
 __pycache__/
+
+# промежуточные кадры landing-shots: на странице живут только webp
+landing/public/shots/*.png

@@ -5,6 +5,7 @@
      PW_DIR=/tmp/pw node tools/landing-shots.mjs
    Выход: landing/public/shots/<имя>.png (DPR 2, 1440x900 → 2880x1800). */
 import { createRequire } from 'node:module';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PW_DIR = process.env.PW_DIR || '/tmp/pw';
 const OUT = path.join(ROOT, 'landing', 'public', 'shots');
+const TMP_PNG = path.join(os.tmpdir(), 'aif-shot-2000.png');
 
 function loadPlaywright() {
   try { return createRequire(path.join(PW_DIR, 'package.json'))('playwright-core'); }
@@ -35,7 +37,11 @@ function findChrome() {
 /* level — индекс в LEVELS (0-based), demoMs — сколько прокрутить демо до кадра */
 const SHOTS = [
   { name: 'cockpit',  level: 0,  cam: 'fp',    demoMs: 9500,  refs: 1 },
-  { name: 'parallel', level: 0,  cam: 'chase', demoMs: 12000, refs: 2 },
+  /* 14,5-й секунды, а не 12-й: на 12-й ракурс накладывал машину на соседнюю и на переднюю —
+     главная картинка лендинга читалась как столкновение. На 14,5 корма идёт в карман под 31°,
+     между машинами видимый просвет асфальта, а на карточке живая подсказка с чипом цели.
+     Дальше 15 с камера упирается в красную машину ряда и та заливает угол кадра */
+  { name: 'parallel', level: 0,  cam: 'chase', demoMs: 14500, refs: 2 },
   { name: 'city',     level: 27, cam: 'chase', demoMs: 7000,  refs: 1 },
   { name: 'drill',    level: 13, cam: 'chase', demoMs: 0,     refs: 2 },
 ];
@@ -76,7 +82,12 @@ for (const s of SHOTS) {
   await page.waitForTimeout(250);
   const file = path.join(OUT, `${s.name}.png`);
   await page.screenshot({ path: file });
-  made.push(`${s.name}.png ${(fs.statSync(file).size / 1024).toFixed(0)} КБ`);
+  /* страница грузит webp, а не png: пережимаем здесь же, иначе кадр и файл на лендинге
+     разъезжаются — правку сюда легко внести и забыть сконвертировать */
+  const webp = path.join(OUT, `${s.name}.webp`);
+  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', file, '-vf', 'scale=2000:1250', TMP_PNG]);
+  execFileSync('cwebp', ['-quiet', '-q', '72', TMP_PNG, '-o', webp]);
+  made.push(`${s.name}.webp ${(fs.statSync(webp).size / 1024).toFixed(0)} КБ`);
 }
 await browser.close();
 console.log(made.join('\n'));

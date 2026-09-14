@@ -4776,11 +4776,95 @@ function satMTV(A,B){
 }
 function carOBB(){ const c=bodyPos(); return {u:c.u, v:c.v, hw:HALF_W, hl:HALF_L, yaw:car.th}; }
 
+/* ---------- след кузова на земле ----------
+   OBB — прямоугольник 4,42 × 1,80, а кузов спереди и сзади сужается: нос на z=2,21 шириной
+   1,48 м, корма на z=−2,21 — 1,56 м. Углы прямоугольника висели вне металла, и касание
+   засчитывалось, когда по текстурам до стены оставалось до 9 см (замер: 1,7 см при курсе 6°,
+   5,5 см при 20°, 9,2 см при 35°; машина в машину — 6,8 см при 25°). Что нарисовано, то и
+   считается: выпуклая оболочка сечений лофта.
+   clearances() СПЕЦИАЛЬНО остаётся на OBB — по её показаниям откалиброваны пороги всех демо */
+const CAR_HULL=(()=>{
+  const p=[];
+  for(const st of CAR_ST){ p.push({u:st.w, v:st.z}); p.push({u:-st.w, v:st.z}); }
+  return hull2(p).map(q=>({lat:q.u, z:q.v}));
+})();
+const _hullBuf=CAR_HULL.map(()=>({u:0,v:0}));
+function carHullPts(u,v,th,out){
+  const f=fuv(th), r=ruv(th), o=out||_hullBuf;
+  for(let i=0;i<CAR_HULL.length;i++){ const h=CAR_HULL[i];
+    o[i].u=u+f.u*h.z+r.u*h.lat; o[i].v=v+f.v*h.z+r.v*h.lat; }
+  return o;
+}
+/* рамка и угловые столбики рисуются по ТОМУ ЖЕ следу, по которому считается удар — иначе
+   они снова разойдутся с ним: прежняя прямоугольная рамка обещала габарит на 16 см шире носа.
+   Цепочки и угловые точки считаются один раз, в кадре только перенос в мировые координаты */
+const REF_CHAINS=(()=>{
+  const kind=(a,b)=>{ const z=(a.z+b.z)/2; return z>=1.40?'f' : z<=-1.70?'r' : 's'; };
+  const out=[], nH=CAR_HULL.length; let cur=null;
+  for(let i=0;i<nH;i++){
+    const a=CAR_HULL[i], b=CAR_HULL[(i+1)%nH], k=kind(a,b);
+    if(!cur || cur.k!==k){ cur={k, pts:[a]}; out.push(cur); }
+    cur.pts.push(b);
+  }
+  if(out.length>1 && out[0].k===out[out.length-1].k){
+    const last=out.pop(); last.pts.pop(); out[0].pts=last.pts.concat(out[0].pts);
+  }
+  for(const ch of out) ch.buf=ch.pts.map(()=>({u:0,v:0}));
+  return out;
+})();
+/* «угол машины» — вершина следа, самая дальняя в диагональном направлении, а не угол
+   прямоугольника: именно по ней игрок примеряется к соседу и к столбу */
+const CORNER_PT={};
+for(const sf of [1,-1]) for(const sr of [1,-1]){
+  let best=CAR_HULL[0], bd=-Infinity;
+  for(const h of CAR_HULL){ const d=sf*h.z/HALF_L + sr*h.lat/HALF_W;
+    if(d>bd){ bd=d; best=h; } }
+  CORNER_PT[sf+','+sr]=best;
+}
+const _obsBuf=[{u:0,v:0},{u:0,v:0},{u:0,v:0},{u:0,v:0}];
+const _obsHullBuf=CAR_HULL.map(()=>({u:0,v:0}));
+const OBS_SIGN=[[-1,1],[1,1],[1,-1],[-1,-1]];
+/* соседняя машина нарисована тем же лофтом, что и своя, поэтому и считается по нему:
+   иначе касание её прямоугольника наступало бы за 16 см до её металла */
+function obsShape(o){
+  if(o.kind==='car'){ carHullPts(o.u, o.v, o.yaw, _obsHullBuf); return CAR_HULL.length; }
+  const f=fuv(o.yaw), r=ruv(o.yaw);
+  for(let i=0;i<4;i++){ const sr=OBS_SIGN[i][0], sf=OBS_SIGN[i][1];
+    _obsBuf[i].u=o.u+f.u*o.hl*sf+r.u*o.hw*sr; _obsBuf[i].v=o.v+f.v*o.hl*sf+r.v*o.hw*sr; }
+  return 4;
+}
+function obsBuf(o){ return o.kind==='car' ? _obsHullBuf : _obsBuf; }
+/* SAT по всем рёбрам обеих фигур. Вектор, как у satMTV, направлен ИЗ препятствия в машину.
+   Зовётся только после грубой проверки прямоугольником, то есть ноль-два раза за кадр */
+function polyMTV(P,np,Q,nq){
+  let best=Infinity, bu=0, bv=0;
+  for(let s=0;s<2;s++){
+    const A=s?Q:P, na=s?nq:np;
+    for(let i=0;i<na;i++){
+      const a=A[i], b=A[(i+1)%na];
+      let ax=-(b.v-a.v), ay=b.u-a.u;
+      const L=Math.hypot(ax,ay); if(L<1e-9) continue;
+      ax/=L; ay/=L;
+      let p0=Infinity,p1=-Infinity,q0=Infinity,q1=-Infinity;
+      for(let k=0;k<np;k++){ const d=P[k].u*ax+P[k].v*ay; if(d<p0)p0=d; if(d>p1)p1=d; }
+      for(let k=0;k<nq;k++){ const d=Q[k].u*ax+Q[k].v*ay; if(d<q0)q0=d; if(d>q1)q1=d; }
+      const ov=Math.min(p1,q1)-Math.max(p0,q0);
+      if(ov<=0) return null;
+      if(ov<best){ best=ov; const sg=(p0+p1)<(q0+q1) ? -1 : 1; bu=ax*sg; bv=ay*sg; }
+    }
+  }
+  return {u:bu, v:bv, depth:best};
+}
+
 function resolveCollisions(dt){
   const A=carOBB(), f=fuv(car.th); let hard=false, fresh=false, freshObj=null;
   for(const o of level.obs){
     if(o.kind==='cone' && o.knocked) continue;
-    const m=satMTV(A,o);
+    /* прямоугольник — только грубый отсев, чтобы не гонять точную проверку по всем
+       препятствиям уровня; касание объявляется по настоящему следу кузова */
+    if(!satMTV(A,o)){ o._touch=false; continue; }
+    const nq=obsShape(o);
+    const m=polyMTV(carHullPts(A.u,A.v,car.th), CAR_HULL.length, obsBuf(o), nq);
     /* касание считаем по НАЧАЛУ контакта: без защёлки машина, стоящая на бордюре,
        набирала новое касание каждые полсекунды */
     if(!m){ o._touch=false; continue; }
@@ -6153,13 +6237,15 @@ function drawShadows(){
 function drawRefs(){
   const c=bodyPos(), f=fuv(car.th), r=ruv(car.th);
   const P=(lat,z)=>({u:c.u+f.u*z+r.u*lat, v:c.v+f.v*z+r.v*lat});
-  /* рамка ровно по OBB кузова — тот же прямоугольник, по которому считается столкновение:
+  /* рамка ровно по следу кузова — по тому же контуру, по которому считается столкновение:
      «вот докуда машина». Кромки бампера толще бортов — их не видно из-за руля */
-  for(const sg of [-1,1]){
-    strokeGroundPath([P(-HALF_W,sg*HALF_L),P(HALF_W,sg*HALF_L)],
-      sg>0?'rgba(255,214,64,.95)':'rgba(255,146,52,.95)', 4, null, 0.049);
-    strokeGroundPath([P(sg*HALF_W,-HALF_L),P(sg*HALF_W,HALF_L)],
-      'rgba(226,236,248,.62)', 2, null, 0.049);
+  for(const ch of REF_CHAINS){
+    for(let i=0;i<ch.pts.length;i++){ const h=ch.pts[i];
+      ch.buf[i].u=c.u+f.u*h.z+r.u*h.lat; ch.buf[i].v=c.v+f.v*h.z+r.v*h.lat; }
+    strokeGroundPath(ch.buf,
+      ch.k==='f' ? 'rgba(255,214,64,.95)' : ch.k==='r' ? 'rgba(255,146,52,.95)'
+                 : 'rgba(226,236,248,.62)',
+      ch.k==='s' ? 2 : 4, null, 0.049);
   }
   for(const sg of [-1,1]){
     strokeGroundPath([P(sg*HALF_W,-HALF_L-4.2),P(sg*HALF_W,HALF_L+5.0)],
@@ -6333,7 +6419,8 @@ function emitCornerPosts(){
   const c=bodyPos(), f=fuv(car.th), r=ruv(car.th);
   const hot = lastClear && lastClear.corner;
   for(const sf of [1,-1]) for(const sr of [1,-1]){
-    const pu=c.u+f.u*HALF_L*sf+r.u*HALF_W*sr, pv=c.v+f.v*HALF_L*sf+r.v*HALF_W*sr;
+    const cp=CORNER_PT[sf+','+sr];
+    const pu=c.u+f.u*cp.z+r.u*cp.lat, pv=c.v+f.v*cp.z+r.v*cp.lat;
     const front = sf>0, hh = front?0.56:0.44;
     const near = hot && hot.sf===sf && hot.sr===sr;
     const rod = near?[240,72,60] :(front?[236,190,44]:[220,120,34]);
