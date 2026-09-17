@@ -61,4 +61,5 @@
 | 2026-09-04 | Решения: домен pozerkalam.space (свободен), перенос на РФ-VPS, VPN-нейтральность |
 | 2026-09-04 | M1+M2+M2b: прод на https://pozerkalam.space/ (vdsina), HTTPS, Метрика 112294388 + воронка, минификация 301 КБ, PWA/SW, CSP, GoAccess /stats/; Lighthouse mobile 92 |
 | 2026-09-04 | M4+M5+M6: ads-слой + build/yandex.zip (SDK, облачные сейвы), iframe VK/TG, лендинг Astro (Lighthouse 100/100) на корне, игра на /play/, docs/PUBLISH.md |
+| 2026-09-17 | Лендинг отвечает на пять вопросов посетителя: блок «три ситуации», результат в процентах готовности, подпись автора, ссылка на страницу автошколам; герой 185vh с равными окнами реплик (`tools/hero-tape.mjs`), Lighthouse 100/100/100/100 |
 | 2026-09-05 | Флоу как у spark: доска Vikunja «По зеркалам» (проект id=3, хук + память), codegraph-зеркало `codegraph-src/index.js` с паритетом строк, pre-commit/Stop-хуки, правила в CLAUDE.md |

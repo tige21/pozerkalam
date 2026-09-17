@@ -233,6 +233,58 @@ stream-роутер соседнего проекта (spark), новые vhost'
 Полный рунбук (гео-записи, проверки, откат): `~/Documents/projects/spark/docs/INFRA_GEODNS.md`,
 раздел «pozerkalam.space».
 
+**Лендинг: пять вопросов посетителя.** Страница обязана отвечать на пять вопросов по порядку
+их чтения: что это, кому и в каких ситуациях, какой результат, почему стоит смотреть дальше,
+что сделать сейчас. Аудит 17.09.2026 нашёл, что из пяти закрыты были два — и оба провала были
+структурными, а не текстовыми.
+
+**Прикреплённый герой не имеет права молчать.** `.hero` — это «сколько прокрутки уходит на
+показ»: `park.js` считает её как `hero.offsetHeight − stage.offsetHeight`, а копия (H1, лид,
+кнопка) уходит уже на 10 % этой прокрутки. При 240vh после первого экрана шло 1260 px, то есть
+1,4 экрана без единой строки текста, заголовка и цифры — кто не понял с первого кадра, уходил
+здесь. Высота и длина ленты реплик — **связанная пара**, и считается она в пикселях прокрутки
+на реплику: порог читаемости 110 px на десктопе и 90 px на телефоне, примерно один щелчок
+колеса. Второй, более злой дефект того же места: `paint` раскладывал прогресс линейно по точкам
+пути, поэтому доля прокрутки у реплики равнялась **длине её участка траектории**. Замер показал
+«Точку 2» (доворот на 45°, главный ориентир всей методики) с 30 px из 675, а «Готово» не
+показывалось вовсе — прокрутка кончалась раньше. Лечится не высотой, а равными окнами на реплику
+(`indexAt`/`STEP_SPAN`). Гоняй `tools/hero-tape.mjs` после правки высоты `.hero`, списка `STEPS`
+или разбивки `PATH` по фазам: он печатает px на каждую реплику и молчащую прокрутку и падает на
+пробитом пороге. Глазами это не проверяется — сам знаешь, что написано в карточке, и успеваешь
+прочитать то, чего новичок не увидит. Точность замера стоила двух правок самого инструмента:
+границы реплик уточняются делением до 1 px, и каждая позиция прокрутки ждёт **двух кадров
+rAF**, а не таймера — `park.js` перерисовывает сцену внутри `requestAnimationFrame`, и с
+фиксированными 10 мс одна и та же сборка давала минимум от 101 до 110 px при пороге 110.
+Флаки-гард хуже отсутствующего: он учит не доверять проверке.
+
+**И у героя есть второй режим — `prefers-reduced-motion`.** Там `paint` ставит `open = 1`
+сразу, а `.hero.open` гасит копию: H1, лид и кнопка «Начать тренировку» были невидимы, на
+первом экране оставались стоящая машина и карточка «Готово», единственным входом — «Играть» в
+шапке. Блок `@media (prefers-reduced-motion: reduce)` обязан стоять **последним в `<style>`**:
+правила для телефона (`max-width:899px`) задают `.hero-coach { top }` ниже по каскаду и при
+равной специфичности победило бы то, что написано позже. Возвращать нужно и копию, **и
+затемнение** (`.hero-scrim`) — без него текст ложится на машины и на линию траектории, причём
+проверка перекрытий по геометрии остаётся зелёной, а читать нельзя. Правку героя смотри в
+обоих режимах и на кадре, а не только в цифрах.
+
+**Раздел лендинга без входящих ссылок не существует.** `/avtoshkolam/` — страница второго
+читателя из voice-карточки и вход в B2B-майлстоун — провисела сиротой с самого M6: ни шапка, ни
+подвал, ни один текст на неё не ссылались, попасть можно было только по прямому адресу. Проверять
+`grep` по `landing/src` **и** по собранному `dist`. Новая страница добавляется вместе со ссылкой
+из навигации; на главной для второго читателя хватает строки у финального CTA, в шапке места нет
+(на 620 px её ссылки уже прячутся через `nav-hide`).
+
+**Ссылка внутри текста подчёркивается всегда** (`article a,.card a,.cta-note a,.final-alt a`):
+одним цветом её не отличить тем, кто различает цвет хуже, и Lighthouse считает это ошибкой
+(`link-in-text-block`, a11y 96 → 100). Кнопки и навигация подчёркивания не требуют.
+
+**Результат называется величиной, которую продукт правда считает** — готовность к экзамену
+(`examReadiness`: доля чистых заездов по 17 уровням `EXAM_SET`) и лучшая точность дриллов в
+сантиметрах (`bestErr`). Обещать сдачу нельзя: этого продукт не контролирует. Строка доверия на
+странице — личная история автора, а не звание: «искал такое приложение и не нашёл, поэтому
+написал сам» проверяемо, «аналогов нет» читателю проверить нечем и voice-карточка запрещает
+сравнение через отрицание.
+
 **Landing clips**: `tools/landing-clips.mjs` records a level's демонстрация in a headless browser and encodes `landing/public/clips/<name>.{mp4,webp}` (h264, no audio, ~100 КБ each, poster via `cwebp` — homebrew's ffmpeg has no webp encoder). Recording happens at 1280×800 and is scaled to 960×600: at 960 the game's HUD falls into its narrow layout and the panels overlap. Service chrome is hidden with an injected stylesheet, never `remove()` — `updateHUD` writes into those nodes every frame — and `coachCard` is patched so the card shows the segment's instructor line instead of «Демо 3/7 · любая кнопка прерывает». A VP9 track is not built: on this material webm comes out twice the size of h264. The page loads them with `preload="none"` and starts playback from an IntersectionObserver, skipping it entirely under `prefers-reduced-motion`.
 
 **Distribution builds**: the repo now carries three delivery shapes. (1) Web (`./deploy-pozerkalam.sh`): landing (Astro, `landing/` → site root) + game at **/play/** — the script rewrites the game's root-absolute paths (manifest/icons/sw) to /play/, injects Метрика, versions the SW and ships a root `/sw.js` self-killer (the old root-scope SW would otherwise serve the cached game instead of the landing). (2) Yandex Games (`./build-yandex.sh` → `build/yandex.zip`): no Метрика/PWA/favicon, plus a Games-SDK adapter — `window.ADS` (interstitial/rewarded) and cloud saves mirroring `trainer_*` through `player.get/setData` (merge, локальный прогресс не затирается). (3) VK/TG use the /play/ URL directly (CSP frame-ancestors already allows them). In-game ad seam: `adsInterstitial(reason)` (no-op unless `window.ADS`; hard cooldown — never in the first 60 s, ≥180 s between shows) and `adsRewarded(cb)` (web: reward immediately). Publishing steps live in `docs/PUBLISH.md`.

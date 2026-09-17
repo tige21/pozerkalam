@@ -120,8 +120,7 @@ const PATH = buildPath();
 /* Реплики привязаны к фазам траектории, поэтому текст не может разойтись с тем,
    что происходит на экране. */
 const STEPS = [
-  { t: 'Едешь вдоль ряда', a: 'Держи до машин 0,8 м и смотри в правое зеркало.', g: 'D', w: 'прямо' },
-  { t: 'Зеркала вровень', a: 'Твоё зеркало против его зеркала, твоя корма — на полметра позади его кормы. Стоп.', g: 'D', w: 'прямо' },
+  { t: 'Зеркала вровень', a: 'Едешь вдоль ряда в 0,8 м: твоё зеркало против его зеркала, твоя корма — на полметра позади его кормы. Стоп.', g: 'D', w: 'прямо' },
   { t: 'Точка 1', a: 'Руль вправо до упора, медленно назад. Корма пошла в карман.', g: 'R', w: 'вправо до упора' },
   { t: 'Точка 2', a: 'Встал под 45°: в зеркале появился угол задней машины. Руль прямо, назад ещё полметра.', g: 'R', w: 'прямо' },
   { t: 'Точка 3', a: 'Руль влево до упора — нос заходит следом за кормой.', g: 'R', w: 'влево до упора' },
@@ -144,6 +143,37 @@ const ROW_FAR = [-1.6, 3.9, 9.2, 14.8, 20.1];
 
 const MARK_PHASES = [2, 3, 4];
 const MARK_AT = MARK_PHASES.map((ph) => PATH.findIndex((p) => p.phase === ph));
+
+/* Фазы 0 и 1 (заезд вдоль ряда и остановка по зеркалам) делят одну реплику: обе идут в D
+   с прямым рулём, поэтому объединение не расходится ни с картинкой, ни с телеметрией. */
+function stepOf(p) {
+  return p.phase === 0 ? 0 : Math.min(STEPS.length - 1, p.phase - 1);
+}
+
+/* Каждой реплике — равная доля прокрутки. Без этого доля считалась длиной участка пути:
+   замер на 1440×900 дал «Зеркала вровень» 315 px, «Точку 2» 30 px, а «Готово» не
+   показывалось вовсе — прокрутка кончалась раньше. Доворот на 45° и есть главный ориентир
+   методики, и он пролетал за полщелчка колеса. Машина внутри реплики едет чуть неравномерно
+   (короткие участки растянуты, длинный заезд сжат), зато читается каждая. */
+const STEP_SPAN = STEPS.map((_, k) => {
+  let a = -1;
+  let b = -1;
+  for (let i = 0; i < PATH.length; i++) {
+    if (stepOf(PATH[i]) !== k) continue;
+    if (a < 0) a = i;
+    b = i;
+  }
+  return a < 0 ? null : { a, b };
+});
+
+function indexAt(t) {
+  const n = STEPS.length;
+  const k = Math.min(n - 1, Math.floor(t * n));
+  const seg = STEP_SPAN[k];
+  if (!seg) return Math.min(PATH.length - 1, Math.round(t * (PATH.length - 1)));
+  const u = Math.min(1, Math.max(0, t * n - k));
+  return Math.round(seg.a + (seg.b - seg.a) * u);
+}
 
 function corners(p, len = CAR_L, wid = CAR_W, back = OV_R) {
   const c = Math.cos(p.th);
@@ -467,15 +497,10 @@ export function mount(root) {
     return { gapK, p };
   }
 
-  function stepOf(p) {
-    if (p.phase === 0) return p.x > POCKET_A + OV_R - 1.7 ? 1 : 0;
-    return Math.min(6, p.phase);
-  }
-
   function paint(prog) {
     const open = reduce ? 1 : Math.min(1, Math.max(0, (prog - 0.02) / 0.14));
     const t = reduce ? 1 : Math.min(1, Math.max(0, (prog - 0.09) / 0.87));
-    const i = Math.min(PATH.length - 1, Math.round(t * (PATH.length - 1)));
+    const i = indexAt(t);
 
     setView(open);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);

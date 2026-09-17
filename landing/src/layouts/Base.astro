@@ -54,6 +54,11 @@ body{margin:0;background:var(--asphalt);color:var(--ink);
 img{max-width:100%;height:auto;display:block}
 a{color:var(--beam);text-decoration:none}
 a:hover{text-decoration:underline;text-underline-offset:3px}
+/* Ссылка внутри текста подчёркнута всегда: одним цветом её не отличить тем, кто цвет
+   различает хуже, и Lighthouse считает это ошибкой доступности (link-in-text-block).
+   Кнопкам (.btn) и строкам навигации подчёркивание не нужно — они и так читаются как
+   элементы управления. */
+article a,.card a,.cta-note a,.final-alt a{text-decoration:underline;text-underline-offset:3px}
 :focus-visible{outline:2px solid var(--beam);outline-offset:3px;border-radius:4px}
 ::selection{background:rgba(159,208,255,.24)}
 
@@ -173,6 +178,7 @@ article li b{color:var(--ink)}
     <nav>
       <a href="/play/">Тренажёр</a>
       <a href="/metodika/">Методика</a>
+      <a href="/avtoshkolam/">Автошколам</a>
     </nav>
   </div>
 </footer>
