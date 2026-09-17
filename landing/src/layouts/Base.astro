@@ -114,8 +114,16 @@ header.site nav a{color:var(--mute);font-size:.94rem;font-weight:500;
   display:inline-flex;align-items:center;min-height:44px}
 header.site nav a:hover{color:var(--ink);text-decoration:none}
 header.site nav a[aria-current]{color:var(--ink)}
-header.site nav a.btn{color:#08111b;padding:.5em 1.15em;font-size:.92rem;font-weight:650}
-header.site nav a.btn:hover{color:#08111b}
+/* Вход в тренажёр акцентируется ЦВЕТОМ, а не формой. Ни залитая капсула, ни рамка вокруг
+   слова здесь не годятся: и то и другое — подпись шаблонной страницы, и обе формы дают на
+   первом экране вторую громкую кнопку рядом с главной в герое. Жёлтый `--kerb` в шапке не
+   встречается больше нигде, кроме стрелки в знаке бренда, а все ссылки сайта синие
+   (`a{color:var(--beam)}`) — поэтому единственное жёлтое слово не путается ни с одной
+   ссылкой и не спорит с кнопкой героя. Формы у кнопки в шапке нет совсем. */
+header.site nav a.btn{background:none;border:0;border-radius:0;padding:.46em 0;
+  margin-left:4px;color:var(--kerb);font-size:.98rem;font-weight:700;letter-spacing:-.01em}
+header.site nav a.btn:hover{color:#ffe680;text-decoration:none}
+header.site nav a.btn:active{transform:none}
 @media (max-width:620px){header.site nav a.nav-hide{display:none}}
 @media (max-width:400px){.brand span{display:none}}
 
