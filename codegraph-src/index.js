@@ -506,6 +506,9 @@
 
 
 
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -5377,16 +5380,37 @@ function setGearbox(g){
 const gearboxBtnHTML=()=>'<div class="gbrow"><span class="gbl">Коробка передач</span><span class="gbseg">'
   +'<button data-act="gearbox:AT"'+(mtOn()?'':' class="on"')+'>автомат</button>'
   +'<button data-act="gearbox:MT"'+(mtOn()?' class="on"':'')+'>механика</button></span></div>';
-/* нижняя строка клавиш была статичной и всегда рассказывала про АКПП: на механике
-   половина её команд не существует. Зовётся при старте и при смене коробки */
+/* подсказка клавиш — столбик слева, одна команда на строку: одной строкой через « · » она
+   тянулась через весь экран поверх миникарты и не читалась. Порядок — по важности для езды:
+   не влезающие в полосу строки уходят за последнюю, «H — справка», где есть полный список */
+const HINT_AT=[['Enter','сменить направление D ⇄ R'],['W','газ'],['S / пробел','тормоз'],['P','паркинг'],
+  ['Q / E','поворотники'],[', и .','селектор по одной']];
+const HINT_MT=[['левый Shift','сцепление'],['Enter','1 ⇄ R'],['W','газ'],['S / пробел','тормоз'],['Y','завестись'],
+  ['Q / E','поворотники'],[', и .','передачи по одной (Б и Ю)']];
+const HINT_ALL=[['J','ручник'],['V','вид из салона'],['B','габариты (3 уровня)'],['O','ориентиры'],
+  ['U','настройка зеркал'],['`','коробка автомат ⇄ механика'],['I','панели'],['L','выбор уровня'],
+  ['H','справка и все клавиши']];
 function syncHintLine(){
   const el=$('hint'); if(!el) return;
-  el.textContent = (mtOn()
-    ? 'левый Shift — сцепление · Enter — 1 ⇄ R · , и . — передачи по одной (на русской раскладке это Б и Ю) · Y — завестись'
-    : 'Enter — сменить направление D ⇄ R · P — паркинг · , и . — селектор по одной')
-    + ' · ` — коробка автомат ⇄ механика · W — газ, S / пробел — тормоз · Q / E — поворотники'
-    + ' · J — ручник · V — из салона · O — ориентиры · B — габариты (3 уровня) · U — настройка зеркал'
-    + ' · I — панели · L — выбор уровня · H — справка';
+  el.innerHTML=(mtOn()?HINT_MT:HINT_AT).concat(HINT_ALL)
+    .map(r=>'<div class="hr"><b>'+r[0]+'</b>'+r[1]+'</div>').join('');
+  hintKey=''; layoutHint();
+}
+/* полоса под блок — от низа карточки уровня или левого зеркала до верха панели руля
+   (drawSteerPanel в render стоит на H−186): блок обязан в неё влезать, а не перекрывать */
+const HINT_ROW=16, HINT_PAD=12;
+let hintKey='', hintTick=0;
+function layoutHint(){
+  const el=$('hint'), tl=$('topleft'); if(!el||!tl||!el.children.length) return;
+  let top=tl.getBoundingClientRect().bottom;
+  if(opt.mirrors){ const m=mirrorRects().left; top=Math.max(top, m.y+m.h); }
+  const room=Math.floor((H-194)-(top+10));
+  const key=room+'|'+el.children.length;
+  if(key===hintKey) return;
+  hintKey=key;
+  const rows=el.children, n=rows.length, fit=Math.floor((room-HINT_PAD)/HINT_ROW);
+  el.classList.toggle('none', fit<2);
+  for(let i=0;i<n;i++) rows[i].classList.toggle('off', !(i===n-1 || i<fit-1));
 }
 /* диагностика механики из консоли: в игре нет лог-инфраструктуры, а per-frame console.log
    на 120 подшагах в секунду сам стал бы багом. window.mtDebug() отдаёт снимок по запросу */
@@ -7694,6 +7718,7 @@ function updateHUD(){
     else coachCard('act','',genericCoach(curS));
   }
   coachGoalTick();
+  if(++hintTick>=15){ hintTick=0; layoutHint(); }
 }
 
 /* ---------- гайд первого троганья ---------- */
