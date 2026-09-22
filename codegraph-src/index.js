@@ -489,6 +489,23 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -8108,10 +8125,7 @@ function winHTML(){
     +'<p>Ошибка: <b>'+cm+' см</b> · оценка: <b>'+precGrade()+'</b>'
     +(game.hits?' · касаний: <b>'+game.hits+'</b>':'')+'</p>' + rec + blind
     +(level.def.transfer?'<h2>Запомни для реальной дороги</h2><p>'+level.def.transfer+'</p>':'')
-    + lvlListHTML()
-    +'<button data-act="next">Следующий уровень (N)</button> '
-    +'<button data-act="again" class="ghost">Повторить (R)</button> '
-    +'<button data-act="feedback:win" class="ghost">✉ Что-то не так</button>';
+    + winActsHTML();
   }
   const rec = p ? '<p style="color:#93a7bd;font-size:13px">Этот уровень пройден <b>'+p.n+'</b> раз'
       +(p.clean?', из них <b>'+p.clean+'</b> без касаний':'')
@@ -8126,10 +8140,18 @@ function winHTML(){
   +'<p>Время: <b>'+game.t.toFixed(1)+' с</b> · касаний: <b>'+game.hits+'</b>'
   +(game.hits===0?' — чисто, без единого касания.':'')+'</p>' + rec + advice
   +(level.def.transfer?'<h2>Запомни для реальной дороги</h2><p>'+level.def.transfer+'</p>':'')
-  + lvlListHTML()
-  +'<button data-act="next">Следующий уровень (N)</button> '
-  +'<button data-act="again" class="ghost">Повторить (R)</button> '
-  +'<button data-act="feedback:win" class="ghost">✉ Что-то не так</button>'; }
+  + winActsHTML(); }
+/* итоги урока заканчиваются тремя ходами и ничем больше: список всех уровней здесь
+   заслонял итоги, а выбрать уровень можно из сетки по кнопке. Имя следующего стоит
+   рядом с кнопкой — игрок видит, куда его ведут, до нажатия */
+function winActsHTML(){
+  const nx=LEVELS[(game.li+1)%LEVELS.length];
+  return '<div class="winacts">'
+    +'<button data-act="pick" class="ghost">Выбрать уровень</button>'
+    +'<button data-act="again" class="ghost">Повторить (R)</button>'
+    +'<span class="nextgo"><button data-act="next">Следующий уровень (N)</button>'
+    +'<span class="nextname">'+(nx.custom?'★ ':'')+esc(nx.name)+'</span></span></div>'
+    +'<p class="winfb"><button data-act="feedback:win" class="linkbtn">✉ Что-то не так — написать</button></p>'; }
 function toggleHelp(){
   if(helpOpen){ hideOv(); return; }
   if(!paused){ showOv(helpHTML()); helpOpen=true; return; }

@@ -188,6 +188,16 @@ button.ghost{background:transparent;border-color:rgba(255,255,255,.16);color:#b9
 button.ghost:hover{background:rgba(159,208,255,.08);border-color:rgba(159,208,255,.35);color:#dce9f5}
 /* ровный ритм ряда: 8px между соседями, 18px над рядом — кнопки не слипаются в стену */
 #overlay button{margin:18px 8px 0 0}
+/* три хода итогов — один ряд; имя следующего уровня подписано под его кнопкой: сбоку оно
+   в карточку 760 px не помещалось и сталкивало главную кнопку на вторую строку */
+#overlay .winacts{display:flex;flex-wrap:wrap;align-items:flex-start;gap:10px 8px;margin-top:18px}
+#overlay .winacts button{margin:0}
+#overlay .nextgo{display:flex;flex-direction:column;align-items:stretch;gap:5px;min-width:0;max-width:300px}
+#overlay .nextname{font-size:12.5px;line-height:1.35;color:#9fd0ff;text-align:center}
+#overlay .winfb{margin-top:10px}
+#overlay button.linkbtn{margin:0;padding:4px 0;border:0;background:none;color:#93a7bd;
+  font-size:12.5px;font-weight:500;text-decoration:underline}
+#overlay button.linkbtn:hover{color:#dce9f5;background:none}
 /* коробка выбирается парой сегментов, а не кнопкой-переключателем: надпись «Коробка: автомат»
    читается как статус, и владелец не нашёл, чем её сменить */
 .gbrow{display:flex;align-items:center;gap:12px;margin:18px 0 0;flex-wrap:wrap}
@@ -405,6 +415,13 @@ body.compact #overlay p{font-size:13px;line-height:1.45}
 body.compact #overlay li{font-size:12.5px;line-height:1.6}
 body.compact #overlay button{width:100%;margin-top:12px;padding:14px;font-size:16px}
 body.compact #overlay .grid2{grid-template-columns:1fr 1fr;gap:2px 14px}
+/* на телефоне три хода итогов стоят в один ряд: столбиком во всю ширину «Следующий уровень»
+   уезжал за нижний край, и главную кнопку надо было искать прокруткой */
+body.compact #overlay .winacts{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:8px;align-items:start;margin-top:12px}
+body.compact #overlay .winacts button{margin:0;padding:12px 8px;font-size:14.5px}
+body.compact #overlay .nextgo{gap:4px;max-width:none}
+body.compact #overlay .nextname{font-size:12px;text-align:center}
+body.compact #overlay button.linkbtn{width:auto;margin:0;padding:4px 0;font-size:12.5px}
 /* в салоне HUD прижимается к нижней кромке, чтобы не закрывать руль и приборку */
 body.fp #bar{left:10px;right:10px;bottom:6px;gap:6px}
 body.fp #bar .cell{padding:4px 9px}
@@ -8108,10 +8125,7 @@ function winHTML(){
     +'<p>Ошибка: <b>'+cm+' см</b> · оценка: <b>'+precGrade()+'</b>'
     +(game.hits?' · касаний: <b>'+game.hits+'</b>':'')+'</p>' + rec + blind
     +(level.def.transfer?'<h2>Запомни для реальной дороги</h2><p>'+level.def.transfer+'</p>':'')
-    + lvlListHTML()
-    +'<button data-act="next">Следующий уровень (N)</button> '
-    +'<button data-act="again" class="ghost">Повторить (R)</button> '
-    +'<button data-act="feedback:win" class="ghost">✉ Что-то не так</button>';
+    + winActsHTML();
   }
   const rec = p ? '<p style="color:#93a7bd;font-size:13px">Этот уровень пройден <b>'+p.n+'</b> раз'
       +(p.clean?', из них <b>'+p.clean+'</b> без касаний':'')
@@ -8126,10 +8140,18 @@ function winHTML(){
   +'<p>Время: <b>'+game.t.toFixed(1)+' с</b> · касаний: <b>'+game.hits+'</b>'
   +(game.hits===0?' — чисто, без единого касания.':'')+'</p>' + rec + advice
   +(level.def.transfer?'<h2>Запомни для реальной дороги</h2><p>'+level.def.transfer+'</p>':'')
-  + lvlListHTML()
-  +'<button data-act="next">Следующий уровень (N)</button> '
-  +'<button data-act="again" class="ghost">Повторить (R)</button> '
-  +'<button data-act="feedback:win" class="ghost">✉ Что-то не так</button>'; }
+  + winActsHTML(); }
+/* итоги урока заканчиваются тремя ходами и ничем больше: список всех уровней здесь
+   заслонял итоги, а выбрать уровень можно из сетки по кнопке. Имя следующего стоит
+   рядом с кнопкой — игрок видит, куда его ведут, до нажатия */
+function winActsHTML(){
+  const nx=LEVELS[(game.li+1)%LEVELS.length];
+  return '<div class="winacts">'
+    +'<button data-act="pick" class="ghost">Выбрать уровень</button>'
+    +'<button data-act="again" class="ghost">Повторить (R)</button>'
+    +'<span class="nextgo"><button data-act="next">Следующий уровень (N)</button>'
+    +'<span class="nextname">'+(nx.custom?'★ ':'')+esc(nx.name)+'</span></span></div>'
+    +'<p class="winfb"><button data-act="feedback:win" class="linkbtn">✉ Что-то не так — написать</button></p>'; }
 function toggleHelp(){
   if(helpOpen){ hideOv(); return; }
   if(!paused){ showOv(helpHTML()); helpOpen=true; return; }
