@@ -101,8 +101,14 @@ const OPS = [
 ];
 const NUM = /(?<![\w.])(\d+(?:\.\d+)?)(?![\w.])/g;
 
+/* index.html читается ОДИН раз за процесс: build() зовётся на каждом мутанте, и правка
+   файла посреди прогона сдвинула бы позиции — воркер применял бы не того мутанта,
+   которого записал в результат, а прогон печатал бы осмысленные с виду числа */
+let _html = null;
+export function sourceHtml() { return (_html ??= readFileSync(SRC, 'utf8')); }
+
 export function mutants() {
-  const html = readFileSync(SRC, 'utf8');
+  const html = sourceHtml();
   const { a } = scriptRange(html);
   const code = html.slice(a, scriptRange(html).b);
   const mask = maskCode(code);
