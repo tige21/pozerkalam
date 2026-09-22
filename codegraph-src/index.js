@@ -2306,14 +2306,33 @@ const EXAM_POCK={
 function inPocket(p){
   return s=>Math.abs(s.u-p.u)<p.w/2+1.0 && Math.abs(s.v-p.v)<p.l/2+0.15;
 }
-/* фазе «уступи» нужно знать, когда путь освободился: без этого карточка держала бы
-   «стой» вечно, и ученик стоял у кольца до таймаута */
-function actorNear(u, v, d){
+/* сколько секунд до ближайшей помехи — то есть есть ли окно, чтобы выехать.
+   Раньше фаза «уступи» смотрела, есть ли машина РЯДОМ (actorNear). В потоке машина рядом
+   есть всегда, и карточка «пропусти» висела бы до таймаута; а стоящий сзади в твоей же
+   полосе — вообще не помеха.
+   Точка конфликта берётся НЕ там, где стоит машина, а на 6 м впереди неё: у знака «уступи»
+   водитель стоит ДО главной, и по его собственному месту поток проходит стороной — окно
+   всегда читалось бы свободным. Время подъезда чужой машины считается по её петле, а не по
+   прямой: на кольце и в повороте прямая врёт на всю дугу.
+   Возврат в секундах, 99 — путь свободен. */
+const GAP_AHEAD=6.0, GAP_R=6.5, GAP_MAX=9;
+function trafficGap(u, v, d){
+  const R=d||GAP_R, f0=fuv(car.th), cu=u+f0.u*GAP_AHEAD, cv=v+f0.v*GAP_AHEAD;
+  let best=99;
   for(const a of level.actors){
-    if(!a.act.started || a.act.done) continue;
-    if(Math.hypot(a.u-u, a.v-v) < d) return true;
+    const s=a.act;
+    if(!s.started || s.done || Math.abs(s.v)<0.3) continue;
+    /* сзади в твоём же ряду — не помеха: он ждёт вместе с тобой */
+    if((a.u-u)*f0.u+(a.v-v)*f0.v<0 && Math.abs(angNorm(a.yaw-car.th))<rad(60)) continue;
+    const sp=Math.max(0.5, Math.abs(s.v));
+    for(let t=0.5;t<=GAP_MAX;t+=0.5){
+      let pu, pv;
+      if(s.rt){ const p=trafPose(s.rt, s.s+sp*t, _tp); pu=p.u; pv=p.v; }
+      else { const f=fuv(a.yaw); pu=a.u+f.u*sp*t; pv=a.v+f.v*sp*t; }
+      if(Math.hypot(pu-cu, pv-cv)<=R){ if(t<best) best=t; break; }
+    }
   }
-  return false;
+  return best;
 }
 
 const SIGN_H=2.15;
@@ -2348,23 +2367,302 @@ function emitGuide(o){
    плюс защёлка _hitByPlayer для экзаменационного скоринга */
 function actorCar(u,v,yaw,col,wps,sp,trig){
   const o=pcar(u,v,yaw,col);
-  o.act={wps, sp:sp||2.0, trig:trig||null, i:0, started:!trig, done:false,
+  /* v — живая скорость, sp — желаемая. Сценарный статист стартует сразу на своей скорости:
+     иначе разгон с нуля сдвинул бы его по времени, а под него откалиброваны показы 26/30/31 */
+  o.act={wps, sp:sp||2.0, v:sp||2.0, trig:trig||null, i:0, started:!trig, done:false,
          u0:u, v0:v, yaw0:o.yaw};
   return o;
 }
+
+/* ---------- поток машин ----------
+   Город с одним статистом не учит главному — кого пропускать, а кого нет. Поток идёт по
+   замкнутым петлям, собранным ТЕМ ЖЕ маршрутизатором, который рисует игроку зелёную линию
+   (cityRoute): машина потока не рулит, а движется по своей полилинии, поэтому она физически
+   не может срезать бордюр или уйти на встречную — отвечать остаётся только за продольное
+   поведение: дистанцию, светофор и пропуск поперечных.
+   Петли идут ПО ПРАВЫМ ПОВОРОТАМ (кроме выхода с кольца): цепочка левых поворотов через
+   встречный поток в плотном трафике запирает перекрёсток насмерть.
+   Поток создаётся ПОСЛЕ computeIdealPath (см. loadLevel): в headless-прогоне показа
+   actorsTick не зовётся, и созданные заранее машины встали бы поперёк идеальной линии. */
+const TRAF={ sp:6.2, acc:1.3, dec:2.9, gap:6.2, see:28, lat:1.8, lon:2.6, cap:16, step:2.4 };
+/* метров дороги на одну машину: чем меньше, тем гуще поток */
+const TRAF_SPACING={calm:115, normal:74, dense:48};
+const TRAF_NAMES={calm:'спокойный', normal:'обычный', dense:'плотный'};
+/* за этой дальностью машина потока рисуется коробкой, а тень ей не рисуется вовсе.
+   Замер на кольце (CPU×4): девять машин добавляли 402 грани к 754 и 2,5 мс к кадру —
+   лофт из 13 сечений там, где машина занимает полсантиметра экрана */
+function trafLod(){ return qDetail() ? 32 : 20; }
+const TRAF_ORDER=['calm','normal','dense'];
+const TRAF_COLS=[1,2,3,5,6,7];
+const _tp={u:0, v:0, yaw:0}, _tq={u:0, v:0, yaw:0}, _ex={lat:0, lon:0};
+let trafDbg=false;      /* ?traffic=1 — покадровый разбор причин торможения */
+
+function trafKey(){
+  /* экзамен всегда идёт в плотном потоке: он обязан быть одинаковым у всех, как и
+     выключенные там маркеры — настройка игрока сюда не достаёт */
+  let k = (level && level.def && level.def.examRoute) ? 'dense'
+        : (TRAF_SPACING[opt.traffic] ? opt.traffic : 'normal');
+  /* на телефоне кадр упирается в JavaScript (число граней), и лишние машины бьют по нему
+     сильнее, чем по пикселям: ступень плотности вниз */
+  if(MOB && k!=='calm') k = TRAF_ORDER[TRAF_ORDER.indexOf(k)-1];
+  return k;
+}
+/* замкнутая полилиния по полосам: каждый участок строит cityRoute, стыки — его же дуги */
+function trafPath(wps){
+  const pts=[];
+  const add=(p)=>{ const n=pts.length;
+    if(!n || Math.hypot(pts[n-1].u-p.u, pts[n-1].v-p.v)>0.35) pts.push({u:p.u, v:p.v}); };
+  for(let i=0;i<wps.length;i++){
+    const A=wps[i], B=wps[(i+1)%wps.length];
+    const r=cityRoute(A, B, {side:'right'});
+    if(!r || r.pts.length<2){ console.warn('[traffic] петля разорвана на участке '+i); return null; }
+    /* сырые путевые точки выбрасываем: cityRoute начинает и заканчивает линию ровно там, где
+       стоит машина игрока, а это ОСЬ улицы, а не центр полосы. С ними каждая петля выходила на
+       осевую и две встречные машины стартовали в одной точке */
+    for(const p of r.pts){
+      if(Math.hypot(p.u-A.u, p.v-A.v)<0.02 || Math.hypot(p.u-B.u, p.v-B.v)<0.02) continue;
+      add(p);
+    }
+  }
+  return pts.length<8 ? null : trafClose(pts);
+}
+/* накопленная длина вдоль замкнутой ломаной — по ней машина и ходит (trafPose) */
+function trafClose(pts){
+  const cum=[0];
+  for(let i=1;i<pts.length;i++) cum.push(cum[i-1]+Math.hypot(pts[i].u-pts[i-1].u, pts[i].v-pts[i-1].v));
+  const tail=Math.hypot(pts[0].u-pts[pts.length-1].u, pts[0].v-pts[pts.length-1].v);
+  return {pts, cum, len:cum[cum.length-1]+tail};
+}
+function trafPose(rt, s, out){
+  const L=rt.len; s=((s%L)+L)%L;
+  const c=rt.cum, n=rt.pts.length;
+  let lo=0, hi=n-1;
+  while(lo<hi){ const m=(lo+hi+1)>>1; if(c[m]<=s) lo=m; else hi=m-1; }
+  const a=rt.pts[lo], b=rt.pts[(lo+1)%n];
+  const seg=((lo+1<n ? c[lo+1] : L)-c[lo])||1;
+  const t=clamp((s-c[lo])/seg, 0, 1);
+  out=out||{};
+  out.u=a.u+(b.u-a.u)*t; out.v=a.v+(b.v-a.v)*t;
+  out.yaw=Math.atan2(b.u-a.u, b.v-a.v);
+  return out;
+}
+function trafCar(rt, s0, col){
+  const p=trafPose(rt, s0);
+  const o=pcar(p.u, p.v, 0, col);
+  o.yaw=p.yaw; o.hw=o.w/2; o.hl=o.l/2;
+  o.act={flow:true, rt, s:s0, s0, sp:TRAF.sp, v:TRAF.sp, started:true, done:false,
+         wps:null, i:0, trig:null, u0:p.u, v0:p.v, yaw0:p.yaw};
+  return o;
+}
+/* городские петли на общей карте: западный прямоугольник и восточная — через кольцо.
+   Точки стоят посреди улиц, а не в узлах: тогда весь поворот внутри перекрёстка рисует
+   cornerArc маршрутизатора, и машина не срезает через центр заплатки */
+function trafCityLoops(){
+  if(!cityGraph()) return null;
+  const out=[];
+  const A=trafPath([{u:0,v:-35},{u:-40,v:-70},{u:-78,v:-35},{u:-40,v:0}]);
+  const B=trafPath([{u:0,v:-35},{u:40,v:0},{u:90,v:0},{u:20,v:0}]);
+  if(A) out.push(A);
+  if(B) out.push(B);
+  return out;
+}
+/* уровень 26 — своя короткая геометрия без графа: главная тянется вдоль v=0, полосы
+   ±1,65. Петля разворачивается за пределами игровой площадки, в 60 м от выезда */
+function trafYardLoops(){
+  const U=58, pts=[];
+  for(let u=-U;u<=U;u+=4) pts.push({u, v:-1.65});
+  for(let k=1;k<=6;k++){ const a=Math.PI*(k/7)-Math.PI/2;
+    pts.push({u:U+Math.cos(a)*1.9, v:Math.sin(a)*1.65}); }
+  for(let u=U;u>=-U;u-=4) pts.push({u, v:1.65});
+  for(let k=1;k<=6;k++){ const a=Math.PI*(k/7)+Math.PI/2;
+    pts.push({u:-U+Math.cos(a)*1.9, v:-Math.sin(a)*1.65}); }
+  return [trafClose(pts)];
+}
+function cycleTraffic(){
+  const i=(TRAF_ORDER.indexOf(opt.traffic)+1)%TRAF_ORDER.length;
+  opt.traffic=TRAF_ORDER[i];
+  try{ localStorage.setItem('trainer_traffic', opt.traffic); }catch(e){}
+  /* уровень перезагружаем: машины расставляются в trafficInit при загрузке, а менять
+     плотность на ходу — значит ронять машины посреди перекрёстка */
+  const on=level && level.def && level.def.traffic;
+  toast('Трафик: '+TRAF_NAMES[opt.traffic]+(on?'':' — на этом уровне потока нет'), 3);
+  if(on) loadLevel(game.li);
+}
+const TRAF_START_CLEAR=15;      /* пустой участок петли вокруг стартовой позы игрока, м */
+function trafNearStart(rt, s0){
+  const p=trafPose(rt, s0, _tp);
+  return Math.hypot(p.u-level.start.u, p.v-level.start.v) < TRAF_START_CLEAR;
+}
+function trafficInit(){
+  const def=level.def;
+  if(!def.traffic) return;
+  const loops = def.traffic==='yard' ? trafYardLoops() : trafCityLoops();
+  if(!loops || !loops.length){ console.warn('[traffic] петли не построены: '+def.name); return; }
+  const key=trafKey(), spacing=TRAF_SPACING[key];
+  let made=0, li=0;
+  for(const rt of loops){
+    const k=clamp(Math.round(rt.len/spacing), 1, TRAF.cap-made);
+    /* сдвиг фазы на петлю: машины разных петель не выходят на общую улицу строем */
+    const ph=rt.len*0.37*(li++);
+    for(let i=0;i<k;i++){
+      /* стартовая поза игрока на уровнях 30 и 31 стоит ровно в полосе потока: машина,
+         заспавненная там, пересекалась с игроком на первом же кадре, а _hitByPlayer
+         защёлкивается на любом пересечении OBB — попытка сгорала на 0,1 с, не тронувшись */
+      let s0=rt.len*i/k+ph;
+      for(let g=0; g<4 && trafNearStart(rt, s0); g++) s0+=TRAF_START_CLEAR;
+      const o=trafCar(rt, s0, PALETTE[TRAF_COLS[made%TRAF_COLS.length]]);
+      level.obs.push(o); level.rend.push(o); level.actors.push(o); made++;
+    }
+    if(made>=TRAF.cap) break;
+  }
+  console.warn('[FIX:traffic] '+def.name+': петель '+loops.length+', машин '+made+', плотность '+key);
+}
+/* до чего свободен путь впереди. Одна проверка закрывает и очередь в своей полосе, и
+   конфликт на перекрёстке: чужая машина попадает в коридор моей будущей траектории.
+   Приоритет статический (по индексу) — без него две машины на перекрёстке уступают друг
+   другу до бесконечности. Игроку уступают все: поток тормозит, а не таранит, а за то, что
+   он влез, игрока наказывает детектор непропуска */
+/* габариты чужой машины, спроецированные на мои оси: поперёк моей полосы она занимает свою
+   ДЛИНУ, а не ширину. По центрам гейт пропускал машину, вставшую поперёк перекрёстка (центр
+   в 2,55 м от полосы, кузов — прямо на пути), и поток въезжал ей в борт.
+   Результат кладём в общий _ex: функция зовётся сотни раз за кадр */
+function carExtent(yaw, f, r){
+  const or_=ruv(yaw), of_=fuv(yaw);
+  _ex.lat=HALF_W*Math.abs(or_.u*r.u+or_.v*r.v)+HALF_L*Math.abs(of_.u*r.u+of_.v*r.v);
+  _ex.lon=HALF_W*Math.abs(or_.u*f.u+or_.v*f.v)+HALF_L*Math.abs(of_.u*f.u+of_.v*f.v);
+  return _ex;
+}
+function trafBlock(a, ai){
+  const s=a.act, rt=s.rt, lim=TRAF.see, pb=bodyPos();
+  const n=Math.ceil(lim/TRAF.step);
+  for(let k=1;k<=n;k++){
+    const d=k*TRAF.step;
+    let p;
+    if(rt) p=trafPose(rt, s.s+d, _tp);
+    else { const af=fuv(a.yaw); _tp.u=a.u+af.u*d; _tp.v=a.v+af.v*d; _tp.yaw=a.yaw; p=_tp; }
+    const f=fuv(p.yaw), r=ruv(p.yaw);
+    /* вблизи запас шире, вдали уже: иначе съезжающиеся в одну полосу машины двух петель
+       не видят друг друга, пока не сойдутся бортами */
+    const mLat = d<14 ? 0.6 : 0.25;
+    let du=pb.u-p.u, dv=pb.v-p.v;
+    const pe=carExtent(car.th, f, r);
+    /* до игрока держим лишние 2,4 м: его машина стоит в полосе целыми минутами, а любое
+       касание кузова считается наездом ИГРОКА (_hitByPlayer защёлкивается на пересечении
+       OBB, кто бы ни двигался) — и попытка сгорала бы за то, что в него въехали сзади */
+    if(Math.abs(du*r.u+dv*r.v)<HALF_W+pe.lat+mLat && Math.abs(du*f.u+dv*f.v)<HALF_L+pe.lon+0.4)
+      return Math.max(0, d+du*f.u+dv*f.v-2.4);
+    const tMe=d/Math.max(0.7, s.v);
+    for(let j=0;j<level.actors.length;j++){
+      if(j===ai) continue;
+      const o=level.actors[j], os=o.act;
+      if(!os.started || os.done) continue;
+      const ov=Math.abs(os.v), stopped=ov<0.25;
+      du=o.u-p.u; dv=o.v-p.v;
+      const lonC=du*f.u+dv*f.v, latC=du*r.u+dv*r.v;
+      const oe=carExtent(o.yaw, f, r), gLat=HALF_W+oe.lat+mLat, gLon=HALF_L+oe.lon+0.4;
+      const hitNow = Math.abs(latC)<=gLat && Math.abs(lonC)<=gLon;
+      /* кроме «где он сейчас», смотрим, где он будет, когда я доеду до этой точки: по
+         нынешнему месту слияние двух петель в одну полосу Ленина замечалось за 3 м —
+         тормозного пути не оставалось, и кузова налезали */
+      const of=stopped ? null : fuv(o.yaw);
+      const pu=stopped ? o.u : o.u+of.u*ov*tMe, pv=stopped ? o.v : o.v+of.v*ov*tMe;
+      du=pu-p.u; dv=pv-p.v;
+      /* у упреждённой точки ворота шире нынешних: предсказание по прямой на 4 с само по
+         себе врёт на полполосы, а узкие ворота пропускали слияние до самого борта */
+      const hitSoon = Math.abs(du*r.u+dv*r.v)<=gLat+0.4 && Math.abs(du*f.u+dv*f.v)<=gLon;
+      if(!hitNow && !hitSoon) continue;
+      /* попутный впереди — всегда помеха, даже если мы оба стоим: очередь на светофоре
+         разводить «правилом младшего индекса» нельзя, задний просто въедет в переднего */
+      if(hitNow && Math.abs(angNorm(o.yaw-p.yaw))<rad(60)) return Math.max(0, d+lonC);
+      /* стоящий — всегда помеха; если стоим оба, первым трогается младший индекс, иначе
+         две машины на перекрёстке ждут друг друга вечно */
+      if(stopped){ if(Math.abs(s.v)>=0.25 || j<ai) return Math.max(0, d+lonC); continue; }
+      /* кто уже стоит поперёк пути — помеха независимо от приоритета: упреждение уводило
+         его «в сторону» за секунду и позволяло ехать сквозь машину, которая прямо тут.
+         Сойдутся оба — оба встанут, и правило «оба стоим» их разведёт */
+      if(hitNow) return Math.max(0, d+lonC);
+      /* уступает тот, кто приедет в точку конфликта ПОЗЖЕ — живое правило разъезда.
+         Статический приоритет по индексу пропускал удар в борт: машина видела
+         приоритетного сбоку, а он её в своём коридоре — нет */
+      const tHim=Math.hypot(o.u-p.u, o.v-p.v)/Math.max(0.7, ov);
+      if(tHim<tMe-0.15 || (Math.abs(tHim-tMe)<=0.15 && j<ai)) return d;
+    }
+  }
+  return lim;
+}
+/* конфликт двух траекторий, а не коридор перед носом. Прямолинейное упреждение внутри
+   перекрёстка врёт: обе машины там поворачивают, и слияние замечалось, когда тормозить
+   было уже поздно. Здесь обе позиции берутся с их собственных петель — это точный ответ
+   на вопрос «где мы окажемся оба через t секунд».
+   Считается только для едущих и только в 24 м: стоящего ловит основной коридор. */
+function trafConflict(a, ai){
+  const s=a.act, rt=s.rt;
+  if(!rt || s.v<0.2) return TRAF.see;
+  let best=TRAF.see;
+  for(let j=0;j<level.actors.length;j++){
+    if(j===ai) continue;
+    const o=level.actors[j], os=o.act;
+    if(!os.rt || !os.started || os.done || Math.abs(os.v)<0.25) continue;
+    if(Math.hypot(o.u-a.u, o.v-a.v)>24) continue;
+    for(let k=1;k<=4;k++){
+      const t=k*0.8;
+      const me=trafPose(rt, s.s+s.v*t, _tp), him=trafPose(os.rt, os.s+os.v*t, _tq);
+      if(Math.hypot(him.u-me.u, him.v-me.v)>3.2) continue;
+      /* уступает тот, кому до точки конфликта ДАЛЬШЕ: ближний успевает уйти первым, и
+         разъезд получается детерминированным — при равенстве решает индекс */
+      if(os.v<s.v-0.35 || (Math.abs(os.v-s.v)<=0.35 && j<ai)) best=Math.min(best, s.v*t);
+      break;
+    }
+  }
+  return best;
+}
+/* красный и жёлтый держат поток так же, как игрока: машина, проехавшая линию, идёт дальше */
+function trafLight(a){
+  const c=level.city;
+  if(!c || !c.stoplines || !c.stoplines.length) return TRAF.see;
+  const f=fuv(a.yaw);
+  let best=TRAF.see;
+  for(const sl of c.stoplines){
+    if(!sl.light || !lightStops(sl.light)) continue;
+    const lf=fuv(sl.yaw), lr=ruv(sl.yaw);
+    if(f.u*lf.u+f.v*lf.v<0.6) continue;
+    const s=(a.u-sl.u)*lf.u+(a.v-sl.v)*lf.v;
+    if(s>-1.0 || s<-TRAF.see) continue;
+    if(Math.abs((a.u-sl.u)*lr.u+(a.v-sl.v)*lr.v)>sl.w/2) continue;
+    best=Math.min(best, -s-1.0+TRAF.gap);
+  }
+  return best;
+}
+/* тормозной путь до нужного зазора: скорость падает плавно, а не ступенькой */
+function trafSpeed(d){
+  if(d>=TRAF.see) return TRAF.sp;
+  return clamp(Math.sqrt(2*TRAF.dec*Math.max(0, d-TRAF.gap)), 0, TRAF.sp);
+}
 function actorsTick(dt){
-  for(const a of level.actors){
-    const s=a.act;
+  for(let i=0;i<level.actors.length;i++){
+    const a=level.actors[i], s=a.act;
     if(s.done) continue;
     if(!s.started){ if(s.trig && s.trig(curS)) s.started=true; else continue; }
+    const block=Math.min(trafBlock(a,i), trafConflict(a,i), s.rt ? trafLight(a) : TRAF.see);
+    const want=Math.min(s.sp, trafSpeed(block));
+    s.v = want>s.v ? Math.min(want, s.v+TRAF.acc*dt) : Math.max(want, s.v-TRAF.dec*dt);
+    if(s.v<0.01) s.v=0;
+    if(trafDbg && s.rt && i===0)
+      console.warn('[FIX:traffic] a0 v='+s.v.toFixed(1)+' block='+block.toFixed(1)+' s='+s.s.toFixed(0));
+    if(s.rt){
+      s.s += s.v*dt;
+      const p=trafPose(s.rt, s.s, _tp);
+      a.u=p.u; a.v=p.v; a.yaw=p.yaw;
+      continue;
+    }
     const wp=s.wps[s.i];
     if(!wp){ s.done=true; continue; }
     const du=wp.u-a.u, dv=wp.v-a.v, d=Math.hypot(du,dv);
     if(d<0.45){ s.i++; if(s.i>=s.wps.length) s.done=true; continue; }
-    const want=Math.atan2(du,dv);
-    a.yaw += clamp(angNorm(want-a.yaw), -1.6*dt, 1.6*dt);
+    const want2=Math.atan2(du,dv);
+    a.yaw += clamp(angNorm(want2-a.yaw), -1.6*dt, 1.6*dt);
     const f=fuv(a.yaw);
-    a.u += f.u*s.sp*dt; a.v += f.v*s.sp*dt;
+    a.u += f.u*s.v*dt; a.v += f.v*s.v*dt;
   }
 }
 
@@ -3921,7 +4219,7 @@ const LEVELS = [
      hint:'Останови машину в зелёной зоне и включи P.', marks:['zone']}
   ] },
 
-{ name:'26 · Уступи дорогу',
+{ name:'26 · Уступи дорогу', traffic:'yard',
   strict:true,
   task:'Выезд на главную под знак «уступи»: остановиться у края, пропустить машину слева и повернуть направо со своим поворотником. Грубая ошибка (встречная, стоп-линия, столкновение) — попытка не засчитана: аварийная сразу, остальные со второй.',
   tip:'Знак «уступи» = чужая дорога. Правый поворотник, стоп у края, взгляд налево — и только в чистое окно.',
@@ -3942,7 +4240,7 @@ const LEVELS = [
   build(){
     const obs=[], dec=[], city={stoplines:[],zebras:[],oncoming:[],turnZones:[],yieldZones:[]};
     roadDec(dec, 0, -12, 0, 18, 3.3);
-    roadDec(dec, 0, 0, rad(90), 60, 3.3);
+    roadDec(dec, 0, 0, rad(90), 132, 3.3);
     obs.push(sign('yield', -4.4, -4.6, rad(180)));
     obs.push(actorCar(-27, -1.65, 90, PALETTE[3], [{u:27,v:-1.65}], 3.0, s=>s.v>-10));
     city.oncoming.push({u:-1.65, v:-9, yaw:0, w:3.3, l:9});
@@ -3970,11 +4268,16 @@ const LEVELS = [
      goal:{text:'остановка до голубой линии'},
      why:'Знак «уступи»: главная — чужая. Останавливаются там, откуда видно налево, но капот ещё не мешает потоку.',
      hint:'Остановись у края главной дороги, не высовывая нос.', marks:['edge','look']},
-    {when:s=>s.v<-4.6&&Math.abs(s.vel)<0.3,
-     icon:'👀', act:'Пропусти машину слева — её преимущество', blinker:'R',
-     goal:{text:'окно чистое — тогда выезжай'},
+    {when:s=>s.v<-4.6&&Math.abs(s.vel)<0.3&&s.gap<5,
+     icon:'⏹', act:'Стой: поток идёт — пропусти', blinker:'R',
+     goal:{metric:'gap',target:5,dir:'up'},
      why:'Уступить — значит не заставить её даже притормозить. Сомневаешься, успеешь ли, — значит не успеешь: стой.',
      hint:'Стой и пропускай машину слева; выезжай только в чистое окно.', marks:['look'], mirror:'left'},
+    {when:s=>s.v<-4.6&&Math.abs(s.vel)<0.3,
+     icon:'⬆', act:'Окно есть — выезжай направо и разгоняйся', move:'fwd', blinker:'R',
+     goal:{text:'выезд в это окно'},
+     why:'Выезжают в окно целиком: тронулся — разгоняйся до потока, медленный выезд подрезает следующего.',
+     hint:'Окно чистое — выезжай направо и сразу разгоняйся.', marks:['look','zone'], mirror:'left'},
     {when:s=>s.u<8&&deg(angNorm(s.th))<75,   /* до 75°, а не «пока v<-1.2»: окно в 3 м проскакивалось за секунду */
      icon:'↱', act:'Направо — и сразу разгоняйся', wheel:'right',
      goal:{metric:'ang',target:0,dir:'down'},   /* угол к оси цели (th=90) падает 90→0; «90 вверх» был «достигнут» со старта */
@@ -3993,7 +4296,7 @@ const LEVELS = [
    тот же перекрёсток на тренировке и на экзамене выглядит одинаково, и заученный
    ориентир работает в обоих местах. Полосы: Ленина (север) — трамвай 0…3,2, полосы
    3,2…6,5 и 6,5…9,8; Заводская (восток) — полосы v −3,3…0 и −6,6…−3,3 */
-{ name:'27 · Светофор: стоп на красный',
+{ name:'27 · Светофор: стоп на красный', traffic:'city',
   strict:true,
   task:'Подъехать к регулируемому перекрёстку, остановиться ДО стоп-линии на красный, тронуться на зелёный и встать в зоне. Грубая ошибка (запрещающий сигнал, встречная, столкновение) — попытка не засчитана.',
   tip:'Жёлтый — запрещающий: на него тормозят, а не «успевают проскочить». Линия — граница переднего бампера, а не середины машины.',
@@ -4053,7 +4356,7 @@ const LEVELS = [
      hint:'Останови машину в зелёной зоне и включи P.', marks:['zone']}
   ] },
 
-{ name:'28 · Перестроение до сплошной',
+{ name:'28 · Перестроение до сплошной', traffic:'city',
   strict:true,
   task:'В твоей полосе стоит машина, а через 30 м разметка станет сплошной. Перестроиться вправо с поворотником — пока это ещё можно. Грубая ошибка (сплошная, столкновение, встречная) — попытка не засчитана.',
   tip:'Перестроение начинается с сигнала, а не с руля. Сплошную не пересекают ни на сантиметр — даже если места полно.',
@@ -4113,7 +4416,7 @@ const LEVELS = [
      hint:'Останови машину в зелёной зоне и включи P.', marks:['zone']}
   ] },
 
-{ name:'29 · Разворот на трамвайных путях',
+{ name:'29 · Разворот на трамвайных путях', traffic:'city',
   strict:true,
   task:'Развернуться на проспекте Ленина с трамвайными путями посередине. Разворот выполняют С ПУТЕЙ попутного направления — сначала перестройся на них. Грубая ошибка (встречная, столкновение) — попытка не засчитана.',
   tip:'Пути посередине на одном уровне с дорогой — это ещё одна полоса. Разворот из правой полосы отсюда запрещён.',
@@ -4189,7 +4492,7 @@ const LEVELS = [
      hint:'Останови машину в зелёной зоне и включи P.', marks:['zone']}
   ] },
 
-{ name:'30 · Круговое движение',
+{ name:'30 · Круговое движение', traffic:'city',
   strict:true,
   task:'Въехать на кольцо, уступив тем, кто уже едет по нему, обогнуть островок и выйти на ВТОРОМ съезде — на север. Грубая ошибка (непропуск, столкновение) — попытка не засчитана.',
   tip:'На кольце преимущество у того, кто уже на нём. Выезжаешь — включай правый поворотник, въезжаешь — не включай ничего.',
@@ -4233,11 +4536,16 @@ const LEVELS = [
      goal:{text:'до жёлтой линии «уступи»'},
      why:'На кольцо въезжают медленно: внутри тормозить негде, а решение принимать надо за секунду.',
      hint:'Подъезжай к кольцу по правой полосе и сбавляй заранее.', marks:['yield']},
-    {when:s=>s.u<63&&s.gear>=0&&actorNear(s.u,s.v,24),
+    {when:s=>s.u<63&&s.gear>=0&&s.gap<5,
      icon:'⏹', act:'Уступи тем, кто уже на кольце', move:'stop',
-     goal:{text:'пропустить машину слева'},
+     goal:{metric:'gap',target:5,dir:'up'},
      why:'Преимущество у того, кто уже на кольце. Заставил его тормозить — это непропуск, аварийная ошибка.',
      hint:'Остановись у линии и пропусти машину, которая едет по кольцу.', marks:['yield']},
+    {when:s=>s.u<63&&s.gear>=0,
+     icon:'⬆', act:'Окно есть — въезжай на кольцо', move:'fwd', wheel:'left',
+     goal:{text:'въезд в это окно'},
+     why:'Въезжают в окно целиком: на кольце тормозить негде, и решение принимается до въезда.',
+     hint:'Поток отошёл — въезжай на кольцо, островок держи слева.', marks:['yield','exit']},
     {when:s=>s.v<8&&s.gear>=0,
      icon:'↻', act:'По кольцу: островок слева', wheel:'left',
      goal:{text:'до второго съезда'},
@@ -4257,7 +4565,7 @@ const LEVELS = [
      hint:'Останови машину в зелёной зоне и включи P.', marks:['zone']}
   ] },
 
-{ name:'31 · Косой перекрёсток',
+{ name:'31 · Косой перекрёсток', traffic:'city',
   strict:true,
   task:'Выехать со второстепенной на косой перекрёсток и уйти влево на съезд под 49°. Уступить всем, кто едет по главной. Грубая ошибка (непропуск, столкновение, встречная) — попытка не засчитана.',
   tip:'На косом перекрёстке привычный «поворот на 90°» не работает: смотри на форму заплатки и на знаки, а не на прямой угол.',
@@ -4300,9 +4608,9 @@ const LEVELS = [
      goal:{text:'до жёлтой линии'},
      why:'Знак «уступи» не требует остановки сам по себе — но требует пропустить. Подъезжай так, чтобы успеть остановиться.',
      hint:'Подъезжай к главной, сбавляя заранее: сейчас надо будет уступать.', marks:['yield']},
-    {when:s=>s.v<-7&&s.gear>=0&&actorNear(s.u,s.v,28),
-     icon:'⏹', act:'Пропусти машину по главной', move:'stop',
-     goal:{text:'дождаться, пока проедет'},
+    {when:s=>s.v<-7&&s.gear>=0&&s.gap<5,
+     icon:'⏹', act:'Пропусти поток по главной', move:'stop',
+     goal:{metric:'gap',target:5,dir:'up'},
      why:'Уступить — значит не заставить другого тормозить или объезжать. Заставил — аварийная ошибка.',
      hint:'Остановись у линии и пропусти машину, идущую по главной.', marks:['yield']},
     {when:s=>s.v<-7&&s.blink!=='L'&&s.gear>=0,
@@ -4310,6 +4618,11 @@ const LEVELS = [
      goal:{text:'стрелка влево мигает'},
      why:'Угол не прямой, но манёвр всё равно левый: сигнал по направлению, а не по градусам.',
      hint:'Включи левый поворотник (Q): съезд уходит влево, хоть и не под 90°.', marks:['ramp']},
+    {when:s=>s.v<-7&&s.gear>=0,
+     icon:'⬆', act:'Окно есть — выезжай на перекрёсток', move:'fwd', blinker:'L',
+     goal:{text:'выезд в это окно'},
+     why:'Главная свободна — выезжают сразу и без задержки: медленный выезд подрезает следующего.',
+     hint:'Поток прошёл — выезжай на перекрёсток и уходи влево.', marks:['yield','ramp']},
     {when:s=>((deg(angNorm(s.th))+360)%360)<352&&((deg(angNorm(s.th))+360)%360)>180&&s.gear>=0,
      icon:'↰', act:'Уходи на косой съезд влево', wheel:'left', blinker:'L',
      goal:{metric:'ang',target:0,dir:'down'},
@@ -4324,7 +4637,7 @@ const LEVELS = [
      hint:'Останови машину в зелёной зоне и включи P.', marks:['zone']}
   ] },
 
-{ name:'32 · Экзамен: маршрут с инспектором',
+{ name:'32 · Экзамен: маршрут с инспектором', traffic:'city',
   task:'Экзаменационная поездка по городу: команды даёт инспектор. Маршрут выбирается случайно из трёх, каждый — около 450 м с перекрёстками, разворотом, кольцом и эстакадой. Допустимо до 6 штрафных баллов; аварийная ошибка — незачёт сразу.',
   tip:'Два режима в меню ≡. Тренировочный: команда объявляется заранее, карта маршрута в углу, ошибка разбирается на месте. Настоящий: инспектор молчит, датчиков нет, грубая ошибка валит попытку.',
   steps:[
@@ -4592,7 +4905,7 @@ const REFS_NAMES = ['выкл','габариты','всё'];
    колёс и идеальная линия сливались в кашу поверх обучающих маркеров. G включает всё разом */
 const opt  = { guides:false, trails:false, sound:false, refs:2, marks:true, camMode:CAM_CHASE, camYaw:0, pitch:rad(22),
                dist:9.0, fpYaw:0, fpPitch:rad(-2), fpFov:62, mirrors:true, mirScale:1, prev3rd:CAM_CHASE, gfx:'auto',
-               examMode:'train',
+               examMode:'train', traffic:'normal',
                mirAdj:{left:{yaw:0,pitch:0}, right:{yaw:0,pitch:0}, center:{yaw:0,pitch:0}} };
 let level = null, paused = true, trails = null, trailT = 0;
 let dprCap = 2;
@@ -4722,6 +5035,9 @@ function loadLevel(i){
     }
   }
   level.idealDraw = buildIdealDraw(computeIdealPath());
+  /* поток — ПОСЛЕ идеальной траектории: computeIdealPath гоняет показ headless и actorsTick
+     там не зовёт, так что созданные раньше машины встали бы поперёк образцового проезда */
+  trafficInit();
   if(def.examRoute) examInit();
   restart();
   document.getElementById('lvlName').textContent = def.name;
@@ -4748,7 +5064,8 @@ function restart(){
   trails = {fl:[],fr:[],rl:[],rr:[]}; trailT=0;
   for(const o of level.obs){ o.knocked=false; o._touch=false; o._hitByPlayer=false; }
   for(const a of level.actors){ a.u=a.act.u0; a.v=a.act.v0; a.yaw=a.act.yaw0;
-    a.act.i=0; a.act.started=!a.act.trig; a.act.done=false; a._vioFired=false; }
+    a.act.i=0; a.act.started=!a.act.trig; a.act.done=false; a._vioFired=false;
+    a.act.v=a.act.sp; if(a.act.rt) a.act.s=a.act.s0; }
   cityReset();
   attempt = level.def.strict ? {strikes:0, log:[], failed:false, why:'', code:''} : null;
   attWarn=''; attWarnT=0;
@@ -4868,7 +5185,10 @@ function resolveCollisions(dt){
     /* касание считаем по НАЧАЛУ контакта: без защёлки машина, стоящая на бордюре,
        набирала новое касание каждые полсекунды */
     if(!m){ o._touch=false; continue; }
-    if(!o._touch){ o._touch=true; fresh=true; freshObj=o; if(o.act) o._hitByPlayer=true;
+    /* пока игрок не тронулся, чужая машина ему не «наезд»: защёлка ставится на любом
+       пересечении OBB, кто бы ни двигался, и стоящий на старте получал аварийную ошибку
+       за то, что поток прошёл вплотную */
+    if(!o._touch){ o._touch=true; fresh=true; freshObj=o; if(o.act && game.moved) o._hitByPlayer=true;
       /* актёра не начисляем здесь: его покроет vio collision-actor из детекторов.
          На демо штраф глушим: показ ведёт машину сам и снял бы попытку игрока */
       if(!o.act && !demo) hitPenalty(o); }
@@ -5735,6 +6055,7 @@ function cityReset(){
   const c=level.city; if(!c) return;
   for(const k in c){ const arr=c[k]; if(!Array.isArray(arr)) continue;
     for(const o of arr){ o._fired=false; o._stopped=false; o._inZone=false; o._th0=0; o._blinkOk=false;
+                         o._hit=null;
                          o._lane=undefined; o._onTram=false; o._stopT=0;
                          o._redFired=false; o._solidFired=false; o._blFired=false;
                          o._uFired=false; o._uIn=false; o._uTh=0; o._uArm=false;
@@ -5891,7 +6212,7 @@ function violationsTick(dt){
   for(const y of (c.yieldZones||[])){
     /* уступает тот, кто едет: стоящая машина помехи не создаёт, а без этой проверки
        игрок, честно замерший у линии, всё равно получал непропуск */
-    if(y._fired || Math.abs(car.vel)<0.5) continue;
+    if(Math.abs(car.vel)<0.5) continue;
     const yf=fuv(y.yaw||0), yr=ruv(y.yaw||0);
     const s=(b.u-y.u)*yf.u+(b.v-y.v)*yf.v;
     const x=(b.u-y.u)*yr.u+(b.v-y.v)*yr.v;
@@ -5900,6 +6221,9 @@ function violationsTick(dt){
     for(const a of level.actors){
       if(!a.act.started || a.act.done) continue;
       if(Math.hypot(a.u-b.u, a.v-b.v)>=(y.dist||6)) continue;
+      /* защёлка на ПАРУ «зона × машина», а не на зону: с потоком одна защёлка на зону
+         означала, что после первого непропуска можно лезть под остальных безнаказанно */
+      if(y._hit && game.t-y._hit.get(a)<8) continue;
       /* непропуск — это «заставил другого тормозить», а не «оказался рядом». Проверка
          по одному расстоянию штрафовала за машину, которую честно пропустили: уходя со
          своей траектории, она ещё десяток метров остаётся близко (кольцо, уровень 30).
@@ -5918,7 +6242,8 @@ function violationsTick(dt){
          получал непропуск за собственный правильный проезд */
       const fwd=mx*av.u+my*av.v, lat=mx*ar.u+my*ar.v;
       if(fwd<-0.5 || fwd>YIELD_GAP || Math.abs(lat)>YIELD_LAT) continue;
-      vio('yield','Не уступил дорогу — помеха справа была твоя'); y._fired=true; break;
+      vio('yield','Не уступил дорогу — помеха справа была твоя');
+      (y._hit||(y._hit=new Map())).set(a, game.t); break;
     }
   }
   for(const a of level.actors){
@@ -6225,8 +6550,9 @@ function drawShadows(){
   const cu=-cam.pos.x, cv=cam.pos.z;
   for(const o of level.obs){
     if(Math.hypot(o.u-cu,o.v-cv)>55) continue;
-    /* статист движется — кэш _shadow оставил бы тень на месте старта */
-    if(o.act){ carShadow(o.u,o.v,o.yaw); continue; }
+    /* статист движется — кэш _shadow оставил бы тень на месте старта. Дальнюю машину
+       потока оставляем без тени: она и сама рисуется коробкой */
+    if(o.act){ if(Math.hypot(o.u-cu,o.v-cv)<=trafLod()) carShadow(o.u,o.v,o.yaw); continue; }
     if(!o._shadow || o.knocked) continue;
     fillGroundPoly(o._shadow,'rgba(0,0,0,.22)',null,0,0.010);
   }
@@ -6395,7 +6721,7 @@ function genericCoach(s){
 }
 /* фаза манёвра: первый подходящий элемент phases[] уровня, как if-цепочка coach */
 let curPhase=null, phaseCand=null, phaseHold=0;
-let curS={u:0,v:0,th:0,gear:0,vel:0,steer:0,front:3,rear:3,left:3,right:3,blink:null,roll:0};
+let curS={u:0,v:0,th:0,gear:0,vel:0,steer:0,front:3,rear:3,left:3,right:3,blink:null,roll:0,gap:99};
 const PHASE_HOLD=0.22;   /* смена фазы с задержкой: селектор проходит R по пути P→D, и без неё подсказка мигает */
 function phaseTick(dt){
   const c=bodyPos();
@@ -6403,6 +6729,7 @@ function phaseTick(dt){
   curS.blink=car.blink; curS.roll=car.roll; curS.hand=car.hand;
   curS.front=lastClear.front; curS.rear=lastClear.rear;
   curS.left=lastClear.left; curS.right=lastClear.right;
+  curS.gap=level.actors.length ? trafficGap(c.u, c.v, 6) : 99;
   const ph=level.def.phases;
   if(!ph){ curPhase=null; return; }
   let want=null;
@@ -6527,7 +6854,13 @@ function emitObstacles(maxD){
   const cu=-cam.pos.x, cv=cam.pos.z;
   for(const o of level.rend){
     if(Math.hypot(o.u-cu,o.v-cv) > maxD) continue;
-    if(o.kind==='car'){ emitCarMesh(o.u,o.v,o.yaw,o.col,0,null); continue; }
+    if(o.kind==='car'){
+      /* машина потока дальше TRAF_LOD — коробкой: лофт из 13 сечений стоит около двухсот
+         граней, а на телефоне кадр упирается именно в число граней. Вблизи и у
+         припаркованных всё по-прежнему */
+      if(o.act && Math.hypot(o.u-cu,o.v-cv)>trafLod()){
+        pushBox(o.u,CAR.height/2,o.v,CAR.width/2,CAR.height/2,CAR.length/2,o.yaw,o.col); continue; }
+      emitCarMesh(o.u,o.v,o.yaw,o.col,0,null); continue; }
     if(o.kind==='cone'){
       if(o.knocked){ pushBox(o.u,0.09,o.v,0.30,0.09,0.30,0.6,[196,72,26]); continue; }
       pushBox(o.u,0.05,o.v,0.24,0.05,0.24,0,[206,88,26]);
@@ -7071,7 +7404,13 @@ const COACH_METRICS={
   front:{cell:'cf', fmt:v=>v.toFixed(2)+' м', get:()=>lastClear.front},
   rear: {cell:'cb', fmt:v=>v.toFixed(2)+' м', get:()=>lastClear.rear},
   left: {cell:'cl', fmt:v=>v.toFixed(2)+' м', get:()=>lastClear.left},
-  right:{cell:'cr', fmt:v=>v.toFixed(2)+' м', get:()=>lastClear.right}
+  right:{cell:'cr', fmt:v=>v.toFixed(2)+' м', get:()=>lastClear.right},
+  /* окно в потоке — единственная метрика без своей клетки на панели: она про чужие
+     машины, а не про габариты, поэтому тапом подсвечивать нечего */
+  gap:  {cell:null, fmt:v=>v>=GAP_MAX?'больше 9 с':Math.round(v)+' с',
+         /* готовое значение из phaseTick: проход по петлям стоит около двухсот выборок,
+            а в кадре он и так уже сделан — второй такой же был бы платой ни за что */
+         get:()=>Math.min(GAP_MAX, curS.gap)}
 };
 let coachGoal=null, coachWhyOpen=false, coachMainKey='', coachWhyT=null;
 let runsCnt=0; try{ runsCnt=+localStorage.getItem('trainer_runs')||0; }catch(e){}
@@ -7374,7 +7713,7 @@ function tutTick(){
 
 /* тап по чипу цели подсвечивает ячейку панели; «?» (и вся карточка на компакте) — «почему» */
 $('coach').addEventListener('click', e=>{
-  if(e.target.closest('.cg') && coachGoal){
+  if(e.target.closest('.cg') && coachGoal && coachGoal.m.cell){
     const cell=$(coachGoal.m.cell).closest('.cell');
     if(cell){ cell.classList.remove('pulse'); void cell.offsetWidth; cell.classList.add('pulse'); }
     return;
@@ -8164,7 +8503,7 @@ const DEMOS = {
   ]},
   25: { segs:[   /* уступи дорогу: стоп у края, окно, направо */
     {g:'D', blink:'R', s:0, vmax:2.2, vGte:-6.4, max:12, say:'Поворотник — и к краю главной: знак требует уступить'},
-    {g:'P', time:7.5, say:'Стоим у края: машина слева на главной — её преимущество'},
+    {g:'P', gap:7, max:45, say:'Стоим у края: пропускаем поток по главной — его преимущество'},
     {g:'D', aim:{u:5.5,v:-1.65}, slow:true, uGte:2.2, max:14, say:'Окно чистое — направо и разгоняемся'},
     {g:'D', aim:{u:8,v:-1.62}, slow:true, uGte:7.0, max:10},
     {g:'D', aim:{u:16.5,v:-1.65}, slow:true, goal:true, max:14, say:'По своей полосе — в зону'},
@@ -8213,7 +8552,7 @@ const DEMOS = {
                     погоня срезала дугу до радиуса 8,07 — и показ полпроезда шёл по бордюрам
                     островка (кромка 8,25). Сейчас минимальный радиус траектории 9,74 */
     {g:'D', s:0, vmax:2.4, uGte:58, max:16, say:'К кольцу по правой полосе, сбавляем заранее'},
-    {g:'P', time:6.5, say:'Уступаем: у того, кто уже на кольце, преимущество'},
+    {g:'P', gap:7, max:45, say:'Уступаем: у того, кто уже на кольце, преимущество'},
     {g:'D', aim:{u:68.04,v:-5.75},  slow:true, uGte:65.04, max:12, say:'Въезжаем: островок остаётся слева'},
     {g:'D', aim:{u:72.25,v:-9.96},  slow:true, uGte:69.25, max:12},
     {g:'D', aim:{u:78.00,v:-11.50}, slow:true, uGte:75.00, max:12},
@@ -8235,7 +8574,7 @@ const DEMOS = {
   ]},
   30: { segs:[   /* косой перекрёсток: уступить и уйти на съезд под 49° */
     {g:'D', s:0, vmax:2.2, vGte:-14, max:16, say:'К главной: сбавляем под знаком «уступи»'},
-    {g:'P', time:8.0, say:'Пропускаем машину по главной — она идёт справа налево'},
+    {g:'P', gap:7, max:45, say:'Пропускаем поток по главной — он идёт справа налево'},
     {g:'D', blink:'L', aim:{u:-80.5,v:3.5}, slow:true, vGte:-2, max:14,
      say:'Левый поворотник — угол не прямой, но манёвр левый'},
     /* точки — по ПРАВОЙ половине съезда (ось + 1,65 м вправо): по центральной линии
@@ -8293,6 +8632,14 @@ function demoDone(seg){
   /* ждём именно зелёного, а не фиксированных секунд: цикл светофора 24 с идёт от game.t,
      пауза в 9 с разъезжалась с ним, и показ сам проезжал на красный (уровень 27).
      Трогаемся только когда до жёлтого остаётся не меньше 4 с */
+  /* ждём настоящего окна в потоке, а не фиксированных секунд: с живым трафиком пауза
+     «стоим 7,5 с» выпускала показ ровно под чужую машину, и образцовый проезд получал
+     непропуск. В headless-прогоне (computeIdealPath) потока ещё нет — окно сразу
+     свободно, и идеальная линия строится по пустому городу */
+  if(seg.gap!==undefined){
+    const c=bodyPos();
+    if(trafficGap(c.u, c.v, 6) >= seg.gap) return true;
+  }
   if(seg.green){
     const L=(level.city&&level.city.lights||[])[0];
     if(!L) return demo.t>=(seg.time||6);
@@ -8349,6 +8696,10 @@ function demoStep(dt){
   }
   /* цель достигнута по позе — тормозим, иначе демо проскочит створ насквозь */
   if(seg.goal && goalPoseOk()){ input.fwd=false; input.back=true; }
+  /* показ не таранит поток: на кольце он догонял машину, притормозившую перед ним, и
+     level-audit валил прогон на касании. Только там, где поток есть: на площадках показ
+     намеренно подъезжает вплотную (frontLt:0.5 у параллельной парковки) */
+  if(level.def.traffic && car.gear>=0 && lastClear.front<2.2){ input.fwd=false; input.back=true; }
   if(demoDone(seg)){ demoNext(); return; }
   if(demo.t > (seg.max||25)){
     console.warn('[demo] сегмент '+(demo.i+1)+' завершён по таймауту');
@@ -8889,6 +9240,8 @@ opt.gearbox='AT';
 try{ const g=localStorage.getItem('trainer_gearbox'); if(g==='MT') opt.gearbox='MT'; }catch(e){}
 syncHintLine();
 try{ const e=localStorage.getItem('trainer_exammode'); if(e==='real') opt.examMode='real'; }catch(e){}
+try{ const t=localStorage.getItem('trainer_traffic'); if(TRAF_SPACING[t]) opt.traffic=t; }catch(e){}
+trafDbg = /[?&]traffic=1/.test(location.search);
 try{ if(localStorage.getItem('trainer_gfx')==='max') opt.gfx='max'; }catch(e){}
 try{ const m=parseFloat(localStorage.getItem('trainer_mirscale')); if(MIR_SCALES.indexOf(m)>=0) opt.mirScale=m; }catch(e){}
 if(MOB) opt.refs = 1;   /* на телефоне метки расстояний мешают, но габариты нужны везде */
@@ -9017,6 +9370,9 @@ function buildMenu(){
     if(opt.gfx==='max'){ qBest=0; qApply(0); toast('Графика: максимум — все детали и зерно, кадры могут просесть', 4); }
     else toast('Графика: авто — качество подстраивается под скорость кадра', 3.5);
   }, ()=>opt.gfx==='max');
+  /* плотность потока: городские уровни ставят на дорогу живой трафик, и новичку нужна
+     возможность разобрать манёвр в спокойном движении. Экзамен идёт в плотном всегда */
+  add('Трафик: '+TRAF_NAMES[opt.traffic], ()=>{ cycleTraffic(); }, ()=>opt.traffic==='dense');
   add('Звук', ()=>pressKey('KeyM'), ()=>opt.sound);
   add('Начать уровень заново', ()=>{ closeMenu(); pressKey('KeyR'); });
   add('Что делают кнопки', ()=>{ closeMenu(); setTimeout(showTouchHelp,120); });

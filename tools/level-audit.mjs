@@ -69,6 +69,9 @@ const report = await page.evaluate(() => {
     game.t = 0;
     while (demo && T < 160) {
       demo.say = 0; game.t += 1 / 60; game.hitCd = 1;
+      /* поток крутим сами: actorsTick живёт в frame(), а здесь кадров нет — с замершими
+         машинами показ упирался бы в них как в столбы, а чип «окно» стоял бы на 99 с */
+      if (level.actors.length) actorsTick(1 / 60);
       demoStep(1 / 60);
       let rem = 1 / 60;
       while (rem > 1e-5) { const s = Math.min(1 / 120, rem); stepCar(s); rem -= s; }
@@ -136,14 +139,17 @@ const report = await page.evaluate(() => {
       const RANGES = { gear: [-1, 0, 1], vel: [-5, -2, -0.05, 0, 0.05, 2, 5], steer: [-0.6, 0, 0.6],
         front: [0.05, 0.3, 1, 2, 3], rear: [0.05, 0.3, 1, 2, 3],
         left: [0.05, 0.3, 1, 2, 3], right: [0.05, 0.3, 1, 2, 3],
-        blink: [null, 'L', 'R'], roll: [0, 0.5], hand: [false, true] };
+        blink: [null, 'L', 'R'], roll: [0, 0.5], hand: [false, true],
+        /* окно в потоке: «нет окна», «на грани», «свободно». Без этой оси поле s.gap
+           оставалось undefined, и любая фаза «уступи» считалась недостижимой */
+        gap: [1, 4.9, 5.1, 99] };
       const b = level.bounds, used = new Set(), nums = new Set();
       for (const p of ph) if (p.when) {
         const src = String(p.when);
         for (const m of src.matchAll(/\bs\.(\w+)/g)) used.add(m[1]);
         for (const m of src.matchAll(/-?\d+(?:\.\d+)?/g)) nums.add(+m[0]);
       }
-      const opaque = ph.map(p => p.when ? /\b(actorNear|lightStops|level\.|game\.|car\.|demo)\b/.test(String(p.when)) : false);
+      const opaque = ph.map(p => p.when ? /\b(trafficGap|lightStops|level\.|game\.|car\.|demo)\b/.test(String(p.when)) : false);
       const consts = [...nums];
       const lin = (lo, hi, n) => Array.from({ length: n }, (_, k) => lo + (hi - lo) * (k + 0.5) / n);
       let nUV = 10, nTh = 16, axes = [], total = 0;
@@ -158,7 +164,7 @@ const report = await page.evaluate(() => {
       build();
       while (total > 4e6 && (nUV > 4 || nTh > 8)) { nUV = Math.max(4, nUV - 2); nTh = Math.max(8, nTh - 4); build(); }
       const wins = new Array(ph.length).fill(0);
-      const st = { u: 0, v: 0, th: 0, gear: 0, vel: 0, steer: 0, front: 3, rear: 3, left: 3, right: 3, blink: null, roll: 0, hand: false };
+      const st = { u: 0, v: 0, th: 0, gear: 0, vel: 0, steer: 0, front: 3, rear: 3, left: 3, right: 3, blink: null, roll: 0, hand: false, gap: 99 };
       const idx = new Array(axes.length).fill(0);
       const N = axes.length;
       for (let done = false; !done;) {
