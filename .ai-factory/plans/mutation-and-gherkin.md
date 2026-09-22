@@ -46,13 +46,13 @@
 - [x] T3 · `tools/gherkin-run.mjs` + словарь шагов — исполняемые `@domain`
 - [x] T4 · Сценарии задним числом по пяти областям + коды в существующие `check(...)`
 - [x] T5 · `tools/qa-checklist.mjs` → `docs/qa-checklist.md`
-- [ ] T6 · `tools/unit-check.mjs` — быстрый набор утверждений (< 5 с)
-- [ ] T7 · `tools/mutate.mjs` — операторы мутаций и зона
-- [ ] T8 · `tools/mutation.mjs` — прогон, отчёт, порог-храповик
-- [ ] T9 · `ROOT` в инструментах прогона
+- [x] T6 · `tools/unit-check.mjs` — быстрый набор утверждений (< 5 с)
+- [x] T7 · `tools/mutate.mjs` — операторы мутаций и зона
+- [x] T8 · `tools/mutation.mjs` — прогон, отчёт, порог-храповик
+- [x] T9 · `ROOT` в инструментах прогона
 - [ ] T10 · Базовый прогон, разбор выживших, фиксация порога
-- [ ] T11 · Скиллы `.claude/skills/pozerkalam-gherkin` и `pozerkalam-mutation`
-- [ ] T12 · Раздел в `CLAUDE.md`
+- [x] T11 · Скиллы `.claude/skills/pozerkalam-gherkin` и `pozerkalam-mutation`
+- [x] T12 · Раздел в `CLAUDE.md`
 
 ### Фаза 1 — Gherkin
 
