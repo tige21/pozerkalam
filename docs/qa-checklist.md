@@ -6,7 +6,7 @@
 «авто» — исполняет `tools/gherkin-run.mjs`, человеку нужен как источник эталонных чисел.
 «руками» — закрыто инструментом в браузере, перед деплоем стоит пройти глазами.
 
-<!-- codes: e1c7623cce40 -->
+<!-- codes: a5681c2ceeab -->
 
 ## Город и разметка
 
@@ -304,13 +304,23 @@
 
 ### Машины потока не налезают друг на друга
 
-`traffic-flow-gap` · руками · `specs/features/traffic/potok-na-doroge.feature:30`
+`traffic-flow-gap` · руками · `specs/features/traffic/potok-na-doroge.feature:36`
 
 Ссылка: правило «показ не учит нарушать»; тот же принцип, по которому demo-vio гоняет
 
 - **Дано** городской уровень с потоком
 - **Когда** поток идёт 300 секунд
 - **Тогда** кузова машин нигде не пересекаются
+
+### Машина потока объезжает островок кольца, а не едет сквозь него
+
+`traffic-flow-island` · руками · `specs/features/traffic/potok-na-doroge.feature:18`
+
+Ссылка: правило «показ не учит нарушать»; тот же принцип, по которому demo-vio гоняет
+
+- **Дано** городской уровень с потоком и круговым движением
+- **Когда** поток идёт 300 секунд
+- **Тогда** ни одна машина не заезжает на островок кольца
 
 ### Машина потока не покидает проезжую часть
 
@@ -324,7 +334,7 @@
 
 ### Дальняя машина потока остаётся похожей на машину
 
-`traffic-flow-lod` · руками · `specs/features/traffic/potok-na-doroge.feature:42`
+`traffic-flow-lod` · руками · `specs/features/traffic/potok-na-doroge.feature:48`
 
 Ссылка: правило «показ не учит нарушать»; тот же принцип, по которому demo-vio гоняет
 
@@ -335,7 +345,7 @@
 
 ### Машина потока не выезжает на встречную половину
 
-`traffic-flow-oncoming` · руками · `specs/features/traffic/potok-na-doroge.feature:18`
+`traffic-flow-oncoming` · руками · `specs/features/traffic/potok-na-doroge.feature:24`
 
 Ссылка: правило «показ не учит нарушать»; тот же принцип, по которому demo-vio гоняет
 
@@ -345,7 +355,7 @@
 
 ### Машина потока не проезжает на красный
 
-`traffic-flow-red` · руками · `specs/features/traffic/potok-na-doroge.feature:24`
+`traffic-flow-red` · руками · `specs/features/traffic/potok-na-doroge.feature:30`
 
 Ссылка: правило «показ не учит нарушать»; тот же принцип, по которому demo-vio гоняет
 
@@ -355,7 +365,7 @@
 
 ### Машина потока не застревает без причины
 
-`traffic-flow-stuck` · руками · `specs/features/traffic/potok-na-doroge.feature:36`
+`traffic-flow-stuck` · руками · `specs/features/traffic/potok-na-doroge.feature:42`
 
 Ссылка: правило «показ не учит нарушать»; тот же принцип, по которому demo-vio гоняет
 

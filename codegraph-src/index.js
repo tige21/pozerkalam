@@ -509,6 +509,8 @@
 
 
 
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -2451,13 +2453,13 @@ function actorCar(u,v,yaw,col,wps,sp,trig){
    actorsTick не зовётся, и созданные заранее машины встали бы поперёк идеальной линии. */
 const TRAF={ sp:6.2, acc:1.3, dec:2.9, gap:6.2, see:28, lat:1.8, lon:2.6, cap:16, step:2.4 };
 /* метров дороги на одну машину: чем меньше, тем гуще поток */
-const TRAF_SPACING={calm:115, normal:74, dense:48};
-const TRAF_NAMES={calm:'спокойный', normal:'обычный', dense:'плотный'};
+const TRAF_SPACING={off:Infinity, calm:115, normal:74, dense:48};
+const TRAF_NAMES={off:'без машин', calm:'спокойный', normal:'обычный', dense:'плотный'};
 /* за этой дальностью машина потока рисуется коробкой, а тень ей не рисуется вовсе.
    Замер на кольце (CPU×4): девять машин добавляли 402 грани к 754 и 2,5 мс к кадру —
    лофт из 13 сечений там, где машина занимает полсантиметра экрана */
 function trafLod(){ return qDetail() ? 32 : 20; }
-const TRAF_ORDER=['calm','normal','dense'];
+const TRAF_ORDER=['off','calm','normal','dense'];
 const TRAF_COLS=[1,2,3,5,6,7];
 const _tp={u:0, v:0, yaw:0}, _tq={u:0, v:0, yaw:0}, _ex={lat:0, lon:0};
 let trafDbg=false;      /* ?traffic=1 — покадровый разбор причин торможения */
@@ -2469,7 +2471,7 @@ function trafKey(){
         : (TRAF_SPACING[opt.traffic] ? opt.traffic : 'normal');
   /* на телефоне кадр упирается в JavaScript (число граней), и лишние машины бьют по нему
      сильнее, чем по пикселям: ступень плотности вниз */
-  if(MOB && k!=='calm') k = TRAF_ORDER[TRAF_ORDER.indexOf(k)-1];
+  if(MOB && k!=='calm' && k!=='off') k = TRAF_ORDER[TRAF_ORDER.indexOf(k)-1];
   return k;
 }
 /* замкнутая полилиния по полосам: каждый участок строит cityRoute, стыки — его же дуги */
@@ -2477,18 +2479,30 @@ function trafPath(wps){
   const pts=[];
   const add=(p)=>{ const n=pts.length;
     if(!n || Math.hypot(pts[n-1].u-p.u, pts[n-1].v-p.v)>0.35) pts.push({u:p.u, v:p.v}); };
+  /* путевая точка на кольце: cityRoute обрывает участок у въезда (для игрока цель внутри
+     кольца — островок), и склейка со следующим участком шла прямой через островок — поток
+     ехал сквозь кольцо по центру. Такой стык ведём дугой по самому кольцу, как cityRoute
+     ведёт проезд через круговой узел (cornerArc → ringArc) */
+  const ringAt=(p)=>{ const sn=citySnap(p); return sn && sn.ring ? sn.ring : null; };
+  let joins=0;
   for(let i=0;i<wps.length;i++){
     const A=wps[i], B=wps[(i+1)%wps.length];
     const r=cityRoute(A, B, {side:'right'});
     if(!r || r.pts.length<2){ console.warn('[traffic] петля разорвана на участке '+i); return null; }
+    const ringA=ringAt(A); let first=true;
     /* сырые путевые точки выбрасываем: cityRoute начинает и заканчивает линию ровно там, где
        стоит машина игрока, а это ОСЬ улицы, а не центр полосы. С ними каждая петля выходила на
        осевую и две встречные машины стартовали в одной точке */
     for(const p of r.pts){
       if(Math.hypot(p.u-A.u, p.v-A.v)<0.02 || Math.hypot(p.u-B.u, p.v-B.v)<0.02) continue;
+      if(first && ringA && pts.length){ ringArc(ringA, pts[pts.length-1], p, add); joins++; }
+      first=false;
       add(p);
     }
   }
+  const ring0=ringAt(wps[0]);
+  if(ring0 && pts.length){ ringArc(ring0, pts[pts.length-1], pts[0], add); joins++; }
+  if(trafDbg && joins) console.warn('[FIX:traffic] стыков петли по кольцу: '+joins);
   return pts.length<8 ? null : trafClose(pts);
 }
 /* накопленная длина вдоль замкнутой ломаной — по ней машина и ходит (trafPose) */
@@ -2543,6 +2557,7 @@ function trafYardLoops(){
     pts.push({u:-U+Math.cos(a)*1.9, v:-Math.sin(a)*1.65}); }
   return [trafClose(pts)];
 }
+function trafCount(){ let n=0; for(const a of level.actors) if(a.act && a.act.flow) n++; return n; }
 function cycleTraffic(){
   const i=(TRAF_ORDER.indexOf(opt.traffic)+1)%TRAF_ORDER.length;
   opt.traffic=TRAF_ORDER[i];
@@ -2550,8 +2565,10 @@ function cycleTraffic(){
   /* уровень перезагружаем: машины расставляются в trafficInit при загрузке, а менять
      плотность на ходу — значит ронять машины посреди перекрёстка */
   const on=level && level.def && level.def.traffic;
-  toast('Трафик: '+TRAF_NAMES[opt.traffic]+(on?'':' — на этом уровне потока нет'), 3);
   if(on) loadLevel(game.li);
+  const exam=on && level.def.examRoute;
+  toast('Трафик: '+TRAF_NAMES[opt.traffic]+(!on?' — на этом уровне потока нет'
+    : exam?' — на экзамене поток всегда плотный' : ' · машин в городе: '+trafCount()+' · уровень начат заново'), 3);
 }
 const TRAF_START_CLEAR=15;      /* пустой участок петли вокруг стартовой позы игрока, м */
 function trafNearStart(rt, s0){
@@ -2564,6 +2581,8 @@ function trafficInit(){
   const loops = def.traffic==='yard' ? trafYardLoops() : trafCityLoops();
   if(!loops || !loops.length){ console.warn('[traffic] петли не построены: '+def.name); return; }
   const key=trafKey(), spacing=TRAF_SPACING[key];
+  /* «без машин» — город пустой: новичку сначала нужен сам манёвр, поток он включит потом */
+  if(key==='off'){ console.warn('[FIX:traffic] '+def.name+': поток выключен игроком'); return; }
   let made=0, li=0;
   for(const rt of loops){
     const k=clamp(Math.round(rt.len/spacing), 1, TRAF.cap-made);
@@ -7623,6 +7642,12 @@ function updateHUD(){
      а HTML-кнопка молча съедает тап, нацеленный в зеркало на канве */
   const fbVis = (!opt.mirrors || mirrorRects().right.y>=206) ? '' : 'none';
   if($('fbBtn').style.display!==fbVis) $('fbBtn').style.display=fbVis;
+  /* регулировка потока на десктопе: ≡-меню есть только в тач-режиме, и без этой кнопки
+     число машин было не поменять вовсе. На экзамене плотность одна для всех — кнопки нет */
+  const trafOn = level.def.traffic && !level.def.examRoute;
+  const trafVis = (trafOn && (!opt.mirrors || mirrorRects().right.y>=242)) ? '' : 'none';
+  if($('trafBtn').style.display!==trafVis) $('trafBtn').style.display=trafVis;
+  if(trafOn) setText($('trafBtn'), '🚗 поток: '+TRAF_NAMES[trafKey()]+' · '+trafCount());
   $('gearVal').classList.toggle('deny', selBlockT>0);
   const gearKey = mtOn() ? 'M'+car.mgear+(car.stalled?'s':'') : car.sel;
   if(gearShown!==gearKey){
@@ -9477,7 +9502,7 @@ function buildMenu(){
   }, ()=>opt.gfx==='max');
   /* плотность потока: городские уровни ставят на дорогу живой трафик, и новичку нужна
      возможность разобрать манёвр в спокойном движении. Экзамен идёт в плотном всегда */
-  add('Трафик: '+TRAF_NAMES[opt.traffic], ()=>{ cycleTraffic(); }, ()=>opt.traffic==='dense');
+  add('Трафик: '+TRAF_NAMES[opt.traffic]+(level&&level.def.traffic&&!level.def.examRoute?' · машин '+trafCount():''), ()=>{ cycleTraffic(); }, ()=>opt.traffic!=='off');
   add('Звук', ()=>pressKey('KeyM'), ()=>opt.sound);
   add('Начать уровень заново', ()=>{ closeMenu(); pressKey('KeyR'); });
   add('Что делают кнопки', ()=>{ closeMenu(); setTimeout(showTouchHelp,120); });
@@ -9630,6 +9655,7 @@ $('gearVal').addEventListener('click',e=>{
 $('restartBtn').addEventListener('click',()=>{ initAudio(); pressKey('KeyR'); });
 $('demoBtn').addEventListener('click',()=>{ initAudio(); if(demo) stopDemo(); else startDemo(); });
 $('fbBtn').addEventListener('click',()=>{ initAudio(); doAct('feedback:game'); });
+$('trafBtn').addEventListener('click',()=>{ initAudio(); cycleTraffic(); });
 $('trestart').addEventListener('pointerdown',e=>{ e.preventDefault(); initAudio();
   if(!paused) pressKey('KeyR'); },{passive:false});
 $('tmenu').addEventListener('pointerdown',e=>{ if(e.target.id==='tmenu') closeMenu(); });

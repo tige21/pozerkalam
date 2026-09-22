@@ -82,6 +82,12 @@ for (const li of levels) {
         if (level.city.graph) {
           const g = level.city.graph;
           let atNode = false;
+          /* островок кольца: центр машины ближе round−6 — это уже бордюр островка (проезжая
+             часть кольца начинается с round−5,5). Проверка стоит ДО пропуска узлов: весь узел
+             выпадал из проверок, и поток спокойно ехал сквозь кольцо по центру */
+          for (const id in g.V) { const N = g.V[id];
+            if (N.round && Math.hypot(a.u - N.u, a.v - N.v) < N.round - 6)
+              note('на островке кольца, м от центра (@traffic-flow-island)' + id, -Math.hypot(a.u - N.u, a.v - N.v)); }
           for (const id in g.V) { const N = g.V[id];
             if (Math.hypot(a.u - N.u, a.v - N.v) < (N.round || N.r) + 4) { atNode = true; break; } }
           const sn = atNode ? null : citySnap({ u: a.u, v: a.v });
