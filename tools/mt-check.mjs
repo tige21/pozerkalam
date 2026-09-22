@@ -72,18 +72,18 @@ await page.waitForTimeout(400);
 /* 2. передача без сцепления не включается */
 await tap('Period');
 let s = await st();
-check('без сцепления передача не включается', s.mgear === 0 && /сцеплени/i.test(s.warn), 'mgear=' + s.mgear + ' warn="' + s.warn + '"');
+check('без сцепления передача не включается (@mt-clutch-required)', s.mgear === 0 && /сцеплени/i.test(s.warn), 'mgear=' + s.mgear + ' warn="' + s.warn + '"');
 
 /* 3. со сцеплением включается первая */
 await down('ShiftLeft'); await page.waitForTimeout(400);
 await tap('Period');
 s = await st();
-check('со сцеплением включается 1-я', s.mgear === 1 && s.clu > 0.85, 'mgear=' + s.mgear + ' clu=' + s.clu);
+check('со сцеплением включается 1-я (@mt-clutch-gear1)', s.mgear === 1 && s.clu > 0.85, 'mgear=' + s.mgear + ' clu=' + s.clu);
 
 /* 4. бросил сцепление без газа — глохнет */
 await up('ShiftLeft'); await page.waitForTimeout(1400);
 s = await st();
-check('бросил сцепление без газа — глохнет', s.stalled === true && s.stalls >= 1, JSON.stringify({ stalled: s.stalled, rpm: s.rpm }));
+check('бросил сцепление без газа — глохнет (@mt-stall-drop)', s.stalled === true && s.stalls >= 1, JSON.stringify({ stalled: s.stalled, rpm: s.rpm }));
 
 /* 5. запуск двигателя: без сцепления на передаче — отказ, со сцеплением — заводится */
 await tap('KeyY'); s = await st();
@@ -110,7 +110,7 @@ check('со сцеплением 1 → 2 переключается', s2.mgear =
 /* 8. задняя на ходу запрещена */
 await down('ShiftLeft'); await page.waitForTimeout(300); await tap('Enter'); await up('ShiftLeft');
 s = await st();
-check('задняя на ходу запрещена', s.mgear === 2 && /останов/i.test(s.warn), 'mgear=' + s.mgear + ' warn="' + s.warn + '"');
+check('задняя на ходу запрещена (@mt-reverse-blocked)', s.mgear === 2 && /останов/i.test(s.warn), 'mgear=' + s.mgear + ' warn="' + s.warn + '"');
 
 /* 9. тормоз в пол на передаче без сцепления — двигатель глохнет (как в жизни) */
 await up('KeyW'); await down('KeyS'); await page.waitForTimeout(2600); await up('KeyS');
@@ -153,8 +153,8 @@ const inDemo = await page.evaluate(() => ({ g: opt.gearbox, demo: !!demo }));
 await page.evaluate(() => { if (typeof stopDemo === 'function') stopDemo(); else restart(); });
 await page.waitForTimeout(400);
 const afterDemo = await page.evaluate(() => opt.gearbox);
-check('демо едет на автомате', inDemo.demo && inDemo.g === 'AT', JSON.stringify(inDemo));
-check('после демо механика возвращается', afterDemo === 'MT', 'gearbox=' + afterDemo);
+check('демо едет на автомате (@mt-demo-at)', inDemo.demo && inDemo.g === 'AT', JSON.stringify(inDemo));
+check('после демо механика возвращается (@mt-demo-restore)', afterDemo === 'MT', 'gearbox=' + afterDemo);
 
 /* 14. возврат на автомат из меню восстанавливает селектор */
 await page.evaluate(() => setGearbox('AT'));
@@ -195,7 +195,7 @@ await page.evaluate(() => { restart(); });
 await page.waitForTimeout(300);
 await down('ShiftLeft'); await page.waitForTimeout(300); await tap('Enter'); await up('ShiftLeft');
 s = await st();
-check('Enter из нейтрали включает первую, а не заднюю', s.mgear === 1, 'mgear=' + s.mgear);
+check('Enter из нейтрали включает первую, а не заднюю (@mt-enter-first)', s.mgear === 1, 'mgear=' + s.mgear);
 
 /* 18. коробка переключается всеми видимыми путями, а не только со стартового экрана */
 const paths = await page.evaluate(() => {
@@ -231,7 +231,7 @@ const touch = await page.evaluate(() => {
 });
 check('на телефоне сцепление видно и лежит в левой половине экрана', touch.clutchShown && touch.clutchLeft, JSON.stringify(touch));
 check('на механике не горит ложный ТОРМОЗ, горит СЦЕПЛЕНИЕ', touch.needbrake === false && touch.needclutch === true, JSON.stringify(touch));
-check('заглох на телефоне: появляется ЗАВЕСТИ вместо РУЧН', touch.startShown && touch.handHidden && touch.needstart, JSON.stringify(touch));
+check('заглох на телефоне: появляется ЗАВЕСТИ вместо РУЧН (@mt-start-slot)', touch.startShown && touch.handHidden && touch.needstart, JSON.stringify(touch));
 check('кнопка ЗАВЕСТИ заводит двигатель и прячется', touch.started && touch.startHidden, JSON.stringify(touch));
 
 /* 20. гайд первого троганья на механике исполним: раньше он ждал car.sel==='D' и залипал */

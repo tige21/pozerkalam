@@ -67,13 +67,13 @@ for (const li of levels) {
           const sn = atNode ? null : citySnap({ u: a.u, v: a.v });
           if (sn && !sn.ring) {
             const e = sn.e;
-            if (sn.d > e.hw + 0.9) note('вне проезжей части ' + e.name, sn.d);
+            if (sn.d > e.hw + 0.9) note('вне проезжей части  (@traffic-flow-lane)' + e.name, sn.d);
             const f = fuv(a.yaw), rt = ruv(e.yaw), ef = fuv(e.yaw);
             const lat = (a.u - sn.u) * rt.u + (a.v - sn.v) * rt.v;
             const dir = f.u * ef.u + f.v * ef.v;
             /* справа по ходу: едущий «по» ребру держит lat>0, едущий «против» — lat<0 */
             if (Math.abs(dir) > 0.7 && Math.abs(lat) > 0.6 && Math.sign(lat) !== Math.sign(dir))
-              note('встречная половина ' + e.name, +lat.toFixed(1));
+              note('встречная половина  (@traffic-flow-oncoming)' + e.name, +lat.toFixed(1));
           }
         } else if (Math.abs(Math.abs(a.v) - 1.65) > 0.9 && Math.abs(a.u) < 56) {
           note('вне полосы двора', +a.v.toFixed(1));
@@ -89,7 +89,7 @@ for (const li of levels) {
           const key = i + '@' + sl.u + ',' + sl.v;
           const was = crossed.get(key);
           if (was !== undefined && was < -0.3 && s > 0.3 && lightStops(sl.light))
-            note('проезд на красный', 1);
+            note('проезд на красный (@traffic-flow-red)', 1);
           crossed.set(key, s);
         }
         /* наложение кузовов считаем тем же satMTV, что и игроку: встречные расходятся в
@@ -101,13 +101,13 @@ for (const li of levels) {
           if (d < minGap) minGap = d;
           const m = satMTV({ u: a.u, v: a.v, hw: HALF_W, hl: HALF_L, yaw: a.yaw },
                            { u: b.u, v: b.v, hw: HALF_W, hl: HALF_L, yaw: b.yaw });
-          if (m) note('кузова наложились на, м', m.depth.toFixed(2));
+          if (m) note('кузова наложились на, м (@traffic-flow-gap)', m.depth.toFixed(2));
         }
         /* застряла без причины */
         const blocked = trafBlock(a, level.actors.indexOf(a)) < TRAF.see || trafLight(a) < TRAF.see;
         const st = (a.act.v < 0.2 && !blocked) ? (stuck.get(i) || 0) + dt * 3 : 0;
         stuck.set(i, st);
-        if (st > 20) note('машина стоит без помехи, с', Math.round(st));
+        if (st > 20) note('машина стоит без помехи, с (@traffic-flow-stuck)', Math.round(st));
       }
       /* окно для выезжающего: сколько раз за прогон путь игрока свободен дольше 3 с */
       if (k % 90 === 0 && !flow.some(a => Math.hypot(a.u - level.start.u, a.v - level.start.v) < 18)) windows++;
