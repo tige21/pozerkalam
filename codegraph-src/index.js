@@ -7533,7 +7533,6 @@ function setClear(el,d){ setText(el, fmtClear(d)+' м');
 function updateHUD(){
   document.body.classList.toggle('fp', opt.camMode===CAM_FP);
   document.body.classList.toggle('mir', opt.mirrors);
-  setText($('timeVal'), game.t.toFixed(1)+' с');
   setText($('hitsVal'), 'касаний: '+game.hits);
   if(MOB){
     /* тач-кнопки — те же передачи, что в коробке: на механике P и D сбивали бы с толку */

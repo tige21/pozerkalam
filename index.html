@@ -442,8 +442,8 @@ body.fp #hint{display:none}
 </div>
 
 <div class="panel" id="topright">
-  <div class="big" id="timeVal">0.0 с</div>
-  <div class="sub" id="hitsVal">касаний: 0</div>
+  <!-- секундомера во время занятия нет (#150): время показывают только итоги урока -->
+  <div class="big" id="hitsVal">касаний: 0</div>
   <div class="sub" id="lvlIdx"></div>
 </div>
 <div id="restartBtn" class="sidebtn" title="Начать уровень заново (R)">⟲ заново</div>
@@ -7533,7 +7533,6 @@ function setClear(el,d){ setText(el, fmtClear(d)+' м');
 function updateHUD(){
   document.body.classList.toggle('fp', opt.camMode===CAM_FP);
   document.body.classList.toggle('mir', opt.mirrors);
-  setText($('timeVal'), game.t.toFixed(1)+' с');
   setText($('hitsVal'), 'касаний: '+game.hits);
   if(MOB){
     /* тач-кнопки — те же передачи, что в коробке: на механике P и D сбивали бы с толку */
