@@ -20,7 +20,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+/* ROOT — чтобы прогнать аудит по другой сборке (мутант, распакованный билд), как у demo-vio */
+const ROOT = process.env.ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PW_DIR = process.env.PW_DIR || '/tmp/pw';
 const JSON_OUT = process.argv.includes('--json');
 

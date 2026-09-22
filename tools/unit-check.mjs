@@ -31,6 +31,7 @@ await page.goto(url);
 await page.evaluate(() => { for (const k of ['trainer_seen', 'trainer_hint', 'trainer_drive']) localStorage.setItem(k, '1'); });
 await page.goto(url + '&r=1');
 await page.waitForFunction(() => typeof window.loadLevel === 'function', null, { timeout: 15000 }).catch(() => {});
+await page.addScriptTag({ path: path.join(HERE, 'exam-check.js') });
 await page.addScriptTag({ path: path.join(HERE, 'units.js') });
 
 const r = await page.evaluate(() => {

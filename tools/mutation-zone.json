@@ -1,0 +1,18 @@
+{
+  "_": "Область мутаций: где ошибка стоит дороже всего. Обучающий слой и рендер сюда не входят — их поведение закрыто level-audit и снимками, а мутировать рисование бессмысленно.",
+  "functions": [
+    "steerRateNow", "ackermann", "sweep", "stepCar",
+    "satMTV", "polyMTV", "carHullPts", "obsShape",
+    "rayOBB", "castMin", "clearances", "blindZone",
+    "goalPoseOk", "hull2", "shadowPoly", "groundH", "carLift",
+    "roadHW", "laneOffset", "citySnap", "lanePt", "edgeRun", "ringArc", "cornerArc",
+    "cityPathNodes", "cityRoute", "lightPhase", "lightStops",
+    "trafPath", "trafPose", "trafSpeed", "trafBlock", "trafConflict", "trafLight",
+    "trafficGap", "carExtent", "trafKey",
+    "violationsTick", "examPenalty"
+  ],
+  "constants": [
+    "YIELD_TCA", "TRAF", "TRAF_SPACING", "GAP_AHEAD", "EXAM_FAIL_SUM", "SENS_MAX",
+    "LIGHT_CYCLE", "LANE_W", "TRAM_HW", "LANE_SHIFT", "ROUTE_STEP", "STOP_V"
+  ]
+}

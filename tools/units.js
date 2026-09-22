@@ -130,5 +130,131 @@ function unitCheck() {
   ok('вне зоны земля ровная', groundH(0, -60) === 0);
   ok('на настиле земля поднята', level.ramps.length > 0);
 
+  /* Детекторы уже проверены синтетикой в tools/exam-check.js — она гоняет 15 сценариев на
+     собственной фикстуре за долю секунды. До сих пор эта проверка жила отдельно и в
+     мутационный набор не входила: 274 мутанта в violationsTick выживали при том, что
+     проверка на них есть. Подключаем её сюда, а не переписываем. */
+  g('продольная физика');
+  /* stepCar гоняем напрямую: без кадров и без рендера — это те же подшаги, что в игре.
+     Перед каждым замером машину возвращаем на старт: за двадцать секунд газа она уезжает
+     на сто метров и упирается в край площадки, и замер превращается в замер упора */
+  loadLevel(LEVELS.findIndex((d) => d.name === '13 · Полигон: круги разворота')); hideOv(); paused = true;
+  const drive = (secs, keys) => {
+    for (const k in input) input[k] = false;
+    Object.assign(input, keys || {});
+    for (let t = 0; t < secs; t += 1 / 120) stepCar(1 / 120);
+    for (const k in input) input[k] = false;
+  };
+  const reset = (sel) => {
+    setBody(level.start.u, level.start.v, level.start.th);
+    car.sel = sel; car.gear = sel === 'D' ? 1 : sel === 'R' ? -1 : 0;
+    car.vel = 0; car.steer = 0; car.hand = false;
+  };
+  reset('P'); drive(2, { fwd: true });
+  near('в режиме P газ не трогает машину', car.vel, 0, 1e-9);
+  reset('D'); drive(4, {});
+  near('в D без газа машина ползёт на крипе', car.vel, CAR.creep, 0.2);
+  reset('D'); drive(4, { fwd: true });
+  ok('газ разгоняет заметно выше крипа', car.vel > CAR.creep * 2);
+  reset('D'); car.vel = CAR.maxF; drive(3, { fwd: true });
+  ok('выше предела машина не разгоняется', car.vel <= CAR.maxF + 1e-6);
+  reset('D'); car.vel = CAR.maxF; drive(3, { back: true });
+  near('тормоз останавливает', car.vel, 0, 0.05);
+  reset('R'); drive(6, { fwd: true });
+  ok('назад машина едет назад', car.vel < 0);
+  ok('задний ход не быстрее своего предела', Math.abs(car.vel) <= CAR.maxR + 1e-6);
+  ok('задний предел ниже переднего', CAR.maxR < CAR.maxF);
+  /* руль замеряем на тормозе: крип за секунду разгоняет машину, и скорость руления растёт */
+  reset('D'); drive(1, { right: true, back: true });
+  near('стоя руль идёт со своей скоростью', car.steer, CAR.steerStill, rad(2));
+  drive(5, { right: true, back: true });   /* до упора хватает 1,5 с */
+  near('дальше упора руль не уходит', car.steer, CAR.maxSteer, 1e-9);
+  /* кастор возвращает руль только выше порога: ниже него парковка была бы невозможна */
+  reset('D'); car.steer = CAR.maxSteer; car.vel = CAR.casterV * 0.6; drive(3, {});
+  ok('на парковочной скорости руль не распускается', car.steer > CAR.maxSteer * 0.98);
+  reset('D'); car.steer = CAR.maxSteer; car.vel = CAR.casterV * 3; drive(3, {});
+  ok('на ходу руль возвращается сам', car.steer < CAR.maxSteer * 0.9);
+  reset('D'); car.hand = true; drive(6, { fwd: true });
+  ok('с ручником машина не разгоняется', Math.abs(car.vel) < CAR.maxF * 0.5);
+  car.hand = false;
+
+  g('зазоры: борт и углы');
+  loadLevel(LEVELS.findIndex((d) => d.name === '14 · Габарит: нос к стене')); hideOv(); paused = true;
+  setBody(0, -3.0, 0); car.vel = 0;
+  const cl = clearances();
+  near('сзади пусто', cl.rear, SENS_MAX, 1e-6);
+  /* угловой луч подмешивается в оба соседних показания: сбоку от машины пусто, но стена
+     впереди-слева видна диагональю — без этого датчик был слеп к препятствию наискось */
+  ok('стена впереди видна и боковыми показаниями', cl.left < SENS_MAX - 0.5 && cl.right < SENS_MAX - 0.5);
+  near('слева и справа симметрично', cl.left, cl.right, 0.01);
+  ok('ближний угол назван, когда стена рядом', cl.corner && cl.corner.d < 1.2);
+  setBody(0, -11, 0);
+  ok('вдали ближний угол не выделяется', !clearances().corner);
+  const far = clearances();
+  near('вдали спереди предел', far.front, SENS_MAX, 1e-6);
+  near('вдали слева предел', far.left, SENS_MAX, 1e-6);
+
+  g('поток: кто кого держит');
+  loadLevel(LEVELS.findIndex((d) => d.name === '30 · Круговое движение')); hideOv(); paused = true;
+  setBody(200, 200, 0); car.vel = 0;          /* игрок далеко: мешать некому */
+  /* pcar принимает курс в ГРАДУСАХ и сам переводит его в радианы */
+  const flow = (u, v, yawDeg, sp) => {
+    const a = pcar(u, v, yawDeg, PALETTE[2]);
+    a.act = { wps: [], sp, v: sp, trig: null, i: 0, started: true, done: false, u0: u, v0: v, yaw0: a.yaw };
+    return a;
+  };
+  level.actors = [flow(0, 0, 0, 6), flow(0, 9, 0, 6)];
+  ok('попутный впереди держит дистанцию', trafBlock(level.actors[0], 0) < TRAF.see);
+  near('дистанция меряется до самой машины', trafBlock(level.actors[0], 0), 9, 1.5);
+  level.actors = [flow(0, 0, 0, 6), flow(3.3, 9, 180, 6)];
+  ok('встречный в соседней полосе не помеха', trafBlock(level.actors[0], 0) >= TRAF.see);
+  level.actors = [flow(0, 0, 0, 6), flow(0, 9, 0, 0)];
+  ok('стоящий впереди — помеха', trafBlock(level.actors[0], 0) < TRAF.see);
+  /* на перекрёстке уступает тот, кто приедет в точку конфликта ПОЗЖЕ: ближнему тормозить
+     незачем, и без этого правила две машины уступали бы друг другу до бесконечности.
+     Здесь первому ехать 10 м, второму — 12: первый проезжает, второй ждёт */
+  level.actors = [flow(0, 0, 0, 6), flow(12, 10, -90, 6)];
+  ok('ближний к точке конфликта едет', trafBlock(level.actors[0], 0) >= TRAF.see);
+  ok('дальний от точки конфликта уступает', trafBlock(level.actors[1], 1) < TRAF.see);
+  level.actors = [flow(0, 0, 0, 6), flow(60, 10, -90, 6)];
+  ok('далёкий поперечный никого не тормозит', trafBlock(level.actors[0], 0) >= TRAF.see
+    && trafBlock(level.actors[1], 1) >= TRAF.see);
+  level.actors = [];
+
+  g('маршрут по городу');
+  loadLevel(LEVELS.findIndex((d) => d.name === '32 · Экзамен: маршрут с инспектором')); hideOv(); paused = true;
+  const gg = level.city.graph;
+  const north = cityRoute({ u: 8.15, v: -60 }, { u: 8.15, v: 40 }, { side: 'right' });
+  ok('длинный маршрут построен', north && north.len > 90);
+  ok('маршрут назвал улицы', north.legs.length > 0 && north.legs.every((l) => l.name));
+  const left = cityRoute({ u: 8.15, v: -60 }, { u: 8.15, v: -20 }, { side: 'left' });
+  ok('перед левым поворотом линия уходит левее правого ряда',
+    left.pts[left.pts.length - 2].u < north.pts[1].u);
+  /* кольцо — не пункт назначения: линия обязана кончаться на въезде, а не в островке */
+  const toRing = cityRoute({ u: 46, v: -4.95 }, { u: gg.V.N4.u, v: gg.V.N4.v }, { side: 'right' });
+  ok('линия к кольцу не идёт в центр островка', toRing && toRing.pts.every(
+    (p) => Math.hypot(p.u - gg.V.N4.u, p.v - gg.V.N4.v) > gg.V.N4.round - 7.5));
+
+  g('детекторы нарушений');
+  if (typeof detectorCheck === 'function') {
+    for (const c of detectorCheck()) ok(c.name, c.ok);
+  } else fails.push('детекторы · tools/exam-check.js не загружен');
+  g('экзамен: зоны и поворотники');
+  if (typeof examCheck === 'function') {
+    for (const c of examCheck()) ok(c.name, c.ok);
+  } else fails.push('экзамен · tools/exam-check.js не загружен');
+  g('экзамен: маршруты');
+  if (typeof routeCheck === 'function') {
+    for (const r of routeCheck(3)) {
+      ok('маршрут ' + r.run + ' проходится целиком', r.done === r.n && !r.stuck);
+      ok('маршрут ' + r.run + ' без мгновенных этапов', !r.instant.length);
+    }
+  } else fails.push('маршруты · tools/exam-check.js не загружен');
+  g('экзамен: навигация');
+  if (typeof navCheck === 'function') {
+    const n = navCheck(3);
+    ok('линия маршрута без замечаний', Array.isArray(n) && n.length === 0);
+  } else fails.push('навигация · tools/exam-check.js не загружен');
+
   return { total: done.length + fails.length, failed: fails.length, fails };
 }
