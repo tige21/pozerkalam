@@ -1031,6 +1031,15 @@ function lockTime(){ return CAR.maxSteer/steerRateNow(); }
 /* упор руля: в машине он ощущается рукой, здесь — цветом метки и щелчком.
    Щелчок по фронту, иначе он звучал бы каждый кадр всё время удержания упора */
 function atLock(){ return Math.abs(car.steer) > CAR.maxSteer*0.985; }
+/* упор — 1,49 оборота: после полного оборота метка снова наверху, и 0,2 оборота одним цветом
+   не отличить от 1,2. Поэтому цвет метки считает обороты: первый жёлтый, второй оранжевый,
+   упор красный (#152). Один источник для панели руля и для руля в салоне */
+const TURN_COL=[[255,214,64],[255,138,61]], LOCK_COL=[255,88,68];
+function steerTurnCol(){
+  if(atLock()) return LOCK_COL;
+  return TURN_COL[Math.abs(car.steer*CAR.steerRatio)>TAU ? 1 : 0];
+}
+const rgbStr=c=>'rgb('+c[0]+','+c[1]+','+c[2]+')';
 let lockWas=false;
 function ackermann(st){
   if(Math.abs(st) < 1e-4) return {l:0, r:0, R:Infinity};
@@ -1757,10 +1766,10 @@ function emitWheel(K){
   });
   /* метка «12 часов» лежит на трубке со стороны водителя, неподвижная риска на кожухе колонки —
      за ободом: обороты руля читаются только по ПАРЕ меток, одна крутится, вторая стоит.
-     На упоре метка краснеет */
+     Цвет метки считает обороты (steerTurnCol): второй — оранжевый, упор — красный */
   emitLit(()=>{
     const mk=(k)=>add(at3(ang+TOP,k), ax, RT+0.004);
-    pushBar(P, mk(0.93), mk(1.07), 0.007, atLock() ? [255,88,68] : [255,214,64], 1, 0.03);
+    pushBar(P, mk(0.93), mk(1.07), 0.007, steerTurnCol(), 1, 0.03);
     /* риска двухслойная: одним цветом она пропадала бы то на светлом капоте,
        то на тёмной стене — тёмная подложка держит контраст на любом фоне */
     pushBar(P, at3(TOP,1.14), at3(TOP,1.32), 0.012, [26,29,35]);
@@ -7368,9 +7377,22 @@ function drawSteerPanel(x,y,w,h){
   ctx.moveTo(-40,2); ctx.lineTo(-9,2); ctx.moveTo(40,2); ctx.lineTo(9,2);
   ctx.moveTo(0,10); ctx.lineTo(0,38); ctx.stroke();
   ctx.fillStyle='#33465a'; ctx.beginPath(); ctx.arc(0,2,10,0,TAU); ctx.fill();
-  ctx.fillStyle='#f87171'; ctx.fillRect(-3,-47,6,10);
+  ctx.fillStyle=rgbStr(steerTurnCol()); ctx.fillRect(-3,-47,6,10);
   ctx.restore();
   ctx.fillStyle='rgba(255,255,255,.30)'; ctx.fillRect(x+62,y+22,4,8);
+  /* линия поворота от неподвижной риски: первый оборот — своё кольцо, второй — внешнее
+     и другим цветом, иначе 1,2 оборота на пиктограмме выглядят как 0,2 */
+  { const a=car.steer*CAR.steerRatio, aa=Math.abs(a), ccw=a<0, A0=-PI/2, dir=ccw?-1:1;
+    if(aa>0.02){
+      ctx.lineWidth=3; ctx.lineCap='round';
+      ctx.strokeStyle=rgbStr(TURN_COL[0]);
+      ctx.beginPath(); ctx.arc(x+64,y+74,51,A0,A0+dir*Math.min(aa,TAU),ccw); ctx.stroke();
+      if(aa>TAU){
+        ctx.strokeStyle=rgbStr(atLock()?LOCK_COL:TURN_COL[1]);
+        ctx.beginPath(); ctx.arc(x+64,y+74,56,A0,A0+dir*(aa-TAU),ccw); ctx.stroke();
+      }
+      ctx.lineCap='butt';
+    } }
 
   const cx=x+232, cy=y+72, s=15.5;
   ctx.save(); ctx.translate(cx,cy);
