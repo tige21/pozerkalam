@@ -1169,6 +1169,42 @@ function emitCarBody(u,v,th,col){
     }
   }
 }
+/* дальний силуэт машины потока: тот же лофт, но 8 сечений из 13 и 8 рёбер из 12 — капот,
+   стёкла, крыша и багажник остаются, а граней втрое меньше. Голая коробка на этом месте
+   читалась как ящик, и машина «превращалась» в себя только на подъезде */
+const CAR_SECS_LOW=[0,1,3,4,7,8,10,12].map(i=>{ const {w,yb,ys,be,wr,yt,z,k}=CAR_ST[i];
+  return {z, k, pts:[[-(w-0.10),yb],[-w,ys],[-(w-0.03),be],[-wr,yt],[wr,yt],[w-0.03,be],[w,ys],[w-0.10,yb]]}; });
+const LOW_GLASS_TOP=new Set([2,3,4]), LOW_GLASS_SIDE=new Set([2,4]);
+function emitCarLow(u,v,th,col){
+  const F=fwd(th), R=rgt(th), cx=-u, cz=v;
+  const P=(lat,y,z)=>({x:cx+R.x*lat+F.x*z, y:y, z:cz+R.z*lat+F.z*z});
+  const ref={x:cx, y:0.85, z:cz};
+  const sill=[44,48,54], glass=[42,52,64];
+  const bump=[(col[0]*0.84)|0,(col[1]*0.84)|0,(col[2]*0.84)|0];
+  const S=CAR_SECS_LOW, NP=S[0].pts.length;
+  for(let i=0;i+1<S.length;i++){
+    const A=S[i], B=S[i+1];
+    for(let e=0;e<NP;e++){
+      const e2=(e+1)%NP;
+      let cc=col;
+      if(A.k==='bump') cc=bump;
+      else if(e===NP-1) cc=sill;
+      else if(A.k==='glass' && LOW_GLASS_TOP.has(e)) cc=glass;
+      else if(A.k==='cabin' && LOW_GLASS_SIDE.has(e)) cc=glass;
+      pushQuad(P(A.pts[e][0],A.pts[e][1],A.z), P(A.pts[e2][0],A.pts[e2][1],A.z),
+               P(B.pts[e2][0],B.pts[e2][1],B.z), P(B.pts[e][0],B.pts[e][1],B.z), cc, ref, 0);
+    }
+  }
+  const L=S.length-1;
+  pushPoly(S[0].pts.map(q=>P(q[0],q[1],S[0].z)), bump, ref, 0);
+  pushPoly(S[L].pts.map(q=>P(q[0],q[1],S[L].z)), bump, ref, 0);
+  const nB={x:-F.x,y:0,z:-F.z};
+  for(const sg of [-1,1])
+    pushFace([P(sg*0.26,0.62,-2.226),P(sg*0.72,0.62,-2.226),P(sg*0.72,0.72,-2.226),P(sg*0.26,0.72,-2.226)], nB, [156,40,38], 0.05, MO.emit);
+  const f=fuv(th), r=ruv(th), t=CAR.track/2, Rw=CAR.wheelR;
+  for(const dz of [-C2R, -C2R+CAR.wheelbase]) for(const sg of [-1,1])
+    pushBox(u+f.u*dz+r.u*sg*t, Rw, v+f.v*dz+r.v*sg*t, CAR.wheelW/2, Rw, Rw*0.8, th, [28,29,33]);
+}
 function pushWheelCyl(u,v,yaw,side){
   const Rw=CAR.wheelR, hw=CAR.wheelW/2;
   const F=fwd(yaw), Rv=rgt(yaw), cx=-u, cz=v, cy=Rw;
@@ -6855,11 +6891,10 @@ function emitObstacles(maxD){
   for(const o of level.rend){
     if(Math.hypot(o.u-cu,o.v-cv) > maxD) continue;
     if(o.kind==='car'){
-      /* машина потока дальше TRAF_LOD — коробкой: лофт из 13 сечений стоит около двухсот
-         граней, а на телефоне кадр упирается именно в число граней. Вблизи и у
+      /* машина потока дальше TRAF_LOD — упрощённым силуэтом: лофт из 13 сечений стоит около
+         двухсот граней, а на телефоне кадр упирается именно в число граней. Вблизи и у
          припаркованных всё по-прежнему */
-      if(o.act && Math.hypot(o.u-cu,o.v-cv)>trafLod()){
-        pushBox(o.u,CAR.height/2,o.v,CAR.width/2,CAR.height/2,CAR.length/2,o.yaw,o.col); continue; }
+      if(o.act && Math.hypot(o.u-cu,o.v-cv)>trafLod()){ emitCarLow(o.u,o.v,o.yaw,o.col); continue; }
       emitCarMesh(o.u,o.v,o.yaw,o.col,0,null); continue; }
     if(o.kind==='cone'){
       if(o.knocked){ pushBox(o.u,0.09,o.v,0.30,0.09,0.30,0.6,[196,72,26]); continue; }

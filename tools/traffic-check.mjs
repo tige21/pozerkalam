@@ -35,6 +35,26 @@ const levels = asked.length ? asked
   : await page.evaluate(() => LEVELS.map((d, i) => d.traffic ? i : -1).filter(i => i >= 0));
 
 let bad = 0;
+/* дальняя машина потока — упрощённый кузов, а не коробка: коробка на 20–32 м читалась
+   ящиком и «превращалась» в машину на подъезде */
+{
+  const r = await page.evaluate(() => {
+    loadLevel(LEVELS.findIndex(d => d.traffic)); hideOv(); paused = true;
+    const cnt = f => { faces.length = 0; setCam({ x: -6, y: 3, z: -6 }, { x: 0, y: 0.7, z: 0 }, null, 60);
+      f(); const n = faces.length; faces.length = 0; return n; };
+    const a = level.actors.find(x => x.act);
+    const far = { u: -cam.pos.x + 1e3, v: cam.pos.z };
+    let low = 0; const L = emitCarLow; emitCarLow = (...x) => { low++; return L(...x); };
+    const ou = a.u, ov = a.v; a.u = far.u; a.v = far.v;
+    try { emitObstacles(1e4); } finally { emitCarLow = L; a.u = ou; a.v = ov; faces.length = 0; }
+    return { called: low, lowF: cnt(() => emitCarLow(0, 0, 0.3, [200, 60, 60])),
+      fullF: cnt(() => emitCarMesh(0, 0, 0.3, [200, 60, 60], 0, null)) };
+  });
+  const ok = r.called > 0 && r.lowF > 12 && r.lowF < r.fullF / 2;
+  if (!ok) bad++;
+  console.log((ok ? 'OK   ' : 'FAIL ') + 'дальняя машина потока — упрощённый кузов (@traffic-flow-lod) · граней '
+    + r.lowF + ' против ' + r.fullF + (r.called ? '' : ' · emitCarLow не вызван'));
+}
 for (const li of levels) {
   const r = await page.evaluate(({ li, secs }) => {
     loadLevel(li); hideOv(); paused = true;
