@@ -79,6 +79,10 @@ await down('ShiftLeft'); await page.waitForTimeout(400);
 await tap('Period');
 s = await st();
 check('со сцеплением включается 1-я (@mt-clutch-gear1)', s.mgear === 1 && s.clu > 0.85, 'mgear=' + s.mgear + ' clu=' + s.clu);
+/* выжатое до упора сцепление обязано стоять на 100 %: ветка отпускания срабатывала и при
+   равенстве, и значение пилило 100 ↔ 97,7 %, щиток показывал «98%» */
+const full = await page.evaluate(() => ({ clu: car.clu, txt: $('rpmVal').textContent }));
+check('выжатое сцепление держит 100 % (@mt-clutch-full)', full.clu === 1 && /100%$/.test(full.txt), JSON.stringify(full));
 
 /* 4. бросил сцепление без газа — глохнет */
 await up('ShiftLeft'); await page.waitForTimeout(1400);

@@ -6,7 +6,7 @@
 «авто» — исполняет `tools/gherkin-run.mjs`, человеку нужен как источник эталонных чисел.
 «руками» — закрыто инструментом в браузере, перед деплоем стоит пройти глазами.
 
-<!-- codes: dd0c38e70f76 -->
+<!-- codes: e1c7623cce40 -->
 
 ## Город и разметка
 
@@ -208,6 +208,17 @@
 
 ## Механическая коробка
 
+### Выжатое до упора сцепление держит 100 %
+
+`mt-clutch-full` · руками · `specs/features/mt/sceplenie.feature:23`
+
+Ссылка: замечание владельца «на механике селектор автомата лезет в салон»;
+
+- **Дано** включена механика и машина стоит
+- **Когда** я держу левый Shift дольше полсекунды
+- **Тогда** сцепление выжато на 100 %
+- **И** на щитке написано "100%"
+
 ### Со сцеплением включается первая
 
 `mt-clutch-gear1` · руками · `specs/features/mt/sceplenie.feature:17`
@@ -230,7 +241,7 @@
 
 ### Показ идёт на автомате
 
-`mt-demo-at` · руками · `specs/features/mt/sceplenie.feature:43`
+`mt-demo-at` · руками · `specs/features/mt/sceplenie.feature:50`
 
 Ссылка: замечание владельца «на механике селектор автомата лезет в салон»;
 
@@ -240,7 +251,7 @@
 
 ### После показа механика возвращается
 
-`mt-demo-restore` · руками · `specs/features/mt/sceplenie.feature:49`
+`mt-demo-restore` · руками · `specs/features/mt/sceplenie.feature:56`
 
 Ссылка: замечание владельца «на механике селектор автомата лезет в салон»;
 
@@ -249,7 +260,7 @@
 
 ### Enter из нейтрали даёт первую, а не заднюю
 
-`mt-enter-first` · руками · `specs/features/mt/sceplenie.feature:30`
+`mt-enter-first` · руками · `specs/features/mt/sceplenie.feature:37`
 
 Ссылка: замечание владельца «на механике селектор автомата лезет в салон»;
 
@@ -260,7 +271,7 @@
 
 ### Задняя на ходу запрещена
 
-`mt-reverse-blocked` · руками · `specs/features/mt/sceplenie.feature:37`
+`mt-reverse-blocked` · руками · `specs/features/mt/sceplenie.feature:44`
 
 Ссылка: замечание владельца «на механике селектор автомата лезет в салон»;
 
@@ -270,7 +281,7 @@
 
 ### Брошенное сцепление без газа глушит двигатель
 
-`mt-stall-drop` · руками · `specs/features/mt/sceplenie.feature:23`
+`mt-stall-drop` · руками · `specs/features/mt/sceplenie.feature:30`
 
 Ссылка: замечание владельца «на механике селектор автомата лезет в салон»;
 
@@ -281,7 +292,7 @@
 
 ### На телефоне кнопка ЗАВЕСТИ занимает место ручника
 
-`mt-start-slot` · руками · `specs/features/mt/sceplenie.feature:54`
+`mt-start-slot` · руками · `specs/features/mt/sceplenie.feature:61`
 
 Ссылка: замечание владельца «на механике селектор автомата лезет в салон»;
 

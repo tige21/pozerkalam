@@ -5471,8 +5471,10 @@ function mtStart(){
 /* продольная динамика МКПП: зовётся из stepCar вместо АКПП-веток */
 function mtDrive(dt, gas, brakePedal, slow){
   const tgt = input.clutch?1:0;
+  /* при равенстве значение стоит: «иначе — отпускание» снимало 2,3 % с выжатого до упора
+     сцепления на каждом подшаге, щиток застывал на 98 %, и часть тяги доходила до колёс (#153) */
   if(tgt>car.clu) car.clu=Math.min(1, car.clu+5.0*dt);
-  else {
+  else if(tgt<car.clu){
     const inGrip = car.clu>0.25 && car.clu<0.75;
     car.clu=Math.max(0, car.clu-(inGrip?0.5:2.8)*dt);
   }
