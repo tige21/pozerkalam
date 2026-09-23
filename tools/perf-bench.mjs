@@ -11,6 +11,8 @@
      FORCE_Q=3 ONLY=1 — зафиксировать уровень качества 3 и померить только сценарий «всё».
      URL=https://pozerkalam.space/play/ — померить выложенную сборку вместо локального файла.
      MOBILE=1 CPU=4 — эмуляция телефона (844×390 @3, тач) с процессором в 4 раза медленнее.
+     LEVEL=30 CAM=chase TRAFFIC=dense — номер уровня (с 1), камера (fp — салон, по умолчанию; chase — за
+       машиной) и плотность потока: город с машинами дороже площадки, и замер одной площадки его не видит.
    Браузеры владельца (Яндекс и т.п.) не запускать — только Chrome/Chromium с временным профилем.
    Вывод: по строке JSON на сценарий; PAGEERR — в stderr. */
 import { createRequire } from 'node:module';
@@ -32,6 +34,9 @@ const ONLY = !!process.env.ONLY;             /* только сценарий «
 const URL_OVERRIDE = process.env.URL || '';  /* померить прод: URL=https://pozerkalam.space/play/ */
 const MOBILE = !!process.env.MOBILE;         /* телефон: 844×390, DPR 3, тач, трекер touch */
 const CPU = +(process.env.CPU || 1);         /* замедление процессора через CDP (4 ≈ средний телефон) */
+const LEVEL = +(process.env.LEVEL || 1);     /* номер уровня, с 1 */
+const CAM = process.env.CAM || 'fp';          /* fp — салон, chase — за машиной */
+const TRAFFIC = process.env.TRAFFIC || '';    /* off | calm | normal | dense */
 
 let chromium;
 try { ({ chromium } = createRequire(path.join(PW_DIR, 'package.json'))('playwright-core')); }
@@ -48,10 +53,14 @@ page.on('pageerror', e => { if (!/ServiceWorker/.test(e.message)) console.error(
 
 async function load(url) {
   await page.goto(url);
-  await page.evaluate((t) => { for (const k of ['trainer_seen', 'trainer_hint', 'trainer_drive']) localStorage.setItem(k, '1'); localStorage.setItem('trainer_runs', '9'); localStorage.setItem('trainer_touch', t); }, MOBILE ? '1' : '0');
+  await page.evaluate(([t, tr]) => { for (const k of ['trainer_seen', 'trainer_hint', 'trainer_drive']) localStorage.setItem(k, '1'); localStorage.setItem('trainer_runs', '9'); localStorage.setItem('trainer_touch', t);
+    if (tr) localStorage.setItem('trainer_traffic', tr); }, [MOBILE ? '1' : '0', TRAFFIC]);
   await page.goto(url + 'r'); await page.waitForTimeout(400);
-  await page.evaluate((fq) => { doAct('start'); pressKey('KeyV'); opt.fpYaw = 0; opt.fpPitch = rad(-2);
-    if (fq !== null && typeof qApply === 'function') { qApply(fq); qCoolT = 1e9; } }, FORCE_Q);
+  await page.evaluate(([fq, lv, cam]) => { doAct('start');
+    if (lv > 1) { loadLevel(lv - 1); hideOv(); }
+    /* поток едет сам: без газа машина игрока стоит, а город живёт — ровно то, что грузит телефон */
+    if (cam === 'fp') { pressKey('KeyV'); opt.fpYaw = 0; opt.fpPitch = rad(-2); } else opt.camMode = CAM_CHASE;
+    if (fq !== null && typeof qApply === 'function') { qApply(fq); qCoolT = 1e9; } }, [FORCE_Q, LEVEL, CAM]);
   await page.waitForTimeout(800 + SETTLE);
 }
 async function measure(scene, label, setup) {
@@ -65,7 +74,9 @@ async function measure(scene, label, setup) {
     const ff = flushFaces; let passes = 0; flushFaces = function () { passes++; ff(); };
     try { render(0.016); } finally { for (const m in keep) P[m] = keep[m]; flushFaces = ff; }
     return Object.assign({ passes, faces: typeof facesFrame === 'number' ? facesFrame : null }, c); });
-  console.log(JSON.stringify(Object.assign({ scene, label }, r, { ops })));
+  const extra = await page.evaluate(() => ({ level: level.def.name.split(' · ')[0], cam: opt.camMode === CAM_FP ? 'fp' : 'chase',
+    cars: level.actors.filter(a => a.act && a.act.flow).length }));
+  console.log(JSON.stringify(Object.assign({ scene, label }, extra, r, { ops })));
 }
 const SCENARIOS = [
   ['всё', null],

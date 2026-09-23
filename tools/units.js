@@ -194,6 +194,31 @@ function unitCheck() {
   near('вдали спереди предел', far.front, SENS_MAX, 1e-6);
   near('вдали слева предел', far.left, SENS_MAX, 1e-6);
 
+  g('зазоры: низкий бордюр');
+  /* датчики обязаны видеть и бордюр в 16 см: лучи идут по списку ближних препятствий с minH=0,
+     и подмена нуля на единицу молча выкидывала бы всё ниже метра — именно бордюры у тротуара */
+  loadLevel(LEVELS.findIndex((d) => d.name === '14 · Габарит: нос к стене')); hideOv(); paused = true;
+  const kb = (u, v, w, l) => { const o = kerb(u, v, w, l); o.hw = w / 2; o.hl = l / 2; return o; };
+  level.obs = [kb(0, HALF_L + 0.5, 6, 0.2), kb(0, -(HALF_L + 0.5), 6, 0.2),
+               kb(-(HALF_W + 0.5), 0, 0.2, 6), kb(HALF_W + 0.5, 0, 0.2, 6)];
+  setBody(0, 0, 0); car.vel = 0; cornerHold = null;
+  const lk = clearances();
+  near('бордюр спереди 0,39 м', lk.front, 0.39, 0.02);
+  near('бордюр сзади 0,39 м', lk.rear, 0.39, 0.02);
+  near('бордюр слева 0,39 м', lk.left, 0.39, 0.02);
+  near('бордюр справа 0,39 м', lk.right, 0.39, 0.02);
+  ok('у бордюра ближний угол назван', lk.corner && lk.corner.d < 0.45);
+  /* кубик наискось от правого переднего угла: перпендикулярные лучи его не задевают, видит
+     только диагональ — она обязана попасть и в «спереди», и в «справа», и в выбор угла */
+  const dg = 0.5 * Math.SQRT1_2 + 0.15;
+  level.obs = [kb(HALF_W + dg, HALF_L + dg, 0.3, 0.3)];
+  setBody(0, 0, 0); cornerHold = null;
+  const dk = clearances();
+  ok('кубик наискось виден спереди', dk.front < SENS_MAX - 0.5);
+  ok('кубик наискось виден справа', dk.right < SENS_MAX - 0.5);
+  near('слева пусто', dk.left, SENS_MAX, 1e-6);
+  ok('ближний угол — правый передний', dk.corner && dk.corner.sf === 1 && dk.corner.sr === 1);
+
   g('поток: кто кого держит');
   loadLevel(LEVELS.findIndex((d) => d.name === '30 · Круговое движение')); hideOv(); paused = true;
   setBody(200, 200, 0); car.vel = 0;          /* игрок далеко: мешать некому */

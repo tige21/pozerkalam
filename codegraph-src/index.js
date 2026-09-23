@@ -672,8 +672,11 @@ let pxScale=1;
 function pathCam(pts){
   const c = clipNear(pts); const n=c.length; if(n<3) return false;
   let area=0, per=0;
-  for(let i=0;i<n;i++){ const s=toScreen(c[i]); SPX[i]=s.x; SPY[i]=s.y; }
-  for(let i=0;i<n;i++){ const j=(i+1)%n; area+=SPX[i]*SPY[j]-SPX[j]*SPY[i]; per+=Math.hypot(SPX[j]-SPX[i],SPY[j]-SPY[i]); }
+  /* toScreen без объекта на вершину и sqrt вместо Math.hypot: pathCam идёт на каждую грань кадра,
+     и на телефоне он был вторым по весу после самой заливки (#69) */
+  for(let i=0;i<n;i++){ const k=cam.scale/c[i].d; SPX[i]=VP.cx+c[i].x*k; SPY[i]=VP.cy-c[i].y*k; }
+  for(let i=0;i<n;i++){ const j=(i+1)%n, dx=SPX[j]-SPX[i], dy=SPY[j]-SPY[i];
+    area+=SPX[i]*SPY[j]-SPX[j]*SPY[i]; per+=Math.sqrt(dx*dx+dy*dy); }
   /* грань меньше половины пикселя не рисуем: у далёких машин таких сотни за кадр, и каждая —
      полный вызов растеризатора ради ничего */
   if(area<1 && area>-1) return false;
@@ -685,9 +688,9 @@ function pathCam(pts){
   for(let i=0;i<n;i++){
     const p=(i+n-1)%n, q=(i+1)%n;
     let ax=SPX[i]-SPX[p], ay=SPY[i]-SPY[p], bx=SPX[q]-SPX[i], by=SPY[q]-SPY[i];
-    const al=Math.hypot(ax,ay)||1, bl=Math.hypot(bx,by)||1;
+    const al=Math.sqrt(ax*ax+ay*ay)||1, bl=Math.sqrt(bx*bx+by*by)||1;
     ax/=al; ay/=al; bx/=bl; by/=bl;
-    let nx=ay+by, ny=-ax-bx; const nl=Math.hypot(nx,ny);
+    let nx=ay+by, ny=-ax-bx; const nl=Math.sqrt(nx*nx+ny*ny);
     let x=SPX[i], y=SPY[i];
     if(nl>1e-6){ x+=nx/nl*sg; y+=ny/nl*sg; }
     if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
@@ -768,7 +771,7 @@ function shadeCol(col, n, d, y, sh){
     const k = (0.48 + 0.42*nl)*ao;
     let sp=0;
     if(sh && sh.mat && sh.mat.spec && sh.view){
-      const V=sh.view, hx=L.x+V.x, hy=L.y+V.y, hz=L.z+V.z, hl=Math.hypot(hx,hy,hz)||1;
+      const V=sh.view, hx=L.x+V.x, hy=L.y+V.y, hz=L.z+V.z, hl=Math.sqrt(hx*hx+hy*hy+hz*hz)||1;
       const nh=Math.max(0, (n.x*hx+n.y*hy+n.z*hz)/hl);
       sp=sh.mat.spec*Math.pow(nh, sh.mat.shin)*ao;
     }
@@ -785,7 +788,7 @@ function shadeCol(col, n, d, y, sh){
        Блинн-Фонг по вектору взгляда. Без этого кузова читались как матовые коробки */
     if(m.refl){ const f=m.refl*(0.55+0.45*Math.max(0,n.y)); r+=(SKY_REF[0]-r)*f; g+=(SKY_REF[1]-g)*f; b+=(SKY_REF[2]-b)*f; }
     if(m.spec && sh.view){
-      const V=sh.view, hx=LIGHT.x+V.x, hy=LIGHT.y+V.y, hz=LIGHT.z+V.z, hl=Math.hypot(hx,hy,hz)||1;
+      const V=sh.view, hx=LIGHT.x+V.x, hy=LIGHT.y+V.y, hz=LIGHT.z+V.z, hl=Math.sqrt(hx*hx+hy*hy+hz*hz)||1;
       const nh=Math.max(0,(n.x*hx+n.y*hy+n.z*hz)/hl), sp=m.spec*Math.pow(nh,m.shin);
       r+=(255-r)*sp; g+=(255-g)*sp; b+=(255-b)*sp;
     }
@@ -812,13 +815,18 @@ function pushFace(v, n, col, bias, o){
      среднее по всем вершинам уходило к нулю и стена ложилась поверх салона */
   const cc = behind ? clipNear(cp) : cp;
   let mx=0, my=0, md=0; for(const c of cc){ mx+=c.x; my+=c.y; md+=c.d; }
-  const k=1/(cc.length||1), dist=Math.hypot(mx*k,my*k,md*k);
-  const f={cp, d:dist-(bias||0), col:null};
+  /* Math.sqrt, не Math.hypot: здесь и ниже — горячий путь каждой грани кадра, а hypot в V8 в разы
+     медленнее; на телефоне pushFace/pushQuad/shadeCol вместе съедали ~15 % кадра (#69) */
+  const k=1/(cc.length||1), qx=mx*k, qy=my*k, qd=md*k, dist=Math.sqrt(qx*qx+qy*qy+qd*qd);
+  /* все поля грани заведены сразу: добавленные позже (col2, grain, img, ga*) давали десяток скрытых
+     классов, и цикл flushFaces читал их полиморфно — на телефоне это была главная строка профиля (#69) */
+  const f={cp, d:dist-(bias||0), col:null, col2:null, colMid:null, grain:null, img:null,
+           lu:0, lv:0, ga0:0, gb0:0, ga1:0, gb1:0, ga3:0, gb3:0, gk:0};
   const m = o && o.mat ? matOf(o.mat) : null;
   let sh=null;
   if(o && (m || o.ao!==undefined || o.emit)){
     let view=null;
-    if(m && m.spec){ const vx=cam.pos.x-cx, vy=cam.pos.y-cy, vz=cam.pos.z-cz, vl=Math.hypot(vx,vy,vz)||1;
+    if(m && m.spec){ const vx=cam.pos.x-cx, vy=cam.pos.y-cy, vz=cam.pos.z-cz, vl=Math.sqrt(vx*vx+vy*vy+vz*vz)||1;
       view={x:vx/vl, y:vy/vl, z:vz/vl}; }
     sh={mat:m, ao:o.ao, view, emit:o.emit};
   }
@@ -827,7 +835,7 @@ function pushFace(v, n, col, bias, o){
   if(v.length>=4){
     if(o && o.n2){ f.col2=shadeCol(col, o.n2, dd, cy, sh);
       /* средний цвет — для мелкой или стоящей ребром грани: там градиент не виден или вырожден */
-      const n1=(o && o.n1)||n, mx=n1.x+o.n2.x, my=n1.y+o.n2.y, mz=n1.z+o.n2.z, ml=Math.hypot(mx,my,mz)||1;
+      const n1=(o && o.n1)||n, mx=n1.x+o.n2.x, my=n1.y+o.n2.y, mz=n1.z+o.n2.z, ml=Math.sqrt(mx*mx+my*my+mz*mz)||1;
       f.colMid=shadeCol(col, {x:mx/ml, y:my/ml, z:mz/ml}, dd, cy, sh); }
     if(cabinLit && m && m.grain){ f.grain=m;
       f.lu=Math.hypot(v[1].x-v[0].x, v[1].y-v[0].y, v[1].z-v[0].z);
@@ -1075,7 +1083,7 @@ function pushQuad(a,b,c,d,col,ref,bias,o){
   const ux=b.x-a.x, uy=b.y-a.y, uz=b.z-a.z;
   const vx=d.x-a.x, vy=d.y-a.y, vz=d.z-a.z;
   let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
-  const L=Math.hypot(nx,ny,nz); if(L<1e-7) return;
+  const L=Math.sqrt(nx*nx+ny*ny+nz*nz); if(L<1e-7) return;
   nx/=L; ny/=L; nz/=L;
   const mx=(a.x+b.x+c.x+d.x)*0.25, my=(a.y+b.y+c.y+d.y)*0.25, mz=(a.z+b.z+c.z+d.z)*0.25;
   if((mx-ref.x)*nx+(my-ref.y)*ny+(mz-ref.z)*nz < 0){ nx=-nx; ny=-ny; nz=-nz; }
@@ -1087,7 +1095,7 @@ function pushPoly(pts,col,ref,bias,o){
   const ux=b.x-a.x, uy=b.y-a.y, uz=b.z-a.z;
   const vx=c.x-a.x, vy=c.y-a.y, vz=c.z-a.z;
   let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
-  const L=Math.hypot(nx,ny,nz); if(L<1e-7) return;
+  const L=Math.sqrt(nx*nx+ny*ny+nz*nz); if(L<1e-7) return;
   nx/=L; ny/=L; nz/=L;
   let mx=0,my=0,mz=0; for(const p of pts){mx+=p.x;my+=p.y;mz+=p.z;}
   mx/=pts.length; my/=pts.length; mz/=pts.length;
@@ -5337,22 +5345,24 @@ function resolveCollisions(dt){
   }
 }
 
-function rayOBB(ou,ov,du,dv,B,maxT){
-  const r=ruv(B.yaw), f=fuv(B.yaw);
-  const pu=(ou-B.u)*r.u+(ov-B.v)*r.v, pv=(ou-B.u)*f.u+(ov-B.v)*f.v;
-  const vu=du*r.u+dv*r.v, vv=du*f.u+dv*f.v;
-  let t0=0,t1=maxT;
-  const ax=[[pu,vu,B.hw],[pv,vv,B.hl]];
-  for(const [p,vq,h] of ax){
-    if(Math.abs(vq)<1e-9){ if(p<-h||p>h) return -1; }
-    else{ let ta=(-h-p)/vq, tb=(h-p)/vq; if(ta>tb){const s=ta;ta=tb;tb=s;}
-      if(ta>t0)t0=ta; if(tb<t1)t1=tb; if(t0>t1) return -1; }
-  }
-  return t0;
+/* без выделения памяти: 36 лучей датчиков на каждое препятствие рядом — на телефоне массивы
+   и орты на каждый вызов давали заметную долю кадра и работы сборщика мусора (#69) */
+function raySlab(p,vq,h,t){
+  if(Math.abs(vq)<1e-9){ if(p<-h||p>h){ t[0]=1; t[1]=0; } return; }
+  let ta=(-h-p)/vq, tb=(h-p)/vq; if(ta>tb){const s=ta;ta=tb;tb=s;}
+  if(ta>t[0])t[0]=ta; if(tb<t[1])t[1]=tb;
 }
-function castMin(ou,ov,du,dv,maxT,minH){
+const RAY_T=[0,0];
+function rayOBB(ou,ov,du,dv,B,maxT){
+  const sn=Math.sin(B.yaw), cs=Math.cos(B.yaw), eu=ou-B.u, ev=ov-B.v;
+  const t=RAY_T; t[0]=0; t[1]=maxT;
+  raySlab(eu*cs-ev*sn, du*cs-dv*sn, B.hw, t); if(t[0]>t[1]) return -1;
+  raySlab(eu*sn+ev*cs, du*sn+dv*cs, B.hl, t); if(t[0]>t[1]) return -1;
+  return t[0];
+}
+function castMin(ou,ov,du,dv,maxT,minH,list){
   let best=maxT;
-  for(const o of level.obs){
+  for(const o of (list||level.obs)){
     if(o.kind==='cone' && o.knocked) continue;
     if(minH && o.h<minH) continue;
     const t=rayOBB(ou,ov,du,dv,o,maxT);
@@ -5364,8 +5374,22 @@ const SENS_MAX = 3.0;
 /* подсветка угла включается только вблизи: горящая постоянно, она перестаёт замечаться */
 const CORNER_WARN = 1.2, CORNER_KEEP = 0.08;
 let cornerHold = null;
+/* лучи датчиков бьют не дальше SENS_MAX от кузова: препятствие, чей описанный круг дальше
+   «диагональ кузова + SENS_MAX», ни один луч не заденет, и перебирать его 36 раз незачем.
+   В городе это сотни бордюров, знаков и машин потока — было 3,8 % времени кадра на телефоне (#69) */
+const CLR_NEAR=[];
+function clearNear(c){
+  CLR_NEAR.length=0;
+  const reach=Math.hypot(HALF_W,HALF_L)+SENS_MAX+0.02;
+  for(const o of level.obs){
+    if(o.kind==='cone' && o.knocked) continue;
+    const rr=reach+Math.hypot(o.hw,o.hl), du=o.u-c.u, dv=o.v-c.v;
+    if(du*du+dv*dv<=rr*rr) CLR_NEAR.push(o);
+  }
+  return CLR_NEAR;
+}
 function clearances(){
-  const c=bodyPos(), f=fuv(car.th), r=ruv(car.th);
+  const c=bodyPos(), f=fuv(car.th), r=ruv(car.th), near=clearNear(c);
   const P=(du,dv)=>({u:c.u+f.u*dv+r.u*du, v:c.v+f.v*dv+r.v*du});
   const out={};
   /* лучи идут и из углов кузова: без них борт «не видел» препятствие у самого угла
@@ -5382,7 +5406,7 @@ function clearances(){
   ];
   for(const [k,pts,d] of sets){
     let m=SENS_MAX;
-    for(const p of pts) m=Math.min(m, castMin(p.u+d.u*0.01, p.v+d.v*0.01, d.u, d.v, SENS_MAX));
+    for(const p of pts) m=Math.min(m, castMin(p.u+d.u*0.01, p.v+d.v*0.01, d.u, d.v, SENS_MAX, 0, near));
     out[k]=m;
   }
   /* диагональ из каждого угла: перпендикулярные лучи не видят препятствие,
@@ -5395,7 +5419,7 @@ function clearances(){
     ['rear', 'left',  {u:(-f.u-r.u)*K, v:(-f.v-r.v)*K}, P(-HALF_W,-HALF_L)]
   ];
   for(const [a,b,d,p] of diag){
-    const t=castMin(p.u+d.u*0.01, p.v+d.v*0.01, d.u, d.v, SENS_MAX);
+    const t=castMin(p.u+d.u*0.01, p.v+d.v*0.01, d.u, d.v, SENS_MAX, 0, near);
     if(t<out[a]) out[a]=t;
     if(t<out[b]) out[b]=t;
   }
@@ -5405,9 +5429,9 @@ function clearances(){
   for(const [sf,sr,d] of [[1,1,diag[0][2]],[1,-1,diag[1][2]],[-1,1,diag[2][2]],[-1,-1,diag[3][2]]]){
     const p=P(sr*HALF_W, sf*HALF_L);
     const ax={u:f.u*sf, v:f.v*sf}, lat={u:r.u*sr, v:r.v*sr};
-    const m=Math.min(castMin(p.u+ax.u*0.01,  p.v+ax.v*0.01,  ax.u, ax.v, SENS_MAX),
-                     castMin(p.u+lat.u*0.01, p.v+lat.v*0.01, lat.u,lat.v,SENS_MAX),
-                     castMin(p.u+d.u*0.01,   p.v+d.v*0.01,   d.u,  d.v,  SENS_MAX));
+    const m=Math.min(castMin(p.u+ax.u*0.01,  p.v+ax.v*0.01,  ax.u, ax.v, SENS_MAX, 0, near),
+                     castMin(p.u+lat.u*0.01, p.v+lat.v*0.01, lat.u,lat.v,SENS_MAX,0,near),
+                     castMin(p.u+d.u*0.01,   p.v+d.v*0.01,   d.u,  d.v,  SENS_MAX, 0, near));
     if(m>=CORNER_WARN) continue;
     /* гистерезис: вдоль стены все углы борта дают почти равный зазор, и без форы
        уже подсвеченному углу подсветка перескакивала бы между ними каждый кадр */
