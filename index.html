@@ -813,7 +813,12 @@ function shadeCol(col, n, d, y, sh){
 function pushFace(v, n, col, bias, o){
   /* маска и текстура снимаются первой строкой: грань, отсечённую по нормали, иначе унаследовала бы следующая */
   const em = emNext, tex = texNext; emNext=-1; texNext=null;
-  const cx=(v[0].x+v[2].x)*0.5, cy=(v[0].y+v[2].y)*0.5, cz=(v[0].z+v[2].z)*0.5;
+  const cx=(v[0].x+v[2].x)*0.5, cz=(v[0].z+v[2].z)*0.5;
+  /* на эстакаде вершины поднимаются в toCam (кузов — плоскостью carLift, мир — groundH), а камера
+     уже поднята; тест по сырому центру сравнивал поднятый глаз с неподнятой крышей — у верха
+     подъёма (h ≥ 0,22) крыша проходила отсечение и закрывала лобовое, а грани потолка и мира
+     вблизи глаза, наоборот, выпадали (#155) */
+  const cy0=(v[0].y+v[2].y)*0.5, cy=cy0 + (RAMP_ON ? (carRampUse ? carLift(-cx,cz) : groundH(-cx,cz)) : 0);
   if((cam.pos.x-cx)*n.x + (cam.pos.y-cy)*n.y + (cam.pos.z-cz)*n.z <= 0) return;
   const cp=[]; let vis=false, behind=false;
   for(let i=0;i<v.length;i++){ const c=toCam(v[i]); cp.push(c); if(c.d>NEAR) vis=true; else behind=true; }
@@ -841,17 +846,17 @@ function pushFace(v, n, col, bias, o){
     sh={mat:m, ao:o.ao, view, emit:o.emit};
   }
   const dd = cabinLit ? dist : Math.max(dist,1);
-  f.col=shadeCol(col, (o && o.n1)||n, dd, cy, sh);
+  f.col=shadeCol(col, (o && o.n1)||n, dd, cy0, sh);   /* высота для затенения — сырая: AO салона считается по кузову */
   if(edgeOn && em>0 && !behind){
     EDGE_COL[0]=col[0]*EDGE_K; EDGE_COL[1]=col[1]*EDGE_K; EDGE_COL[2]=col[2]*EDGE_K;
     EDGE_COL.length = col.length>3 ? 4 : 3; if(col.length>3) EDGE_COL[3]=col[3];
-    f.em=em; f.ecol=shadeCol(EDGE_COL, n, dd, cy, sh);
+    f.em=em; f.ecol=shadeCol(EDGE_COL, n, dd, cy0, sh);
   }
   if(v.length>=4){
-    if(o && o.n2){ f.col2=shadeCol(col, o.n2, dd, cy, sh);
+    if(o && o.n2){ f.col2=shadeCol(col, o.n2, dd, cy0, sh);
       /* средний цвет — для мелкой или стоящей ребром грани: там градиент не виден или вырожден */
       const n1=(o && o.n1)||n, mx=n1.x+o.n2.x, my=n1.y+o.n2.y, mz=n1.z+o.n2.z, ml=Math.sqrt(mx*mx+my*my+mz*mz)||1;
-      f.colMid=shadeCol(col, {x:mx/ml, y:my/ml, z:mz/ml}, dd, cy, sh); }
+      f.colMid=shadeCol(col, {x:mx/ml, y:my/ml, z:mz/ml}, dd, cy0, sh); }
     if(cabinLit && m && m.grain){ f.grain=m;
       f.lu=Math.hypot(v[1].x-v[0].x, v[1].y-v[0].y, v[1].z-v[0].z);
       f.lv=Math.hypot(v[3].x-v[0].x, v[3].y-v[0].y, v[3].z-v[0].z);

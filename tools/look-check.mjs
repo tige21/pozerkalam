@@ -217,6 +217,25 @@ await shot('chase-l2');
   check('у стены есть текстура (@render-wall-texture)', r && r.patch.sd >= 3, r ? `sd=${r.patch.sd.toFixed(2)} патч ${r.patch.size}px` : 'стена вне кадра');
 }
 
+/* --- эстакада: уровень 20, салон у верха подъёма — лобовое обязано остаться прозрачным --- */
+{
+  const r = await page.evaluate(() => {
+    loadLevel(19); while (opt.camMode !== CAM_FP) pressKey('KeyC'); while (hudMode !== 2) cycleHud(); opt.mirrors = false; opt.fpYaw = 0; opt.fpPitch = 0;
+    const z = level.ramps[0]; if (!z) return null;
+    const yaw = Math.atan2(z.up.u, z.up.v), t = 0.85;
+    setBody(z.ou + z.up.u * z.len * t, z.ov + z.up.v * z.len * t, yaw); car.vel = 0;
+    return { h: +groundH(car.ru, car.rv).toFixed(2) };
+  });
+  await page.waitForTimeout(400);
+  await shot('ramp-top');
+  /* доля неба в верхней половине проёма: с крышей поверх лобового было 2 % */
+  const sky = await page.evaluate(() => { const p = __lk.patch(W * 0.30, H * 0.30, W * 0.40, H * 0.20); const g = canvas.getContext('2d'), k = DPR;
+    const d = g.getImageData(Math.round(W * 0.30 * k), Math.round(H * 0.30 * k), Math.round(W * 0.40 * k), Math.round(H * 0.20 * k)).data; let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i + 2] - d[i] > 25 && d[i + 2] > 120) n++; return n / p.n; });
+  check('на эстакаде лобовое остаётся прозрачным (@render-ramp-windshield)', r && sky >= 0.6, r ? `небо ${(sky * 100).toFixed(0)} % при h=${r.h}` : 'на уровне нет эстакады');
+  await pose(() => { loadLevel(0); }, null, 300);
+}
+
 /* --- бордюры сверху: уровень 14, вид сверху --- */
 await pose(() => { loadLevel(13); while (opt.camMode !== CAM_TOP) pressKey('KeyC'); }, null, 500);
 await shot('top-l14');
