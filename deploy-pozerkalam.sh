@@ -220,9 +220,10 @@ RES_PROD=(--resolve "pozerkalam.space:443:$PROD_IP")
 # заголовком не запускается вообще: браузер режет скрипт игры молча, файлы при этом целы
 # и sha256 сходится — поймать это можно только сверкой хэшей с отданными заголовками.
 csp_check(){
-  python3 - "$1" "$2" "$3" <<'PYCSPCHK'
+  python3 - "$1" "$2" "$3" "${4:-}" <<'PYCSPCHK'
 import sys, re, hashlib, base64
 html, hdr, where = open(sys.argv[1]).read(), open(sys.argv[2]).read(), sys.argv[3]
+quiet = len(sys.argv) > 4 and sys.argv[4] == 'quiet' 
 bad = []
 for m in re.finditer(r'<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>', html, re.S):
     if 'ld+json' in m.group(0):
@@ -231,10 +232,31 @@ for m in re.finditer(r'<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>', html, re.S):
     if q not in hdr:
         bad.append(q)
 if bad:
-    print("    CSP %s: %d инлайн-скрипт(ов) вне заголовка — страница не запустится" % (where, len(bad)))
+    if not quiet:
+        print("    CSP %s: %d инлайн-скрипт(ов) вне заголовка — страница не запустится" % (where, len(bad)))
     sys.exit(1)
-print("    CSP %s: все инлайн-скрипты покрыты" % where)
+if not quiet:
+    print("    CSP %s: все инлайн-скрипты покрыты" % where)
 PYCSPCHK
+}
+
+# CSP проверяется с ожиданием: `systemctl reload nginx` асинхронный — старые рабочие дослуживают
+# соединения со старым конфигом, а файлы страниц уже новые. Сразу после перезагрузки страница
+# приходила под прошлым заголовком, и смоук зеркала ложно падал «инлайн-скрипт вне заголовка»
+# на каждом деплое, хотя через пару секунд всё сходилось (#145). Ждём до 15 с; не сошлось — провал.
+csp_wait(){
+  local ip="$1" path="$2" where="$3" i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} --resolve "pozerkalam.space:443:$ip" \
+         -o /tmp/pz_csp.html -D /tmp/pz_csp.hdr "https://pozerkalam.space$path" || true
+    if [ -s /tmp/pz_csp.html ] && csp_check /tmp/pz_csp.html /tmp/pz_csp.hdr "$where" quiet; then
+      echo "    CSP $where: все инлайн-скрипты покрыты$([ "$i" -gt 1 ] && echo " (с $i-й попытки: nginx дочитывал конфиг)")"
+      return 0
+    fi
+    sleep 1.5
+  done
+  csp_check /tmp/pz_csp.html /tmp/pz_csp.hdr "$where" || true
+  echo "СМОУК ПРОВАЛЕН: CSP $where не сошёлся за 15 с"; exit 1
 }
 
 echo "==> смоук (прод $PROD_IP)"
@@ -253,8 +275,8 @@ sha_r=$(shasum -a 256 /tmp/pz_play.html | cut -d' ' -f1)
 grep -q "По зеркалам" /tmp/pz_play.html && echo "    игра на /play/: ДА"
 curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} "${RES_PROD[@]}" https://pozerkalam.space/ -o /tmp/pz_root.html -D /tmp/pz_root.hdr
 grep -q 'rel="canonical" href="https://pozerkalam.space/"' /tmp/pz_root.html && echo "    лендинг на корне: ДА"
-csp_check /tmp/pz_play.html /tmp/pz_play.hdr "прод /play/"
-csp_check /tmp/pz_root.html /tmp/pz_root.hdr "прод /"
+csp_wait "$PROD_IP" /play/ "прод /play/"
+csp_wait "$PROD_IP" / "прод /"
 if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
   # dry: эндпоинт проверяется целиком, но сообщение не уходит — иначе каждый деплой
   # присылал бы владельцу мусорный отчёт.
@@ -329,7 +351,7 @@ else
     else
       echo "ЗЕРКАЛО РАСХОДИТСЯ С ПРОДОМ (код ${m_code}) — зарубежные юзеры на другой сборке"; exit 1
     fi
-    csp_check /tmp/pz_mirror.html /tmp/pz_mirror.hdr "зеркало /play/"
+    csp_wait "$MIRROR_IP" /play/ "зеркало /play/"
     if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
       m_fb=$(curl -s -m 20 ${CURL_BIND[@]+"${CURL_BIND[@]}"} --resolve "pozerkalam.space:443:$MIRROR_IP" \
              -X POST https://pozerkalam.space/api/feedback -H 'Content-Type: application/json' \
