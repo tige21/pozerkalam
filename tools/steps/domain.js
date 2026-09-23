@@ -53,6 +53,10 @@
         level.actors = [a];
       }],
 
+    [new RegExp('^машина игрока едет вперёд со скоростью ' + N + ' м/с$'), (sp) => {
+      car.sel = 'D'; car.gear = 1; car.vel = +sp;
+    }],
+
     /* ---------- Когда ---------- */
     [/^проверяется касание$/, () => {
       const before = level.obs.filter((o) => o._touch).length;
@@ -63,6 +67,11 @@
     [/^измеряются зазоры$/, () => { ctx.clear = clearances(); }],
     [new RegExp('^игровое время ' + N + ' секунд[а-я]*$'), (t) => { game.t = +t; }],
     [new RegExp('^начислен штраф ' + S + '$'), (code) => { examPenalty(code); }],
+    [/^срабатывают детекторы нарушений$/, () => {
+      vioEvents.length = 0;
+      violationsTick(1 / 60);
+      ctx.vio = vioEvents.map((e) => e.code);
+    }],
     [/^считается окно в потоке$/, () => { const c = bodyPos(); ctx.gap = trafficGap(c.u, c.v, 6); }],
 
     /* ---------- Тогда ---------- */
@@ -103,6 +112,14 @@
     }],
     [/^маркеры выключены$/, () => { if (opt.marks) throw new Error('opt.marks включён'); }],
     [/^подсказки траектории выключены$/, () => { if (opt.guides) throw new Error('opt.guides включён'); }],
+    [/^непропуска нет$/, () => {
+      if (!ctx.vio) throw new Error('детекторы не запускались — нет шага «Когда срабатывают детекторы нарушений»');
+      if (ctx.vio.includes('yield')) throw new Error('засчитан непропуск: ' + ctx.vio.join(', '));
+    }],
+    [/^засчитан непропуск$/, () => {
+      if (!ctx.vio) throw new Error('детекторы не запускались — нет шага «Когда срабатывают детекторы нарушений»');
+      if (!ctx.vio.includes('yield')) throw new Error('непропуск не засчитан: [' + ctx.vio.join(', ') + ']');
+    }],
     [/^путь свободен$/, () => {
       if (ctx.gap < 9) throw new Error('окно ' + ctx.gap.toFixed(1) + ' с — путь занят');
     }],
