@@ -112,10 +112,20 @@ for (const p of POSES) {
   shots.push(path.relative(ROOT, file));
   /* щели между гранями салона: в полосе торпедо/руля кадра «вперёд» не должно быть пикселей цвета
      неба. Так пойман перевёрнутый знак расширения контура (грани сжимались — «всё в линиях») */
+  /* стёкла корпусов зеркал отражают небо по праву: на телефоне (широкий кадр) левое зеркало попадает
+     в полосу торпедо и давало 1300 «щелей» — пиксели внутри стекла не считаются */
   if (p.name === 'fwd') skyGap = await page.evaluate(() => {
     const g = canvas.getContext('2d'), k = DPR, x0 = Math.round(W * 0.18 * k), y0 = Math.round(H * 0.67 * k);
     const w = Math.round(W * 0.67 * k), h = Math.round(H * 0.25 * k), d = g.getImageData(x0, y0, w, h).data;
-    let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 2] - d[i] > 25 && d[i + 2] > 120) n++;
+    const glass = ['left', 'right'].map(kd => typeof mirrorGlassRect === 'function' ? mirrorGlassRect(kd) : null).filter(Boolean)
+      .map(r => ({ x0: (r.x - 2) * k - x0, y0: (r.y - 2) * k - y0, x1: (r.x + r.w + 2) * k - x0, y1: (r.y + r.h + 2) * k - y0 }));
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (!(d[i + 2] - d[i] > 25 && d[i + 2] > 120)) continue;
+      const px = (i >> 2) % w, py = (i >> 2) / w | 0;
+      if (glass.some(r => px >= r.x0 && px <= r.x1 && py >= r.y0 && py <= r.y1)) continue;
+      n++;
+    }
     return n;
   });
 }
@@ -165,7 +175,9 @@ if (sweepOn) {
              только грани крупнее 50×50 px, где он был бы виден */
           const fillT = v.m.split('+')[0] !== p.m.split('+')[0] && Math.min(v.a, p.a) > 2500;
           const imgT = v.m.includes('img') !== p.m.includes('img') && Math.min(v.a, p.a) > 100;
-          const grainT = Math.abs(v.gk - p.gk) > 0.5 && Math.min(v.a, p.a) > 100;
+          /* у текстуры стен gk — номер мип-уровня, а не вес зерна: смена уровня при повороте головы —
+             штатная работа мипов (контраст уровней выровнен), а не «моргание» */
+          const grainT = !v.m.includes('tex') && !p.m.includes('tex') && Math.abs(v.gk - p.gk) > 0.5 && Math.min(v.a, p.a) > 100;
           if (fillT || imgT || grainT) { toggles++; if (worst.length < 8) worst.push({ pitch, yaw, key: k, from: p.m + ':' + p.gk.toFixed(2), to: v.m + ':' + v.gk.toFixed(2), area: Math.round(v.a) }); } }
         prev = rec; } }
     rec = null; faceMode = origFM; P.createLinearGradient = origCLG; opt.fpYaw = 0; opt.fpPitch = rad(-2);

@@ -19,7 +19,7 @@ description: Use when adding or changing any rule the trainer judges the player 
 ## Где лежит
 
 `specs/features/<область>/*.feature`; области — `collision`, `clearance`, `city`, `traffic`,
-`exam`, `mt`. Имя файла — тема, а не номер. Один файл — одна функция, 3–8 сценариев.
+`exam`, `mt`, `render` (вид сцены, только `@ui`). Имя файла — тема, а не номер. Один файл — одна функция, 3–8 сценариев.
 Соглашение целиком — `specs/README.md`.
 
 ## Два вида сценариев
