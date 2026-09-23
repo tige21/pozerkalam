@@ -668,7 +668,7 @@ function clipNear(poly){
 /* 0,9 px устройства — столько давала обводка 0,9 CSS-px при DPR 2; при 0,5 на GPU-Canvas шов
    антиалиасинга (две кромки по половине покрытия) оставался светлой линией */
 const EXPAND_DEV=0.9, SPX=[], SPY=[];
-let pxScale=1;
+let pxScale=1, pathW=0;              /* pathW — ширина последней грани в px, её читает штрих рёбер */
 function pathCam(pts){
   const c = clipNear(pts); const n=c.length; if(n<3) return false;
   let area=0, per=0;
@@ -681,6 +681,7 @@ function pathCam(pts){
      полный вызов растеризатора ради ничего */
   if(area<1 && area>-1) return false;
   const width=Math.abs(area)/(per||1), ex=(EXPAND_DEV/pxScale)*Math.min(1, width/1.5);
+  pathW=width;
   /* в экранных координатах (y вниз) положительная площадь — обход по часовой, и нормаль (dy, −dx)
      смотрит наружу; с обратным знаком контуры сжимались, и между гранями открывались щели-«сетка» */
   const sg = area>0 ? ex : -ex;
@@ -729,6 +730,13 @@ function strokeGroundPath(uvPts, color, lw, dash, y){
 const LIGHT = (()=>{ const l={x:0.36,y:0.86,z:0.36}; const n=Math.hypot(l.x,l.y,l.z);
   return {x:l.x/n,y:l.y/n,z:l.z/n}; })();
 let faces = [];
+/* рёбра — только у коробочных объектов мира (стены, бордюры, конусы, столбы, корпуса зеркал):
+   тот же цвет, темнее в EDGE_K, штрих EDGE_DEV px устройства по маске рёбер грани. Лофт машин
+   и салон рёбер не получают — сотни мелких граней сеткой уже проходили («машины читались как
+   сетка»), а у салона структуру дают градиенты и зерно. Обводка ВСЕХ граней стоила половину
+   кадра на программном Canvas (#60) — поэтому маска, а не общий stroke */
+const EDGE_K=0.55, EDGE_DEV=1.5, EDGE_COL=[0,0,0,0];
+let edgeOn=false, emNext=-1;         /* emNext — маска рёбер для следующей pushFace, ставит pushBox */
 /* салон — закрытое тёмное пространство, а не кусок улицы: свет попадает только через
    окна и гаснет к полу. Без отдельного режима потолок выходил почти белым, а проёмы
    окон и корпуса зеркал сливались с обивкой — то есть ровно те ориентиры, по которым
@@ -803,6 +811,8 @@ function shadeCol(col, n, d, y, sh){
    такая грань заливается градиентом между ними, и валик из пяти граней читается гладким,
    а не гранёным; n — геометрическая нормаль, по ней отсекается задняя сторона */
 function pushFace(v, n, col, bias, o){
+  /* маска и текстура снимаются первой строкой: грань, отсечённую по нормали, иначе унаследовала бы следующая */
+  const em = emNext, tex = texNext; emNext=-1; texNext=null;
   const cx=(v[0].x+v[2].x)*0.5, cy=(v[0].y+v[2].y)*0.5, cz=(v[0].z+v[2].z)*0.5;
   if((cam.pos.x-cx)*n.x + (cam.pos.y-cy)*n.y + (cam.pos.z-cz)*n.z <= 0) return;
   const cp=[]; let vis=false, behind=false;
@@ -821,7 +831,7 @@ function pushFace(v, n, col, bias, o){
   /* все поля грани заведены сразу: добавленные позже (col2, grain, img, ga*) давали десяток скрытых
      классов, и цикл flushFaces читал их полиморфно — на телефоне это была главная строка профиля (#69) */
   const f={cp, d:dist-(bias||0), col:null, col2:null, colMid:null, grain:null, img:null,
-           lu:0, lv:0, ga0:0, gb0:0, ga1:0, gb1:0, ga3:0, gb3:0, gk:0};
+           lu:0, lv:0, ga0:0, gb0:0, ga1:0, gb1:0, ga3:0, gb3:0, gk:0, em:0, ecol:null, tex:null, tw:0};
   const m = o && o.mat ? matOf(o.mat) : null;
   let sh=null;
   if(o && (m || o.ao!==undefined || o.emit)){
@@ -832,6 +842,11 @@ function pushFace(v, n, col, bias, o){
   }
   const dd = cabinLit ? dist : Math.max(dist,1);
   f.col=shadeCol(col, (o && o.n1)||n, dd, cy, sh);
+  if(edgeOn && em>0 && !behind){
+    EDGE_COL[0]=col[0]*EDGE_K; EDGE_COL[1]=col[1]*EDGE_K; EDGE_COL[2]=col[2]*EDGE_K;
+    EDGE_COL.length = col.length>3 ? 4 : 3; if(col.length>3) EDGE_COL[3]=col[3];
+    f.em=em; f.ecol=shadeCol(EDGE_COL, n, dd, cy, sh);
+  }
   if(v.length>=4){
     if(o && o.n2){ f.col2=shadeCol(col, o.n2, dd, cy, sh);
       /* средний цвет — для мелкой или стоящей ребром грани: там градиент не виден или вырожден */
@@ -845,9 +860,20 @@ function pushFace(v, n, col, bias, o){
   /* o.img — готовая картинка (циферблат, экран) натягивается на четырёхугольник: детали
      прибора рисуются один раз в offscreen-канвас, а не сотней граней каждый кадр */
   if(o && o.img && v.length===4) f.img=o.img;
+  /* грань, пересекающая ближнюю плоскость, текстуру не теряет: ячейки за плоскостью texFace
+     пропустит сам — иначе ближайший сегмент стены у борта становился плоским */
+  if(tex && v.length===4){
+    f.tex=tex; f.ga0=TEX_UV[0]; f.gb0=TEX_UV[1]; f.ga1=TEX_UV[2]; f.gb1=TEX_UV[3]; f.ga3=TEX_UV[4]; f.gb3=TEX_UV[5];
+    f.lu=Math.sqrt((v[1].x-v[0].x)**2+(v[1].y-v[0].y)**2+(v[1].z-v[0].z)**2);
+    f.lv=Math.sqrt((v[3].x-v[0].x)**2+(v[3].y-v[0].y)**2+(v[3].z-v[0].z)**2);
+  }
   faces.push(f);
 }
 /* центр в (u, y, v); hw — полуширина поперёк, hl — полудлина вдоль, hh — полувысота */
+/* o.cut — {f,b,l,r}: с какой стороны коробка отрезана швом сегментации (buildRenderList режет
+   длинные по 3,5 м). Торец на шве не эмитится — он невидим внутри соседа, а его ребро рисовало бы
+   вертикальную линию каждые 3,5 м на сплошной стене; вертикальные рёбра боковых граней у шва тоже
+   выключены в маске. Биты маски — по рёбрам грани i→i+1 в порядке вершин */
 function pushBox(u, y, v, hw, hh, hl, yaw, col, bias, o){
   const c={x:-u, y:y, z:v};
   const F=fwd(yaw), R=rgt(yaw);
@@ -855,12 +881,29 @@ function pushBox(u, y, v, hw, hh, hl, yaw, col, bias, o){
   const a=P(-1,-1, 1), b=P( 1,-1, 1), cc=P( 1, 1, 1), dd=P(-1, 1, 1);
   const e=P(-1,-1,-1), f2=P( 1,-1,-1), g=P( 1, 1,-1), h=P(-1, 1,-1);
   const nF=F, nB={x:-F.x,y:0,z:-F.z}, nR=R, nL={x:-R.x,y:0,z:-R.z};
-  pushFace([a,b,cc,dd], nF, col, bias, o);
-  pushFace([f2,e,h,g],  nB, col, bias, o);
-  pushFace([b,f2,g,cc], nR, col, bias, o);
-  pushFace([e,a,dd,h],  nL, col, bias, o);
+  const cut = (o && o.cut) || null;
+  const cf = cut ? cut.f : false, cb = cut ? cut.b : false, cl = cut ? cut.l : false, cr = cut ? cut.r : false;
+  /* текстура: координаты плитки — проекции точки на оси КОРОБКИ, абсолютные (не от центра),
+     поэтому узор сплошной через швы сегментов; ряды кирпича всегда по y */
+  const tex = o && o.tex && QUALITY[qLevel].tex ? texOf(o.tex) : null;
+  if(!cf){ emNext = 0xF & ~((cr?2:0)|(cl?8:0)); if(tex) texUV(tex,a,b,dd, R,null); pushFace([a,b,cc,dd], nF, col, bias, o); }
+  if(!cb){ emNext = 0xF & ~((cl?2:0)|(cr?8:0)); if(tex) texUV(tex,f2,e,g, R,null); pushFace([f2,e,h,g],  nB, col, bias, o); }
+  if(!cr){ emNext = 0xF & ~((cb?2:0)|(cf?8:0)); if(tex) texUV(tex,b,f2,cc, F,null); pushFace([b,f2,g,cc], nR, col, bias, o); }
+  if(!cl){ emNext = 0xF & ~((cf?2:0)|(cb?8:0)); if(tex) texUV(tex,e,a,h, F,null);  pushFace([e,a,dd,h],  nL, col, bias, o); }
+  emNext = 0xF & ~((cf?1:0)|(cr?2:0)|(cb?4:0)|(cl?8:0));
+  if(tex) texUV(tex,dd,cc,h, F,R);
   pushFace([dd,cc,g,h], {x:0,y:1,z:0}, col, bias, o);
 }
+/* координаты плитки трёх углов грани: A — проекция на ось A (вдоль/поперёк коробки), B — на ось B
+   или высота, если B не задана. Модульная функция, а не замыкание в pushBox: pushBox идёт на каждый
+   бордюр города каждый кадр, и четыре замыкания на вызов были бы аллокацией в горячем пути */
+function texUV(tex, p0, p1, p3, A, B){
+  TEX_UV[0]=(p0.x*A.x+p0.z*A.z)*TEX_PX; TEX_UV[2]=(p1.x*A.x+p1.z*A.z)*TEX_PX; TEX_UV[4]=(p3.x*A.x+p3.z*A.z)*TEX_PX;
+  if(B){ TEX_UV[1]=(p0.x*B.x+p0.z*B.z)*TEX_PX; TEX_UV[3]=(p1.x*B.x+p1.z*B.z)*TEX_PX; TEX_UV[5]=(p3.x*B.x+p3.z*B.z)*TEX_PX; }
+  else { TEX_UV[1]=p0.y*TEX_PX; TEX_UV[3]=p1.y*TEX_PX; TEX_UV[5]=p3.y*TEX_PX; }
+  texNext=tex;
+}
+
 /* зерно материала: плитки строятся один раз и кладутся на грань в её собственных координатах
    (метры → пиксели плитки), поэтому зерно сидит на обивке при любом повороте головы. Раньше один
    экранный шум ложился на весь салон и читался как помехи на мониторе, а не как материал */
@@ -916,15 +959,87 @@ function grainPattern(kind){
   g.putImageData(im,0,0);
   grainPats[kind]=ctx.createPattern(c,'repeat'); return grainPats[kind];
 }
+/* ---------- текстуры стен ----------
+   Та же механика, что зерно салона (вторая заливка пути плиткой через ctx.transform), но
+   плитка в ТРЁХ мип-уровнях: без них зерно на дальней стене дрожит при уменьшении, а порог
+   GRAIN_MINIF1 его просто гасит — стена вдали снова плоская. Уровень выбирается в faceMode по
+   минификации. Плитка яркостная (белое/чёрное в альфе), цвет и ламберт стены остаются */
+const TEX_PX=128;                          /* px плитки на метр на уровне 0 */
+const TEX={ brick:   {kind:'brick',    a:0.62, w:2.08, h:0.75},
+            concrete:{kind:'concrete', a:0.85, w:2.0,  h:2.0},
+            hedge:   {kind:'hedge',    a:0.62, w:1.5,  h:1.5} };
+const TEX_UV=[0,0,0,0,0,0];
+let texNext=null;
+const texWarned=new Set();
+function texOf(name){
+  const t=TEX[name]; if(t) return t;
+  if(!texWarned.has(name)){ texWarned.add(name); console.warn('[tex] неизвестная текстура', name); }
+  return null;
+}
+const texPats={};
+function texPattern(kind, lvl){
+  let arr=texPats[kind];
+  if(!arr){
+    const t=TEX[kind], N=Math.round(t.w*TEX_PX), M=Math.round(t.h*TEX_PX);
+    const c=document.createElement('canvas'); c.width=N; c.height=M;
+    const g=c.getContext('2d'), im=g.createImageData(N,M), d=im.data;
+    let seed=20260923+N*7+M;
+    const rnd=()=>{ seed=(seed*16807)%2147483647; return (seed&65535)/65536; };
+    /* периодический value-noise по обоим измерениям плитки — бесшовно по построению */
+    const grid=(cx,cy)=>{
+      const a=new Float32Array(cx*cy); for(let i=0;i<a.length;i++) a[i]=rnd();
+      const at=(i,j)=>a[(j%cy)*cx+(i%cx)];
+      const s=(t)=>t*t*(3-2*t);
+      return (x,y)=>{ const fx=x*cx/N, fy=y*cy/M, x0=Math.floor(fx), y0=Math.floor(fy), sx=s(fx-x0), sy=s(fy-y0);
+        return (at(x0,y0)*(1-sx)+at(x0+1,y0)*sx)*(1-sy)+(at(x0,y0+1)*(1-sx)+at(x0+1,y0+1)*sx)*sy; };
+    };
+    const n1=grid(4,Math.max(2,Math.round(4*M/N))), n2=grid(16,Math.max(4,Math.round(16*M/N))), n3=grid(48,Math.max(8,Math.round(48*M/N)));
+    let brick=null;
+    if(kind==='brick'){
+      /* ряд 75 мм = 65 кирпич + 10 шов, кирпич 260 мм; в каждом ряду смещение на полкирпича */
+      const rowH=0.075*TEX_PX, bw=0.26*TEX_PX, rows=Math.round(M/rowH), cols=Math.round(N/bw);
+      const lum=new Float32Array(rows*cols); for(let i=0;i<lum.length;i++) lum[i]=(rnd()-0.5)*26;
+      brick=(x,y)=>{ const r=Math.floor(y/rowH), ry=y-r*rowH; const off=(r%2)?bw*0.5:0;
+        const cxx=Math.floor((x+off)/bw)%cols, bx=(x+off)-Math.floor((x+off)/bw)*bw;
+        const mortar = ry<1.6 || bx<1.6;
+        return mortar ? 30 : lum[(r%rows)*cols+cxx]; };
+    }
+    for(let y=0;y<M;y++) for(let x=0;x<N;x++){
+      let v;
+      if(kind==='brick')         v = 128 + brick(x,y) + 10*(n3(x,y)-0.5);
+      else if(kind==='hedge')    v = 128 + 44*(n3(x,y)-0.5) + 26*(n2(x,y)-0.5) + 14*(n1(x,y)-0.5);
+      else {                     /* бетон: пятна опалубки + горизонтальные швы щитов каждые 0,5 м */
+        const joint = ((y/TEX_PX)%0.5) < 0.012 ? -22 : 0;   /* 0,5 м делит плитку 2 м нацело — шов не сбивается на стыке плиток */
+        v = 128 + 44*(n1(x,y)-0.5) + 34*(n2(x,y)-0.5) + 22*(n3(x,y)-0.5) + joint; }
+      const i=(y*N+x)*4, dv=clamp(v,0,255)-128, lu=dv>0?255:0;
+      d[i]=d[i+1]=d[i+2]=lu; d[i+3]=Math.min(255, Math.abs(dv)*(dv>0?0.8:1.3))|0;
+    }
+    g.putImageData(im,0,0);
+    /* мип-уровни — усреднением уровня 0, не новым шумом: иначе узор менялся бы на границе уровней.
+       Усреднение гасит контраст, и соседние сегменты одной стены с разными уровнями расходились
+       светлой вертикальной полосой — поэтому альфа уровня поднимается обратно к контрасту нулевого */
+    const levels=[c];
+    /* дисперсия «знак × альфа» — мера контраста плитки; уровни подтягиваются к нулевому */
+    const variance=(dd)=>{ let sq=0, n=0; for(let i=0;i<dd.length;i+=4){ const v=(dd[i]>127?1:-1)*dd[i+3]; sq+=v*v; n++; } return sq/(n||1); };
+    const var0=variance(d);
+    for(let l=1;l<3;l++){ const q=document.createElement('canvas'); q.width=Math.max(1,N>>l); q.height=Math.max(1,M>>l);
+      const qg=q.getContext('2d'); qg.imageSmoothingEnabled=true; qg.drawImage(levels[l-1],0,0,q.width,q.height);
+      const qi=qg.getImageData(0,0,q.width,q.height), qd=qi.data, k=Math.sqrt(var0/(variance(qd)||1));
+      for(let i=3;i<qd.length;i+=4) qd[i]=Math.min(255, qd[i]*k)|0;
+      qg.putImageData(qi,0,0); levels.push(q); }
+    arr=levels.map(cv=>ctx.createPattern(cv,'repeat')); texPats[kind]=arr;
+  }
+  return arr[lvl];
+}
 const GRAD_MIN_PX=40, GRAIN_AREA0=400, GRAIN_AREA1=800, GRAIN_MINIF0=1.3, GRAIN_MINIF1=1.8;
+const TEX_AREA_MIN=400, TEX_MINIF_MAX=24;
 /* режим заливки грани — чистая функция от грани и её экранных точек; по ней же прогон --sweep
    ловит переключения режима при повороте головы. Правила: в зеркалах всё плоское; градиент — если
    его концы дальше 1,5 px (вырожденный градиент Canvas не рисует НИЧЕГО — грань ребром пропадала
    на кадр) и грань крупнее GRAD_MIN_PX; зерно — с плавным весом f.gk по площади и по уменьшению
    плитки (без мип-уровней шум при уменьшении дрожит), а не по порогу, у которого оно мигало */
 function faceMode(f, s0, s1, s2, s3){
-  if(VP.w!==W) return 'flat';
-  const q=QUALITY[qLevel];
+  const q=QUALITY[qLevel], mirror=VP.w!==W;
   let mode='flat';
   if(f.col2 && q.grad){
     const gx=(s1.x+s2.x-s0.x-s3.x)*0.5, gy=(s1.y+s2.y-s0.y-s3.y)*0.5;
@@ -932,6 +1047,18 @@ function faceMode(f, s0, s1, s2, s3){
     if(gx*gx+gy*gy>=2.25 && ext>=GRAD_MIN_PX) mode='grad';
   }
   if(f.img) return mode+'+img';
+  /* в зеркале — только градиенты бортов: зерно и текстура там уменьшены в разы и рябят */
+  if(mirror) return mode;
+  if(f.tex && q.tex){
+    const ux=s1.x-s0.x, uy=s1.y-s0.y, vx=s3.x-s0.x, vy=s3.y-s0.y;
+    const area=Math.abs(ux*vy-uy*vx);
+    /* вес — плавный по площади и по минификации, не порог: узкая грань бордюра ходит около
+       400 px² и текстура на ней мигала */
+    const minif=Math.max(f.lu*TEX_PX/((Math.sqrt(ux*ux+uy*uy)||1e-6)*DPR), f.lv*TEX_PX/((Math.sqrt(vx*vx+vy*vy)||1e-6)*DPR));
+    f.tw=clamp((area-TEX_AREA_MIN)/(2*TEX_AREA_MIN),0,1)*clamp((TEX_MINIF_MAX-minif)/8,0,1);
+    if(f.tw>0){ f.gk = minif<=1.5 ? 0 : (minif<=3 ? 1 : 2); return mode+'+tex'; }
+    return mode;
+  }
   if(f.grain && q.grain){
     const ux=s1.x-s0.x, uy=s1.y-s0.y, vx=s3.x-s0.x, vy=s3.y-s0.y;
     const area=Math.abs(ux*vy-uy*vx);
@@ -941,14 +1068,19 @@ function faceMode(f, s0, s1, s2, s3){
   }
   return mode;
 }
-/* обводки нет: контур грани раздвинут в pathCam, и щели антиалиасинга закрыты без второго
-   прохода растеризации */
+/* обводки контура нет: он раздвинут в pathCam, и щели антиалиасинга закрыты без второго
+   прохода растеризации. Штрих рёбер (f.em) — отдельный путь по тем же экранным точкам, только у
+   коробочных объектов мира и только для граней шире 3 px: у щепки ребром линия жирнее самой грани */
 function flushFaces(){
   facesFrame += faces.length;
   faces.sort((p,q)=> q.d - p.d);
+  const edgesQ = QUALITY[qLevel].edges;
   for(const f of faces){
     if(!pathCam(f.cp)) continue;
-    if(f.col2 || f.grain || f.img){
+    /* контур и ширина запоминаются до второй заливки: texFace строит свои пути по ячейкам */
+    let edgeW=0;
+    if(f.em && edgesQ){ edgeW=pathW; const n=f.cp.length; for(let i=0;i<n;i++){ ESPX[i]=SPX[i]; ESPY[i]=SPY[i]; } }
+    if(f.col2 || f.grain || f.img || f.tex){
       const s0=toScreenClamped(f.cp[0]), s1=toScreenClamped(f.cp[1]), s2=toScreenClamped(f.cp[2]), s3=toScreenClamped(f.cp[3]);
       const mode=faceMode(f, s0, s1, s2, s3);
       let fill=f.col;
@@ -958,13 +1090,24 @@ function flushFaces(){
         else fill=f.colMid;
       }
       ctx.fillStyle=fill; ctx.fill();
-      if(mode.length>5){ if(f.img) imgFace(f, s0, s1, s3); else grainFace(f, s0, s1, s3); }
-      continue;
-    }
-    ctx.fillStyle=f.col; ctx.fill();
+      if(mode.length>5){ if(f.img) imgFace(f, s0, s1, s3); else if(f.tex) texFace(f, s0, s1, s3); else grainFace(f, s0, s1, s3); }
+    } else { ctx.fillStyle=f.col; ctx.fill(); }
+    if(f.em && edgesQ && edgeW>=3) strokeEdges(f);
   }
   faces.length = 0;
 }
+/* рёбра по маске: SPX/SPY — расширенный контур, только что построенный pathCam для этой грани */
+function strokeEdges(f){
+  const n=f.cp.length, em=f.em;
+  ctx.beginPath();
+  for(let i=0;i<n;i++){
+    if(!((em>>i)&1)) continue;
+    const j=(i+1)%n;
+    ctx.moveTo(ESPX[i],ESPY[i]); ctx.lineTo(ESPX[j],ESPY[j]);
+  }
+  ctx.strokeStyle=f.ecol; ctx.lineWidth=EDGE_DEV/pxScale; ctx.stroke();
+}
+const ESPX=[], ESPY=[];
 /* зерно кладётся аффинно: U — ребро v0→v1, V — ребро v0→v3, длины в метрах известны из геометрии;
    для грани в один-два десятка сантиметров перспективная ошибка аффинной карты невидима.
    Путь грани уже построен pathCam и зафиксирован в пикселях канваса, transform влияет только на
@@ -993,13 +1136,85 @@ function grainFace(f, s0, s1, s3){
   ctx.fill();
   ctx.restore();
 }
+/* текстура стены: плитка мип-уровня f.gk кладётся по ЯЧЕЙКАМ грани, а не одной аффинной картой.
+   Аффинная карта по трём углам не знает перспективы: на грани 3,5×6,5 м под углом узор
+   перекашивался по-своему на каждом сегменте, и на стыке сегментов стояла вертикальная полоса
+   (для салонных граней в 10–20 см та же ошибка невидима). Ячейка ≤ TEX_CELL px — углы каждой
+   проецируются честно, площадь заливки та же, лишь вызовов больше. Контур ячейки строит pathCam
+   (с раздвижкой — иначе между ячейками шли волосяные щели без узора). Вдали текстура гаснет
+   вместе с туманом, иначе дальняя стена рябит */
+const TEX_CELL=140, TC=[{x:0,y:0,d:0},{x:0,y:0,d:0},{x:0,y:0,d:0},{x:0,y:0,d:0}];
+/* точка грани в камере — билинейно по (t вдоль v0→v1, r вдоль v0→v3): камера аффинна миру */
+function texAt(c0,c1,c2,c3,t,r,o){
+  const ax=c0.x+(c1.x-c0.x)*t, ay=c0.y+(c1.y-c0.y)*t, ad=c0.d+(c1.d-c0.d)*t;
+  const bx=c3.x+(c2.x-c3.x)*t, by=c3.y+(c2.y-c3.y)*t, bd=c3.d+(c2.d-c3.d)*t;
+  o.x=ax+(bx-ax)*r; o.y=ay+(by-ay)*r; o.d=ad+(bd-ad)*r;
+}
+function texFace(f, s0, s1, s3){
+  const lvl=f.gk, sc=1/(1<<lvl), pat=texPattern(f.tex.kind, lvl); if(!pat) return;
+  const c0=f.cp[0], c1=f.cp[1], c2=f.cp[2], c3=f.cp[3], s2=toScreenClamped(c2);
+  const nu=clamp(Math.ceil(Math.max(Math.hypot(s1.x-s0.x,s1.y-s0.y), Math.hypot(s2.x-s3.x,s2.y-s3.y))/TEX_CELL),1,8);
+  const nv=clamp(Math.ceil(Math.max(Math.hypot(s3.x-s0.x,s3.y-s0.y), Math.hypot(s2.x-s1.x,s2.y-s1.y))/TEX_CELL),1,8);
+  const a0=f.ga0*sc, b0=f.gb0*sc, d1a=(f.ga1-f.ga0)*sc, d1b=(f.gb1-f.gb0)*sc, d3a=(f.ga3-f.ga0)*sc, d3b=(f.gb3-f.gb0)*sc;
+  const det=d1a*d3b-d1b*d3a; if(Math.abs(det)<1e-6) return;
+  ctx.save();
+  ctx.fillStyle=pat;
+  const aBase=f.tex.a*f.tw;
+  for(let i=0;i<nu;i++) for(let j=0;j<nv;j++){
+    const t0=i/nu, t1=(i+1)/nu, r0=j/nv, r1=(j+1)/nv;
+    texAt(c0,c1,c2,c3,t0,r0,TC[0]); texAt(c0,c1,c2,c3,t1,r0,TC[1]); texAt(c0,c1,c2,c3,t1,r1,TC[2]); texAt(c0,c1,c2,c3,t0,r1,TC[3]);
+    /* ячейка с углом за ближней плоскостью пропускается: её экранные углы прижаты к NEAR и карта
+       плитки была бы кривой; ячейка мала, полоска у края кадра остаётся плоской */
+    if(TC[0].d<NEAR||TC[1].d<NEAR||TC[2].d<NEAR||TC[3].d<NEAR) continue;
+    /* гашение вдали — по глубине ЯЧЕЙКИ, не грани: у соседних сегментов альфа иначе ступенькой */
+    const dc=(TC[0].d+TC[1].d+TC[2].d+TC[3].d)*0.25;
+    ctx.globalAlpha=aBase*clamp(1-(dc-30)/50, 0.3, 1);
+    /* контур строится под БАЗОВОЙ матрицей: точки пути фиксируются в момент lineTo текущей CTM,
+       и под матрицей предыдущей ячейки контур улетал в сторону — заливались только первые ячейки */
+    ctx.setTransform(pxScale,0,0,pxScale,0,0);  /* базовая матрица канваса — DPR, без сдвига (см. resize и renderMirrorInto) */
+    if((nu>1||nv>1) && !pathCam(TC)) continue;   /* одна ячейка — путь грани уже построен */
+    const p0=toScreenClamped(TC[0]), p1=toScreenClamped(TC[1]), p3=toScreenClamped(TC[3]);
+    const ua=a0+d1a*t0+d3a*r0, ub=b0+d1b*t0+d3b*r0;
+    const e1a=d1a/nu, e1b=d1b/nu, e3a=d3a/nv, e3b=d3b/nv, dt=e1a*e3b-e1b*e3a; if(Math.abs(dt)<1e-9) continue;
+    const e1x=p1.x-p0.x, e1y=p1.y-p0.y, e3x=p3.x-p0.x, e3y=p3.y-p0.y;
+    const m11=( e1x*e3b-e3x*e1b)/dt, m12=( e1y*e3b-e3y*e1b)/dt;
+    const m21=(-e1x*e3a+e3x*e1a)/dt, m22=(-e1y*e3a+e3y*e1a)/dt;
+    ctx.transform(m11, m12, m21, m22, p0.x-(m11*ua+m21*ub), p0.y-(m12*ua+m22*ub));
+    ctx.fill();
+  }
+  ctx.restore();
+}
 /* картинка — тем же приёмом: паттерн без повтора, натянутый по трём углам грани:
    (0,0) → v0, (w,0) → v1, (0,h) → v3 */
 const imgPats=new Map();
+/* createPattern делает СНИМОК канваса: для живого буфера зеркала (img.__live) паттерн создаётся на
+   каждый показ — один createPattern на зеркало в кадр; кэш держится только для статичных картинок */
 function imgPattern(img){
+  if(img.__live){ const p=ctx.createPattern(img,'no-repeat'); return p||null; }
   let p=imgPats.get(img);
   if(!p){ p=ctx.createPattern(img,'no-repeat'); if(!p){ console.warn('[img] pattern не создан'); return null; } imgPats.set(img,p); }
   return p;
+}
+/* стекло 3D-корпуса: буфер зеркала, если он живой (зеркала включены и проход уже был) */
+function mirrorGlassImg(kind){
+  const b=mirBuf[kind];
+  /* буфер обновляется, пока включены виджеты или камера в салоне (см. render); иначе на стекле
+     застыл бы кадр из прошлого вида */
+  return (b && b.fresh && (opt.mirrors || opt.camMode===CAM_FP)) ? b.c : null;
+}
+/* мировые углы стекла своей машины за последний кадр — по ним tools/look-check меряет живость */
+const mirGlassW={};
+function viewProject(p){
+  const V=viewCam, cx=p.x-V.pos.x, cy=p.y-V.pos.y, cz=p.z-V.pos.z;
+  const d=cx*V.f.x+cy*V.f.y+cz*V.f.z; if(d<NEAR) return null;
+  const x=cx*V.r.x+cy*V.r.y+cz*V.r.z, y=cx*V.u.x+cy*V.u.y+cz*V.u.z;
+  return {x:V.cx+x*V.scale/d, y:V.cy-y*V.scale/d};
+}
+function mirrorGlassRect(kind){
+  const w=mirGlassW[kind]; if(!w) return null;
+  let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+  for(const q of w){ const s=viewProject(q); if(!s) return null; x0=Math.min(x0,s.x); y0=Math.min(y0,s.y); x1=Math.max(x1,s.x); y1=Math.max(y1,s.y); }
+  return {x:x0, y:y0, w:x1-x0, h:y1-y0};
 }
 function imgFace(f, s0, s1, s3){
   const ux=s1.x-s0.x, uy=s1.y-s0.y, vx=s3.x-s0.x, vy=s3.y-s0.y;
@@ -1207,6 +1422,39 @@ function emitCarBody(u,v,th,col){
       }
     }
   }
+}
+/* корпус бокового зеркала: ножка к двери, восьмигранная (скосы 2 см) коробка цвета кузова с
+   z 0,645 до 0,76, чёрная рамка на задней грани и стекло. У своей машины (kind задан) стекло —
+   живой буфер зеркала как img-грань: (0,0) картинки → угол +lat вверху, (w,0) → −lat, так
+   картинка идёт зеркально к проходу камеры (та смотрит назад), и своё крыло оказывается у
+   внутреннего края, как в жизни. Камера зеркала стоит на z 0,63 — стекло (0,643) у неё за
+   спиной и в проход не попадает. Ранее корпус был двумя ящиками — «шакально» */
+const MIR_H={zb:0.645, zf:0.76, y0:0.955, y1:1.065, lin:0.93, lout:1.10, ch:0.02};
+function emitMirrorHousing(P, F, R, sg, col, kind){
+  const M=MIR_H, li=sg*M.lin, lo=sg*M.lout, ym=(M.y0+M.y1)*0.5, zm=(M.zb+M.zf)*0.5;
+  const ref=P(sg*(M.lin+M.lout)*0.5, ym, zm);
+  /* дальше 40 м блик и отражение не видны, а pow на каждую грань — виден (как в emitCarBody) */
+  const dx=cam.pos.x-ref.x, dz=cam.pos.z-ref.z, near=QUALITY[qLevel].cars && dx*dx+dz*dz<1600;
+  const paint=near?MO.paint:undefined, plastic=near?MO.plastic:undefined;
+  /* ножка: ref — её центр, pushQuad разворачивает нормали от него наружу */
+  const a0=sg*0.895, a1=sg*0.935, aref=P(sg*0.915,1.01,0.70);
+  pushQuad(P(a0,0.99,0.665),P(a1,0.99,0.665),P(a1,1.03,0.665),P(a0,1.03,0.665), col, aref, 0, paint);
+  pushQuad(P(a0,0.99,0.735),P(a1,0.99,0.735),P(a1,1.03,0.735),P(a0,1.03,0.735), col, aref, 0, paint);
+  pushQuad(P(a0,1.03,0.665),P(a1,1.03,0.665),P(a1,1.03,0.735),P(a0,1.03,0.735), col, aref, 0, paint);
+  pushQuad(P(a0,0.99,0.665),P(a1,0.99,0.665),P(a1,0.99,0.735),P(a0,0.99,0.735), col, aref, 0, paint);
+  /* восьмиугольник сечения в (lat, y), обход от внутреннего нижнего угла */
+  const c=M.ch, oct=[[li, M.y0+c],[li+sg*c, M.y0],[lo-sg*c, M.y0],[lo, M.y0+c],[lo, M.y1-c],[lo-sg*c, M.y1],[li+sg*c, M.y1],[li, M.y1-c]];
+  const back=oct.map(q=>P(q[0],q[1],M.zb)), front=oct.map(q=>P(q[0],q[1],M.zf));
+  for(let i=0;i<8;i++){ const j=(i+1)%8; pushQuad(back[i],back[j],front[j],front[i], col, ref, 0, paint); }
+  pushPoly(front, col, ref, 0, paint);
+  pushPoly(back.slice().reverse(), [34,38,44], ref, 0, plastic);          /* рамка */
+  /* стекло: отступ 8 мм от рамки, на 2 мм за её плоскостью, bias — накладка на рамку */
+  const g0=li+sg*0.008, g1=lo-sg*0.008, gy0=M.y0+0.012, gy1=M.y1-0.012, gz=M.zb-0.002;
+  const lp=Math.max(g0,g1), ln=Math.min(g0,g1);                                /* +lat и −lat края стекла */
+  const v0=P(lp,gy1,gz), v1=P(ln,gy1,gz), v2=P(ln,gy0,gz), v3=P(lp,gy0,gz);
+  const img = kind ? mirrorGlassImg(kind) : null;
+  if(kind) mirGlassW[kind]=[v0,v1,v2,v3];
+  pushQuad(v0,v1,v2,v3, [44,50,58], P(sg*1.0,ym,M.zf), 0.02, img ? {img} : (near?MO.glass:undefined));
 }
 /* дальний силуэт машины потока: тот же лофт, но 8 сечений из 13 и 8 рёбер из 12 — капот,
    стёкла, крыша и багажник остаются, а граней втрое меньше. Голая коробка на этом месте
@@ -1464,7 +1712,10 @@ function emitCabinRear(K){
 /* проём лобового и корпус салонного зеркала в кузове (lat, y, z): их рисует emitDash, по ним же
    tools/light-check отделяет честно закрытую линзу (крыша, стойка, зеркало) от дефекта сортировки */
 const WSHIELD=[[-0.74,1.36,0.29],[0.74,1.36,0.29],[0.74,1.00,0.86],[-0.74,1.00,0.86]];
-const CMIR={lat:0, y:1.26, z:0.40, w:0.15, h:0.050, d:0.032};
+/* салонное зеркало висит на стекле у его верха: при z 0,345 линия лобового проходит на y 1,33,
+   и корпус 1,26–1,32 целиком внутри салона, низ на 4 см выше глаза (EYE.y 1,22 → +4°). Раньше
+   плита 0,30×0,10 стояла на y 1,21–1,31 — ниже глаза, прямо на дороге. Размеры — полуразмеры */
+const CMIR={lat:0, y:1.29, z:0.345, w:0.12, h:0.03, d:0.014};
 function emitDash(K){
   const {quad,panel,strip,box,P}=K, C=CAB;
   /* лобовое стекло: лёгкий холодный тон и тёмная солнцезащитная полоса сверху — без них проём
@@ -1514,7 +1765,13 @@ function emitDash(K){
   /* зеркало висит ниже поперечины крыши, не перекрывая её на экране: его центр ближе к глазу,
      чем центр куска поперечины, и верх корпуса рисовался поверх неё */
   box(CMIR.lat,CMIR.y,CMIR.z, CMIR.w,CMIR.h,CMIR.d, [96,102,112], 0, MO.softtouch);      /* корпус салонного зеркала */
-  box(0,1.26,0.362, 0.135,0.040,0.006, [150,168,186]);
+  box(0, CMIR.y+CMIR.h+0.004, CMIR.z-0.004, 0.02, 0.004, 0.010, [60,64,70], 0, MO.matte); /* крепление к стеклу */
+  /* стекло — живой буфер салонного зеркала; порядок углов зеркалит проход камеры (см. emitMirrorHousing) */
+  { const gz=CMIR.z-CMIR.d-0.002, gw=CMIR.w-0.006, gh=CMIR.h-0.005;
+    const v0=[ gw,CMIR.y+gh,gz], v1=[-gw,CMIR.y+gh,gz], v2=[-gw,CMIR.y-gh,gz], v3=[ gw,CMIR.y-gh,gz];
+    const img=mirrorGlassImg('center');
+    mirGlassW.center=[P(v0[0],v0[1],v0[2]),P(v1[0],v1[1],v1[2]),P(v2[0],v2[1],v2[2]),P(v3[0],v3[1],v3[2])];
+    emitLit(()=>quad(v0,v1,v2,v3, [40,46,54], [0,CMIR.y,CMIR.z+0.5], 0.01, img ? {img} : MO.gloss)); }
   /* круглые дефлекторы: сатиновое кольцо, тёмная ниша и три ламели. Ниже линии взгляда
      на дорогу они деталь, а не индикатор — без подсветки */
   const vent=(lat,y,ro)=>{
@@ -1872,9 +2129,7 @@ function emitCarMesh(u, v, th, col, st, lights){
   pushFace([P(-0.26,0.56,2.227),P(0.26,0.56,2.227),P(0.26,0.45,2.227),P(-0.26,0.45,2.227)], nF, [228,232,236], 0, {img:plateCanvas()});
   pushFace([P(0.26,0.70,-2.228),P(-0.26,0.70,-2.228),P(-0.26,0.56,-2.228),P(0.26,0.56,-2.228)], nB, [228,232,236], 0, {img:plateCanvas()});
   for(const sg of [-1,1]){
-    const mp=at(sg*(HALF_W+0.10), 0.70);
-    pushBox(mp.u, 1.01, mp.v, 0.10, 0.055, 0.05, th, col);
-    pushBox(mp.u, 1.01, mp.v, 0.105, 0.035, 0.028, th, [34,38,44]);
+    emitMirrorHousing(P, F, R, sg, col, lights ? (sg<0?'left':'right') : null);
     /* дворники лежат на жабо перед стеклом: на z=0.60 они оказывались внутри салона над торпедо */
     const wp=at(sg*0.34, 0.96);
     pushBox(wp.u, 0.975, wp.v, 0.24, 0.006, 0.010, th+rad(sg*8), [30,32,36]);
@@ -1906,9 +2161,9 @@ function rampZone(u,v,yaw,w,len,grade){
 function deckZone(u,v,yaw,w,len,h){
   return zoneBB({ou:u,ov:v,up:fuv(yaw),rt:ruv(yaw),hw:w/2,len,h,kind:'deck'});
 }
-function wall(u,v,w,l,h,col,yaw){ return {kind:'wall',u,v,w,l,h:h||2.6,yaw:yaw||0,solid:true,col:col||[168,166,166]}; }
-function kerb(u,v,w,l){ return {kind:'kerb',u,v,w,l,h:0.16,yaw:0,solid:false,col:[190,190,184]}; }
-function hedge(u,v,w,l,h){ return {kind:'wall',u,v,w,l,h:h||1.25,yaw:0,solid:true,col:[74,110,66]}; }
+function wall(u,v,w,l,h,col,yaw,tex){ return {kind:'wall',u,v,w,l,h:h||2.6,yaw:yaw||0,solid:true,col:col||[168,166,166],tex:tex||'concrete'}; }
+function kerb(u,v,w,l){ return {kind:'kerb',u,v,w,l,h:0.16,yaw:0,solid:false,col:[190,190,184],tex:'concrete'}; }
+function hedge(u,v,w,l,h){ return {kind:'wall',u,v,w,l,h:h||1.25,yaw:0,solid:true,col:[74,110,66],tex:'hedge'}; }
 function pcar(u,v,yaw,col){ return {kind:'car',u,v,w:CAR.width,l:CAR.length,h:CAR.height,
   yaw:rad(yaw||0),solid:true,col:col||PALETTE[0]}; }
 function cone(u,v){ return {kind:'cone',u,v,w:0.46,l:0.46,h:0.64,yaw:0,solid:false,col:[236,104,26]}; }
@@ -3144,13 +3399,13 @@ const LEVELS = [
   build(){
     const obs=[], dec=[];
     obs.push(wall(0,-7.6,40,1.0,2.4,[150,148,146]));
-    obs.push(wall(-10.9,0.4,0.8,3.6,2.2,[168,150,120]));
-    obs.push(wall(10.9,0.4,0.8,3.6,2.2,[168,150,120]));
-    obs.push(wall(-6.25,-0.6,8.7,0.8,2.0,[168,150,120]));
-    obs.push(wall(6.25,-0.6,8.7,0.8,2.0,[168,150,120]));
-    obs.push(wall(-1.95,4.0,0.5,9.0,2.7,[196,186,172]));
-    obs.push(wall(1.95,4.0,0.5,9.0,2.7,[196,186,172]));
-    obs.push(wall(0,8.75,4.4,0.5,2.7,[196,186,172]));
+    obs.push(wall(-10.9,0.4,0.8,3.6,2.2,[168,150,120],0,'brick'));
+    obs.push(wall(10.9,0.4,0.8,3.6,2.2,[168,150,120],0,'brick'));
+    obs.push(wall(-6.25,-0.6,8.7,0.8,2.0,[168,150,120],0,'brick'));
+    obs.push(wall(6.25,-0.6,8.7,0.8,2.0,[168,150,120],0,'brick'));
+    obs.push(wall(-1.95,4.0,0.5,9.0,2.7,[196,186,172],0,'brick'));
+    obs.push(wall(1.95,4.0,0.5,9.0,2.7,[196,186,172],0,'brick'));
+    obs.push(wall(0,8.75,4.4,0.5,2.7,[196,186,172],0,'brick'));
     obs.push(pcar(-9,-5.4,90,PALETTE[6]), pcar(9,-5.4,90,PALETTE[4]));
     dec.push(stripe(0,4.0,3.4,9.0,'rgba(70,80,90,.35)'));
     dec.push(stripe(0,-0.1,3.6,1.0,'#e0e4e6'));
@@ -3456,9 +3711,9 @@ const LEVELS = [
     const bay=(mu)=>{
       const m={u:mu, v:-3.8};                      /* центр проёма */
       const c={u:m.u+f.u*3.0, v:m.v+f.v*3.0};      /* центр бокса */
-      obs.push(wall(c.u-r.u*1.8, c.v-r.v*1.8, 0.4, 6.4, 2.3, [176,168,152], A));
-      obs.push(wall(c.u+r.u*1.8, c.v+r.v*1.8, 0.4, 6.4, 2.3, [176,168,152], A));
-      obs.push(wall(m.u+f.u*6.2, m.v+f.v*6.2, 4.0, 0.4, 2.3, [168,158,142], A));
+      obs.push(wall(c.u-r.u*1.8, c.v-r.v*1.8, 0.4, 6.4, 2.3, [176,168,152], A, 'brick'));
+      obs.push(wall(c.u+r.u*1.8, c.v+r.v*1.8, 0.4, 6.4, 2.3, [176,168,152], A, 'brick'));
+      obs.push(wall(m.u+f.u*6.2, m.v+f.v*6.2, 4.0, 0.4, 2.3, [168,158,142], A, 'brick'));
       return c;
     };
     const mine=bay(0);
@@ -3543,9 +3798,9 @@ const LEVELS = [
   transfer:'В любом тупике сначала оцени: 14 м назад по прямой всегда проще, чем разворот в три приёма у стены.',
   build(){
     const obs=[], dec=[];
-    obs.push(wall(-2.15,6,0.7,18,2.6,[168,162,150]));
-    obs.push(wall(2.15,6,0.7,18,2.6,[168,162,150]));
-    obs.push(wall(0,15.4,5.0,0.7,2.6,[176,168,152]));
+    obs.push(wall(-2.15,6,0.7,18,2.6,[168,162,150],0,'brick'));
+    obs.push(wall(2.15,6,0.7,18,2.6,[168,162,150],0,'brick'));
+    obs.push(wall(0,15.4,5.0,0.7,2.6,[176,168,152],0,'brick'));
     obs.push(wall(0,-12.5,34,0.7,3.0,[150,146,142]));
     obs.push(wall(-16,-6,0.7,14,2.6,[150,146,142]));
     obs.push(wall(16,-6,0.7,14,2.6,[150,146,142]));
@@ -5052,17 +5307,21 @@ let dprCap = 2;
    упирается в JavaScript (3300 граней), и снижать надо число граней, а не только пиксели */
 /* порядок жертв: сначала разрешение (его почти не видно), и только потом зерно материалов —
    владелец заметил пропажу «текстур» раньше, чем мягкость картинки */
-const QUALITY=[ {dpr:2,    grain:true,  grad:true,  cars:true,  detail:true,  maxD:85},
-                {dpr:1.5,  grain:true,  grad:true,  cars:true,  detail:true,  maxD:85},
-                {dpr:1.5,  grain:false, grad:true,  cars:true,  detail:true,  maxD:85},
-                {dpr:1.25, grain:false, grad:false, cars:true,  detail:true,  maxD:70},
-                {dpr:1,    grain:false, grad:false, cars:false, detail:true,  maxD:70},
-                {dpr:1,    grain:false, grad:false, cars:false, detail:false, maxD:55},
+/* edges — рёбра коробочных объектов мира (до q3), tex — текстуры стен (до q2): держатся дольше
+   зерна салона — они структура сцены, зерно — деталь. Текстура — вторая заливка всей грани, и на
+   программном Canvas 80-метровая стена уровня 1 стоила 51 → 40 fps на q3; рёбра там в пределах
+   шума замера (46 и 47 fps с ними и без) */
+const QUALITY=[ {dpr:2,    grain:true,  grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true},
+                {dpr:1.5,  grain:true,  grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true},
+                {dpr:1.5,  grain:false, grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true},
+                {dpr:1.25, grain:false, grad:false, cars:true,  detail:true,  maxD:70, edges:true,  tex:false},
+                {dpr:1,    grain:false, grad:false, cars:false, detail:true,  maxD:70, edges:false, tex:false},
+                {dpr:1,    grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false},
                 /* ниже 1,0 — рендер в меньшем разрешении с растяжением браузером: на большом мониторе
                    с программным Canvas и DPR 1,0 (2560×1440) выходило 16 fps */
-                {dpr:0.8,  grain:false, grad:false, cars:false, detail:false, maxD:55},
-                {dpr:0.65, grain:false, grad:false, cars:false, detail:false, maxD:55},
-                {dpr:0.5,  grain:false, grad:false, cars:false, detail:false, maxD:55} ];
+                {dpr:0.8,  grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false},
+                {dpr:0.65, grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false},
+                {dpr:0.5,  grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false} ];
 function qDetail(){ return QUALITY[qLevel].detail; }
 const Q_SLOW_MIRRORS=5;    /* с этого уровня зеркала обновляются через кадр */
 /* первые секунды после загрузки кадры рваные (уровень, ресайз, прогрев) — регулятор молчит,
@@ -5122,8 +5381,10 @@ function buildRenderList(obs){
     const f=fuv(o.yaw), r=ruv(o.yaw), sl=o.l/n, sw=o.w/m;
     for(let i=0;i<n;i++) for(let j=0;j<m;j++){
       const dv=-o.l/2+sl*(i+0.5), du=-o.w/2+sw*(j+0.5);
+      /* швы сегментации: торцы на них не рисуются и рёбер не несут (см. pushBox) */
       out.push({kind:o.kind, u:o.u+f.u*dv+r.u*du, v:o.v+f.v*dv+r.v*du,
-                w:sw, l:sl, h:o.h, yaw:o.yaw, col:o.col});
+                w:sw, l:sl, h:o.h, yaw:o.yaw, col:o.col, tex:o.tex||null,
+                cut:(n>1||m>1) ? {f:i<n-1, b:i>0, l:j>0, r:j<m-1} : null});
     }
   }
   return out;
@@ -6591,8 +6852,8 @@ function mirrorCam(kind){
   if(kind==='center'){
     /* камера стоит у стекла салонного зеркала (z 0,35, y 1,26) и смотрит назад: в кадре стойки C,
        подголовники и заднее стекло — как в живом зеркале. Корпус зеркала и козырьки позади камеры */
-    const u=car.ru+f.u*(C2R+0.35), v=car.rv+f.v*(C2R+0.35);
-    const y=1.26+(RAMP_ON?carLift(u,v):0);
+    const u=car.ru+f.u*(C2R+CMIR.z-CMIR.d), v=car.rv+f.v*(C2R+CMIR.z-CMIR.d);
+    const y=CMIR.y+(RAMP_ON?carLift(u,v):0);
     const g=fuv(angNorm(car.th+PI+a.yaw));
     /* 24°, не 38: при пропорции 0,30 это ≈70° по горизонтали, как у плоского зеркала; с 38° стойки C
        у самой камеры заполняли половину картинки */
@@ -7048,7 +7309,7 @@ function emitObstacles(maxD){
     if(o.kind==='sign'){ emitSign(o); continue; }
     if(o.kind==='guide'){ emitGuide(o); continue; }
     if(o.kind==='light'){ emitTrafficLight(o); continue; }
-    pushBox(o.u,o.h/2,o.v,o.w/2,o.h/2,o.l/2,o.yaw,o.col);
+    pushBox(o.u,o.h/2,o.v,o.w/2,o.h/2,o.l/2,o.yaw,o.col,0,o);
   }
 }
 /* светофор: стойка, корпус и три линзы. Активная линза идёт через emitLit —
@@ -7168,7 +7429,8 @@ function drawSceneInto(o){
   if(o.guides) drawGuides();
   if(curPhase) drawMarks(curPhase._marks, curS, !!o.labels, !!(demo&&demo.say>0));
   else drawMarks(examMarks(), curS, !!o.labels, false);
-  emitObstacles(o.maxD);
+  edgeOn=true;
+  try{ emitObstacles(o.maxD); } finally { edgeOn=false; }
   /* из салона мир и салон — два прохода: внутри кузова ничто снаружи не может быть ближе
      салонной обшивки, а один общий сорт по средней глубине пускал длинные стены поверх салона */
   const inside = !o.noSelf && camInsideCabin();
@@ -7235,12 +7497,14 @@ function cycleMirScale(step){
    20–40 раз в секунду на парковочной скорости неотличимо от 60. В кадр зеркало попадает блитом
    с горизонтальным отражением (настоящее зеркало); рамка, подпись и перекрестье — поверх, на
    основном канвасе. Разрешение зеркала ≤ 1,5 DPR: в прямоугольнике 300×90 разницы не видно */
-const MIR_DPR_MAX=1.5, MIR_KINDS=['center','left','right'];
+/* на q0–q1 буфер зеркала в полном DPR: 1,5 на Retina читалось мылом рядом с резким салоном */
+const MIR_KINDS=['center','left','right'];
+function mirDprMax(){ return qLevel<=1 ? 2 : 1.5; }
 const mirBuf={}; let mirTurn=0;
 function mirrorBuf(rect, kind){
-  const sc=Math.min(DPR, MIR_DPR_MAX), w=Math.round(rect.w*sc), h=Math.round(rect.h*sc);
+  const sc=Math.min(DPR, mirDprMax()), w=Math.round(rect.w*sc), h=Math.round(rect.h*sc);
   let b=mirBuf[kind];
-  if(!b){ b={c:document.createElement('canvas'), g:null, sc:0, w:0, h:0, fresh:false}; b.g=b.c.getContext('2d'); mirBuf[kind]=b; }
+  if(!b){ b={c:document.createElement('canvas'), g:null, sc:0, w:0, h:0, fresh:false}; b.g=b.c.getContext('2d'); b.c.__live=true; mirBuf[kind]=b; }
   if(b.w!==w || b.h!==h || b.sc!==sc){ b.c.width=w; b.c.height=h; b.w=w; b.h=h; b.sc=sc; b.fresh=false; }
   return b;
 }
@@ -7251,35 +7515,68 @@ function renderMirrorInto(b, rect, kind){
     setVP(0,0,rect.w,rect.h);
     const mc=mirrorCam(kind);
     setCam(mc.pos, mc.tgt, null, mc.fov);
-    drawSceneInto({grid:false, trails:false, guides:opt.guides&&kind!=='center', maxD:46});
+    drawSceneInto({grid:false, trails:false, guides:opt.guides&&kind!=='center', maxD:qLevel<=1?60:46});
   } finally { ctx=mainCtx; pxScale=mainScale; }
   b.fresh=true;
 }
-function renderMirror(rect, kind, draw){
+/* HUD-зеркало рисуется как зеркало, а не как панель интерфейса: безель градиентом, кромка
+   стекла, виньетка к углам и диагональный блик малой альфы. Подпись «левое/правое/салонное» —
+   только новичку (первые три запуска), при подсветке фазы и при настройке: постоянная подпись в
+   углу и делала виджет панелью. Прямоугольники mirrorRects не меняются — перетаскивание, колесо,
+   каппинги и mirror-check живут на них */
+function mirrorLabel(kind){
+  const name = kind==='center'?'салонное':(kind==='left'?'левое':'правое');
+  const hot = opt.marks && curPhase && curPhase.mirror===kind;
+  if(hot) return name+' · смотри сюда';
+  const adj=mirAdj(kind), tuned=Math.abs(adj.yaw)>1e-3||Math.abs(adj.pitch)>1e-3;
+  if((mirNoteT>0 && tuned) || (mirDrag&&mirDrag.kind===kind) || runsCnt<3) return name;
+  return '';
+}
+function mirrorFrame(rect, kind, hot){
+  const compact=document.body.classList.contains('compact'), bw=compact?2:3, r=7;
+  const g=ctx.createLinearGradient(0,rect.y-bw,0,rect.y+rect.h+bw);
+  g.addColorStop(0,'#3a4048'); g.addColorStop(1,'#14181d');
+  roundRect(rect.x-bw*0.5,rect.y-bw*0.5,rect.w+bw,rect.h+bw,r+bw*0.5);
+  ctx.strokeStyle=g; ctx.lineWidth=bw; ctx.stroke();
+  roundRect(rect.x-bw,rect.y-bw,rect.w+2*bw,rect.h+2*bw,r+bw);
+  ctx.strokeStyle='rgba(0,0,0,.55)'; ctx.lineWidth=1; ctx.stroke();
+  roundRect(rect.x+0.5,rect.y+0.5,rect.w-1,rect.h-1,r-1);
+  ctx.strokeStyle='rgba(214,228,242,.35)'; ctx.lineWidth=1; ctx.stroke();
+  if(hot){
+    roundRect(rect.x-bw,rect.y-bw,rect.w+2*bw,rect.h+2*bw,r+bw);
+    ctx.strokeStyle='rgba(255,214,60,'+(0.5+0.35*Math.sin(game.t*6)).toFixed(2)+')';
+    ctx.lineWidth=3; ctx.stroke();
+  }
+}
+function renderMirror(rect, kind, draw, widget){
   const b=mirrorBuf(rect, kind);
   if(draw || !b.fresh) renderMirrorInto(b, rect, kind);
+  if(!widget) return;
   ctx.save();
   roundRect(rect.x,rect.y,rect.w,rect.h,7); ctx.clip();
   ctx.translate(rect.x+rect.w*0.5,0); ctx.scale(-1,1); ctx.translate(-(rect.x+rect.w*0.5),0);
   ctx.drawImage(b.c, rect.x, rect.y, rect.w, rect.h);
   ctx.restore();
   ctx.save();
-  roundRect(rect.x-2,rect.y-2,rect.w+4,rect.h+4,9);
-  ctx.strokeStyle='rgba(6,10,14,.85)'; ctx.lineWidth=4; ctx.stroke();
-  roundRect(rect.x,rect.y,rect.w,rect.h,7);
-  ctx.strokeStyle='rgba(214,228,242,.5)'; ctx.lineWidth=1.5; ctx.stroke();
-  /* рабочее зеркало текущей фазы подсвечивается — «смотри сюда» */
+  roundRect(rect.x,rect.y,rect.w,rect.h,7); ctx.clip();
+  const cx=rect.x+rect.w*0.5, cy=rect.y+rect.h*0.5, rr=Math.max(rect.w,rect.h)*0.72;
+  const vg=ctx.createRadialGradient(cx,cy,rr*0.45,cx,cy,rr);
+  vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(0,0,0,.22)');
+  ctx.fillStyle=vg; ctx.fillRect(rect.x,rect.y,rect.w,rect.h);
+  const sh=ctx.createLinearGradient(rect.x,rect.y,rect.x+rect.w*0.6,rect.y+rect.h);
+  sh.addColorStop(0,'rgba(255,255,255,.07)'); sh.addColorStop(0.45,'rgba(255,255,255,0)');
+  ctx.fillStyle=sh; ctx.fillRect(rect.x,rect.y,rect.w,rect.h);
+  ctx.restore();
+  ctx.save();
   const hot = opt.marks && curPhase && curPhase.mirror===kind;
-  if(hot){
-    roundRect(rect.x-2,rect.y-2,rect.w+4,rect.h+4,9);
-    ctx.strokeStyle='rgba(255,214,60,'+(0.5+0.35*Math.sin(game.t*6)).toFixed(2)+')';
-    ctx.lineWidth=3; ctx.stroke();
+  mirrorFrame(rect, kind, hot);
+  const label=mirrorLabel(kind);
+  if(label){
+    ctx.fillStyle=hot?'rgba(255,224,120,.95)':'rgba(214,228,242,.6)';
+    ctx.font='10px ui-sans-serif,system-ui';
+    ctx.textAlign='left';
+    ctx.fillText(label, rect.x+6, rect.y+13);
   }
-  ctx.fillStyle=hot?'rgba(255,224,120,.95)':'rgba(214,228,242,.55)';
-  ctx.font='10px ui-sans-serif,system-ui';
-  ctx.textAlign='left';
-  ctx.fillText((kind==='center'?'салонное':(kind==='left'?'левое':'правое'))+(hot?' · смотри сюда':''),
-               rect.x+6, rect.y+13);
   /* при настройке показываем перекрестье и градусы — иначе непонятно,
      что именно меняется и насколько зеркало уже отведено от штатного положения */
   const adj=mirAdj(kind), tuned=Math.abs(adj.yaw)>1e-3||Math.abs(adj.pitch)>1e-3;
@@ -7289,6 +7586,7 @@ function renderMirror(rect, kind, draw){
     ctx.beginPath(); ctx.moveTo(mx-9,my); ctx.lineTo(mx+9,my);
     ctx.moveTo(mx,my-9); ctx.lineTo(mx,my+9); ctx.stroke();
     ctx.fillStyle='rgba(255,224,120,.95)'; ctx.textAlign='right';
+    ctx.font='10px ui-sans-serif,system-ui';
     ctx.fillText(Math.round(deg(adj.yaw))+'° / '+Math.round(deg(adj.pitch))+'°',
                  rect.x+rect.w-6, rect.y+rect.h-6);
     ctx.textAlign='left';
@@ -7308,15 +7606,17 @@ function render(dt){
     return;
   }
   drawSceneInto({grid:true, trails:opt.trails, guides:opt.guides, maxD:QUALITY[qLevel].maxD, labels:true});
-  if(opt.mirrors){ const r=mirrorRects(), slow=qLevel>=Q_SLOW_MIRRORS, t=mirTurn++;
+  /* буферы зеркал обновляются и с выключенными HUD-виджетами, пока камера в салоне: стекло
+     3D-корпусов живёт на них, а клавиша Z прячет только виджеты */
+  if(opt.mirrors || opt.camMode===CAM_FP){ const r=mirrorRects(), slow=qLevel>=Q_SLOW_MIRRORS, t=mirTurn++;
     const turn = slow && (t%2) ? null : MIR_KINDS[(slow ? t>>1 : t)%3];
     /* зеркало, чьё перетаскивание идёт сейчас, обновляется каждый кадр — иначе настройка «плывёт» */
     const live=mirDrag&&mirDrag.kind;
-    renderMirror(r.center,'center', turn==='center'||live==='center');
-    renderMirror(r.left,'left', turn==='left'||live==='left');
-    renderMirror(r.right,'right', turn==='right'||live==='right');
+    renderMirror(r.center,'center', turn==='center'||live==='center', opt.mirrors);
+    renderMirror(r.left,'left', turn==='left'||live==='left', opt.mirrors);
+    renderMirror(r.right,'right', turn==='right'||live==='right', opt.mirrors);
     const mb=Math.round(r.center.y+r.center.h);
-    if(mb!==mirBot){ mirBot=mb; document.documentElement.style.setProperty('--mirbot', mb+'px'); }
+    if(opt.mirrors && mb!==mirBot){ mirBot=mb; document.documentElement.style.setProperty('--mirbot', mb+'px'); }
   }
   setVP(0,0,W,H);
   if(game.flash>0){
