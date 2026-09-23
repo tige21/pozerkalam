@@ -32,7 +32,7 @@ const EQUIV = path.join(REPO, 'tools', 'mutation-equivalent.json');
 /* порог-храповик: поднимается вместе с фактическим результатом, вниз не опускается */
 /* база 2026-09-22: 394 из 1159. Порог чуть ниже факта — иначе округление печатает
    «34.0 %» при 33,99 и гейт валит собственную базу */
-const DEFAULT_MIN_SCORE = 33.9;
+const DEFAULT_MIN_SCORE = 35.6;
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i >= 0 ? process.argv[i + 1] : d; };
 const ONLY = arg('--only', null);
