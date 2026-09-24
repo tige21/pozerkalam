@@ -116,12 +116,8 @@ echo "==> игра: SW с версией и путями /play/"
 python3 - "$BUILD_SHA" <<'PYEOF'
 import sys
 s = open('sw.js').read().replace('__BUILD__', sys.argv[1])
-for a, b in [("const CORE = ['/', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];",
-              "const CORE = ['/play/', '/play/manifest.webmanifest', '/play/icon-192.png', '/play/icon-512.png'];"),
-             ("caches.open(CACHE).then((c) => c.put('/', cp))", "caches.open(CACHE).then((c) => c.put('/play/', cp))"),
-             ("catch(() => caches.match('/'))", "catch(() => caches.match('/play/'))"),
-             ("url.pathname === '/' || url.pathname === '/index.html'",
-              "url.pathname === '/play/' || url.pathname === '/play/index.html'")]:
+# Якоря замен читает и tools/sw-check.mjs: правишь sw.js — гейт скажет, если строка ушла.
+for a, b in [("const PAGE = '/';", "const PAGE = '/play/';")]:
     assert a in s, a
     s = s.replace(a, b)
 open('build/play/sw.js','w').write(s)
@@ -169,6 +165,10 @@ scpr build/pozerkalam-headers.conf "$HOST:/etc/nginx/snippets/pozerkalam-headers
 echo "==> nginx: location для /play/"
 sshr 'grep -q "location = /play/index.html" /etc/nginx/sites-available/pozerkalam.space || \
   sed -i "s|location = /index.html { add_header Cache-Control \"no-cache\"; include snippets/pozerkalam-headers.conf; }|location = /index.html { add_header Cache-Control \"no-cache\"; include snippets/pozerkalam-headers.conf; }\n    location = /play/index.html { add_header Cache-Control \"no-cache\"; include snippets/pozerkalam-headers.conf; }|" /etc/nginx/sites-available/pozerkalam.space'
+# sw.js без no-cache браузер держит по эвристике до суток — новая версия игры ждёт, пока
+# протухнет старый воркер, хотя страница уже свежая
+sshr 'grep -q "location = /play/sw.js" /etc/nginx/sites-available/pozerkalam.space || \
+  sed -i "s|    location = /play/index.html { add_header Cache-Control \"no-cache\"; include snippets/pozerkalam-headers.conf; }|&\n    location = /play/sw.js { add_header Cache-Control \"no-cache\"; include snippets/pozerkalam-headers.conf; }|" /etc/nginx/sites-available/pozerkalam.space'
 
 echo "==> приёмник отзывов"
 if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
@@ -336,6 +336,7 @@ else
       mirror_ssh "sudo cp /tmp/pz-feedback.conf /etc/nginx/snippets/pozerkalam-feedback.conf" || MIRROR_OK=0
       mirror_ssh "grep -q 'snippets/pozerkalam-feedback.conf' /etc/nginx/sites-available/pozerkalam.space || sudo sed -i 's|    location / { try_files|    include snippets/pozerkalam-feedback.conf;\n    location / { try_files|' /etc/nginx/sites-available/pozerkalam.space" || MIRROR_OK=0
     fi
+    mirror_ssh "grep -q 'location = /play/sw.js' /etc/nginx/sites-available/pozerkalam.space || sudo sed -i 's|    location = /play/index.html { add_header Cache-Control \"no-cache\"; include snippets/pozerkalam-headers.conf; }|&\n    location = /play/sw.js { add_header Cache-Control \"no-cache\"; include snippets/pozerkalam-headers.conf; }|' /etc/nginx/sites-available/pozerkalam.space" || MIRROR_OK=0
     mirror_ssh "sudo nginx -t >/dev/null 2>&1 && sudo systemctl reload nginx && echo '    зеркало: nginx перезагружен'" || MIRROR_OK=0
   fi
 
