@@ -1441,7 +1441,10 @@ function emitCarBody(u,v,th,col){
    z 0,65–0,74 зеркало висело в окне в 15 см позади стойки, ни к чему не прикреплённое —
    «зеркала просто висят в текстурах». В жизни зеркало сидит в переднем углу окна двери, на
    «косынке» у стойки; косынку изнутри рисует emitCabinShell */
-const MIR_H={zb:0.762, zf:0.852, y0:0.955, y1:1.065, lin:0.93, lout:1.10, ch:0.03, taper:0.55};
+/* корпус 12×8 см вплотную к борту (lat 0,91–1,03), стекло статичное. Прежний 17×11 см на lat 0,93–1,10
+   с живым отражением из салона читался как телевизор, повисший в окне: опора сидела внутри двери, и между
+   косынкой и кожухом было 13 см пустоты — «зеркала висят в воздухе» (владелец, 24.09) */
+const MIR_H={zb:0.768, zf:0.848, y0:0.975, y1:1.055, lin:0.91, lout:1.03, ch:0.022, taper:0.6};
 const MIR_BASE=[38,42,48];
 /* поворот точки в системе кузова вокруг оси зеркала: pitch — вокруг поперечной оси (вверх при
    θ>0), yaw — вокруг вертикали (по часовой сверху при φ>0, как heading) */
@@ -1456,10 +1459,10 @@ function emitMirrorHousing(P, F, R, sg, col, kind){
   /* дальше 40 м блик и отражение не видны, а pow на каждую грань — виден (как в emitCarBody) */
   const dx=cam.pos.x-ref.x, dz=cam.pos.z-ref.z, near=QUALITY[qLevel].cars && dx*dx+dz*dz<1600;
   const paint=near?MO.paint:undefined, plastic=near?MO.plastic:undefined;
-  /* основание: чёрная опора от двери (lat 0,895 — внутри борта) до кожуха, во всю его глубину и
-     на две трети высоты — узкая пластина читалась отдельным кубиком рядом с кожухом; торцы
-     спрятаны в двери и в кожухе — только четыре грани */
-  const b0=sg*0.895, b1=sg*0.935, by0=0.960, by1=1.030, bz0=0.768, bz1=0.848, bref=P(sg*0.915,(by0+by1)*0.5,(bz0+bz1)*0.5);
+  /* кронштейн 4×4 см от косынки в углу окна (lat 0,78 — на 2 см внутрь от карты двери, чтобы из
+     салона он начинался на панели) наружу до кожуха: видимая связь зеркала с кузовом и изнутри,
+     и снаружи; торцы спрятаны в косынке и в кожухе — только четыре грани */
+  const b0=sg*0.78, b1=sg*0.915, by0=0.985, by1=1.025, bz0=0.79, bz1=0.83, bref=P(sg*0.85,(by0+by1)*0.5,(bz0+bz1)*0.5);
   pushQuad(P(b0,by0,bz0),P(b1,by0,bz0),P(b1,by1,bz0),P(b0,by1,bz0), MIR_BASE, bref, 0, plastic);
   pushQuad(P(b0,by0,bz1),P(b1,by0,bz1),P(b1,by1,bz1),P(b0,by1,bz1), MIR_BASE, bref, 0, plastic);
   pushQuad(P(b0,by1,bz0),P(b1,by1,bz0),P(b1,by1,bz1),P(b0,by1,bz1), MIR_BASE, bref, 0, plastic);
@@ -1479,9 +1482,11 @@ function emitMirrorHousing(P, F, R, sg, col, kind){
   const adj = kind ? mirAdj(kind) : null, yaw = adj ? adj.yaw*0.5 : 0, pitch = adj ? adj.pitch*0.5 : 0;
   const G=(l,y)=>{ const r=mirRot(l-gc, y-gyc, 0, yaw, pitch); return P(gc+r[0], gyc+r[1], gz+r[2]); };
   const v0=G(lp,gy1), v1=G(ln,gy1), v2=G(ln,gy0), v3=G(lp,gy0);
-  const img = kind ? mirrorGlassImg(kind) : null;
+  /* стекло статичное: живое отражение на 12 см стекла из салона — шум, а не ориентир; отражение
+     живёт в HUD-виджетах (renderMirror). Углы стекла всё равно публикуются — по ним look-check
+     меряет, что стекло на месте и не меняется (@render-mirror-static) */
   if(kind) mirGlassW[kind]=[v0,v1,v2,v3];
-  pushQuad(v0,v1,v2,v3, [44,50,58], P(sg*1.0,ym,M.zf), 0.02, img ? {img} : (near?MO.glass:undefined));
+  pushQuad(v0,v1,v2,v3, [52,60,70], P(sg*1.0,ym,M.zf), 0.02, near?MO.glass:undefined);
 }
 /* дальний силуэт машины потока: тот же лофт, но 8 сечений из 13 и 8 рёбер из 12 — капот,
    стёкла, крыша и багажник остаются, а граней втрое меньше. Голая коробка на этом месте

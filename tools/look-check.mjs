@@ -141,22 +141,20 @@ await shot('fp-fwd');
 await pose(() => { opt.fpYaw = rad(-45); opt.fpPitch = rad(-6); });
 await shot('fp-left45');
 
-/* живое стекло: рамка стекла по mirrorGlassRect (появляется вместе с отражением на корпусе) */
+/* статичное стекло: рамка по mirrorGlassRect — стекло на месте, одноцветное и не меняется при
+   переезде машины (живое отражение на корпусе владелец снял 24.09: «зеркала висят в воздухе») */
 {
   const has = await page.evaluate(() => typeof mirrorGlassRect === 'function');
-  if (!has) check('стекло корпуса зеркала живое (@render-mirror-live)', false, 'mirrorGlassRect нет — стекло не рисуется');
+  if (!has) check('стекло корпуса зеркала статичное (@render-mirror-static)', false, 'mirrorGlassRect нет — стекло не рисуется');
   else {
-    /* живость проверяется на ОДНОМ уровне и одной позе головы: машина переставляется на 6 м вдоль
-       стены — отражение обязано измениться, застывший буфер остался бы прежним. Смена уровня
-       меняла кадр сама по себе и проходила бы и с замёрзшим буфером */
     const snap = () => page.evaluate(() => { const r = mirrorGlassRect('left'); if (!r) return null; return { r, p: __lk.patch(r.x + r.w * 0.2, r.y + r.h * 0.2, r.w * 0.6, r.h * 0.6) }; });
     const a = await snap();
-    await pose(() => { const c = bodyPos(); setBody(c.u, c.v + 6, car.th); }, null, 500);
+    await pose(() => { const c = bodyPos(); setBody(c.u, c.v + 6, car.th); }, null, 300);
     const b = await snap();
-    await pose(() => { const c = bodyPos(); setBody(c.u, c.v - 6, car.th); }, null, 400);
-    const diff = a && b ? Math.hypot(...a.p.rgb.map((v, i) => v - b.p.rgb[i])) : 0;
-    check('стекло корпуса зеркала живое (@render-mirror-live)', a && b && a.p.sd >= 4 && diff >= 3,
-      a && b ? `sd=${a.p.sd.toFixed(1)} разница после переезда на 6 м=${diff.toFixed(1)} rect=${JSON.stringify(a.r)}` : 'стекло вне кадра');
+    const diff = a && b ? Math.abs(a.p.mean - b.p.mean) : null;
+    check('стекло корпуса зеркала статичное (@render-mirror-static)', a && b && a.r.w >= 6 && a.p.sd < 6 && diff !== null && diff < 3,
+      a && b ? `рамка ${a.r.w.toFixed(0)}×${a.r.h.toFixed(0)} px, sd ${a.p.sd.toFixed(1)}, сдвиг средней ${diff.toFixed(1)}` : 'рамка стекла не найдена в кадре');
+    await pose(() => { const c = bodyPos(); setBody(c.u, c.v - 6, car.th); }, null, 300);
   }
 }
 await pose(() => { opt.fpYaw = 0; opt.fpPitch = rad(6); });
