@@ -1,114 +1,53 @@
-# Implementation Plan: Салон из первого лица — материалы, формы, приборы (вариант Б, остаёмся в 3D)
+# Implementation Plan: Билд Яндекс Игр снова собирается + гейт на выход build-yandex.sh (#176)
 
 Branch: main (create_branches: false)
-Created: 2026-09-06
-Доска: Vikunja «По зеркалам» #60 (P1) · часть #44
+Created: 2026-09-25
+Доска: Vikunja «По зеркалам» #176 (P0) · блокирует #28 «подать в кабинет Яндекс Игр»
 
 ## Settings
-- Testing: yes — регрессия проекта, не unit-тесты: 18 демо / 0 warn, `sortAudit` = 0 в проходе салона на 8 углах головы, скриншоты салона до/после, `frameCost`
-- Logging: standard — только `console.warn` на невалидные данные (материал, ассет); никаких логов в кадре (perf-бюджет 11 мс)
-- Docs: yes — раздел «Cabin»/«Cabin lighting» в CLAUDE.md, журнал RALPH-BOARD, патч-заметка
+- Testing: yes — новый инструмент `tools/yandex-check.mjs` (playwright-core из `PW_DIR`, как `mt-check`) поднимает `build/yandex/` со статического сервера и мок-`/sdk.js`; сценарии `@ui @dist` привязаны кодами требований; существующие гейты не трогаются
+- Logging: standard — `echo` этапов в билд-скрипте (как сейчас), строки `ok/ПРОВАЛ` в инструменте; никаких логов в игре
+- Docs: yes — строка запуска в CLAUDE.md «Commands», абзац в «Distribution builds» про урок с регэкспом, шаг в docs/PUBLISH.md
 
 ## Roadmap Linkage
 Milestone: "M4 · Яндекс Игры"
-Rationale: вид из салона — главный скриншот карточки в кабинете (#28 P0); «как Minecraft» бьёт по конверсии карточки.
+Rationale: M4 отмечен выполненным, а ZIP с 9 сентября не собирается — канал закрыт, пока билд не починен и не защищён гейтом.
 
-## Контекст (что есть и почему это читается как кубики)
-- Рендер: painter's algorithm на Canvas 2D, `pushFace` → плоский цвет `shadeCol` (ламберт + туман; в салоне `cabinLit`: ambient 0.48, AO по высоте) → `flushFaces` (fill+stroke своим цветом, салонные грани — один экранный overlay-шум `grainPattern`).
-- Салон: `cabinCtx` (`quad/panel/box`, `DET`), `emitCabinShell` (пол, потолок, двери, стойки-бруски `pushBar` квадратного сечения, сиденья-коробки), `emitCabinRear`, `emitDash` (панели + коробки), `emitCluster` (шкала из брусков), `emitSelector`, `emitWheel` (обод из 14 квадратных брусков, спицы-бруски, ступица-коробка), `emitLit` (приборы без затемнения).
-- Причины «Minecraft»: (1) все формы — коробки и квадратные бруски, кривизны нет; (2) одна заливка на грань, без градиента, бликов и затенения в стыках; (3) торпедо и обод одного почти чёрного тона — сливаются; (4) экранный шум читается как помехи, а не как материал; (5) приборы — кубики.
-- Ограничения, которые нельзя сломать: линия взгляда — всё, кроме окон, ниже кромки капота (−8,9° от `EYE`; верх обода ≤ 1,10 м); `sortAudit` салона = 0 (детали ставить НА грани с `bias`, тела не пересекать); подоконная линия `SILL` и стойки светлее обивки (ориентиры); ничего яркого ниже линии дороги, кроме приборов; верх подголовников ≤ 1,195/1,14 (салонное зеркало); демо и физика не трогаются (`CAR`, `EYE`, `HOOD_*` без изменений); кадр из салона сейчас ≈2,4 мс, потолок 11 мс.
-
-## Commit Plan
-- **Commit 1** (после задачи 1): `chore(tools): cockpit-shots — скриншоты салона, sortAudit и frameCost одной командой`
-- **Commit 2** (после задач 2–4): `feat(render): материалы, градиентные грани и зерно с привязкой к поверхности`
-- **Commit 3** (после задачи 5): `feat(cabin): руль-тор, спицы и ступица`
-- **Commit 4** (после задач 6–8): `feat(cabin): торпедо с валиком, дефлекторы, приборы картинками`
-- **Commit 5** (после задач 9–10): `feat(cabin): стойки, потолок, карты дверей, сиденья`
-- **Commit 6** (после задач 11–12): `docs(cabin): модель материалов и инструмент проверки в CLAUDE.md`
+## Контекст (что сломано и почему)
+- `build-yandex.sh:20` вырезает регистрацию SW регэкспом `try\{"serviceWorker"in navigator&&navigator\.serviceWorker\.register\("/sw\.js"\)\}catch\(\w+\)\{\}`.
+- `index.html:10557` с коммита fb8b0f6 (2026-09-09) — `navigator.serviceWorker.register('/sw.js').catch(()=>{})`; после html-minifier-terser строка выглядит так:
+  `try{"serviceWorker"in navigator&&navigator.serviceWorker.register("/sw.js").catch(()=>{})}catch(t){}`.
+- Регэксп не совпадает → `assert 'serviceWorker' not in s` → `AssertionError: SW-регистрация не вырезана` (подтверждено запуском 25.09). `build/yandex.zip` лежит от 7.09.
+- Ни один гейт не запускает `build-yandex.sh`, поэтому поломка жила 16 дней. «Мок-тест» из ROADMAP в репозитории отсутствует (grep по `sdk.js|YaGames` в tools/: 0).
+- Из аудита 25.09 отдельной задачей #184 остаются GameplayAPI, getPayments, ценный rewarded, гейт формы отзывов — в этот план НЕ входят.
 
 ## Tasks
 
-### Phase 0: Инструмент проверки (≈1 ч)
-- [x] Task 1: `tools/cockpit-shots.mjs` — прогон салона одной командой. (база «до»: salon 0 / world 4 / mirror 0, demo 0 warn, frameCost 2,28 мс)
-  - Node-скрипт на `playwright-core` с кэшированным Chromium из `~/Library/Caches/ms-playwright/chromium_headless_shell-*` (путь — из `PW_CHROME` или поиск); запуск: `cd /tmp/pw && npm i playwright-core && node <repo>/tools/cockpit-shots.mjs <tag>` (инструкция в шапке файла; в репозиторий зависимости не добавляются).
-  - Открывает `index.html?nocache=<ts>` (1280×720, DPR 1), ставит `trainer_seen/hint/drive=1`, `trainer_runs=9`, `trainer_touch=0`, `doAct('start')`, `pressKey('KeyV')`.
-  - Скриншоты в `build/shots/<tag>-<pose>.png` для поз `fwd` (yaw 0/pitch 0), `left45`, `right45`, `cluster` (pitch −20°), `back165` (через плечо); позы ставятся через `opt.fpYaw/opt.fpPitch`.
-  - Инжектит `tools/sort-audit.js` (`addScriptTag`), вызывает `sortAudit({yaws:[0,-45,45,-90,90,-135,135,165]})`, собирает строки `[FIX:sort]` из консоли; регрессия демо — `loadLevel(i)` по всем уровням с перехватом `console.warn`; `frameCost` — среднее после 3 с простоя в салоне.
-  - Логи: одна JSON-строка в stdout `{tag, sortInterior, sortWorld, demoWarns, frameCost, shots:[…]}`, `PAGEERR …` на ошибки страницы; exit 1, если `sortInterior>0` или `demoWarns>0`.
-  - Снять базу: `tag=before` — эти кадры идут владельцу как «до».
-  - Files: `tools/cockpit-shots.mjs` (новый), `.gitignore` (убедиться, что `build/` игнорируется).
+### Phase 1: Починить билд
+- [x] Task 1: `build-yandex.sh` — вырезать регистрацию SW устойчиво к форме строки.
+  Заменить регэксп на ленивый: `re.subn(r'try\{"serviceWorker"in navigator&&.*?\}catch\(\w+\)\{\}', '', s)` и проверять `n == 1` (assert с текстом «ожидалась ровно одна регистрация SW, найдено N»), затем прежний `assert 'serviceWorker' not in s`. Ленивое `.*?` останавливается на первом `}catch(x){}` — `()=>{}` внутри заканчивается `)`, а не `catch`, ложного среза нет. Прогнать `./build-yandex.sh` — должен дойти до «ГОТОВО», `build/yandex/index.html` без `serviceWorker`, с `window.BUILD="ya-…"` и адаптером перед `</body>`.
+  Файлы: `build-yandex.sh`. Логи: существующие `echo "==> …"` + печать «SW-регистраций вырезано: 1».
 
-### Phase 1: Модель материалов и свет (≈4 ч) — ядро рендера, без изменения геометрии
-- [x] Task 2: Материалы и свет из лобового в `shadeCol`/`pushFace`.
-  - Таблица `MAT` (matte — сегодняшнее поведение по умолчанию, softtouch, leather, satin, gloss, cloth, rubber): `{spec, shin, ao, grain, grainA}`.
-  - `pushFace(v, n, col, bias, o)` — пятый параметр-объект `{mat, ao, n2, img}`; `pushQuad/pushPoly/pushBox/pushBar` и хелперы `cabinCtx` пробрасывают его. Без `o` вид уличных граней не меняется (проверяется скриншотом chase «до/после» — попиксельно одинаков).
-  - В режиме `cabinLit`: направление света — из лобового (`cabinLight`, считается раз в кадр в `drawSceneInto` из `fwd(car.th)` и up), Blinn-Phong блик по вектору взгляда (`cam.pos` − центр грани, уже есть в `pushFace`) с `spec/shin` материала, множитель `ao` грани поверх высотного AO. `emitLit` не меняется.
-  - Логи: `console.warn('[mat] неизвестный материал', name)` один раз на имя (Set).
-  - Files: `index.html` (`shadeCol`, `pushFace`, `pushQuad`, `pushPoly`, `pushBox`, `pushBar`, `barPiece`, `cabinCtx`).
-- [x] Task 3: Градиентная заливка граней (кривизна без сотни фасок). (зависит от 2)
-  - `o.n2` — нормаль у дальнего ребра; `pushFace` считает `col2`; `flushFaces` для таких граней заливает `createLinearGradient` от середины ребра v0–v3 к середине v1–v2 в экранных координатах; при отсечении near-плоскостью — плоская заливка. Обводка остаётся цветом `col`.
-  - `cabinCtx.strip(pts, col, out, n, normalAt, o)` — полоса-валик: n подполос вдоль pts[0]→pts[3], нормали из `normalAt(t)`; `pushBar(P,a,b,r,col,seg,bias,o)` с `o.sides` (6/8) — многогранное сечение с гладкими нормалями (n2 = нормаль следующей стороны).
-  - Бюджет: ≤300 градиентов на кадр; других аллокаций в кадре не добавлять.
-  - Логи: нет (кадр).
-  - Files: `index.html` (`pushFace`, `flushFaces`, `cabinCtx`, `pushBar`, `barPiece`).
-- [x] Task 4: Зерно материала с привязкой к поверхности вместо экранного шума. (зависит от 2)
-  - `matPattern(kind)` — процедурные плитки как `grainPattern`, три вида: leather 96 px (крупное неравномерное), cloth 64 px (регулярное), rubber 48 px; создаются один раз.
-  - В `flushFaces` грань с `mat.grain` после заливки получает `setTransform` из UV грани (метры → px, 1 м = 600 px; U = v0→v1, V = v0→v3 по экранным точкам) и `fill` паттерном в режиме `overlay` с альфой `grainA`; грани, отсечённые near-плоскостью, — без зерна; лимит — только грани с `mat.grain`.
-  - Убрать экранный проход `tex`/`grainPattern` (Path2D + translate по yaw) — решение по скриншотам фазы; флагов-переключателей не оставлять.
-  - Логи: нет.
-  - Files: `index.html` (`flushFaces`, `grainPattern` → `matPattern`, `pushFace`).
-  - **Проверка фазы 1:** `cockpit-shots after-p1` — sortInterior 0, demoWarns 0, frameCost ≤ 4 мс (было 2,4); на скриншотах: блик на верхе обода и стоек, потолок с зерном, chase-вид не изменился.
+### Phase 2: Гейт на собранный билд
+- [x] Task 2: `tools/yandex-check.mjs` — проверка `build/yandex/index.html` в headless Chromium (depends on 1).
+  Шапка и запуск браузера как в `tools/mt-check.mjs` (`PW_DIR`, `PW_CHROME`, `check(name, ok, detail)`, exit 1 при провале). Если `build/yandex/index.html` нет — вызвать `./build-yandex.sh` через `child_process.execFileSync` (сам билд — часть проверки). Поднять `node:http` на `127.0.0.1:0` с раздачей `build/yandex/` и мок-`/sdk.js`: `window.YaGames={init:()=>Promise.resolve(ysdk)}`, где `ysdk.adv.showFullscreenAdv/showRewardedVideo` зовут `callbacks.onOpen → onRewarded → onClose` синхронно и пишут в `window.__ya.calls`, `ysdk.getPlayer()` → `{getData:()=>Promise.resolve({trainer_gearbox:'MT'}), setData:(o)=>{window.__ya.saved=o}}`, `ysdk.features.LoadingAPI.ready` → флаг. Проверки с кодами требований в имени:
+  - `@dist-yandex-no-sw` — в отданном HTML нет `serviceWorker`, `navigator.serviceWorker.getRegistrations()` пуст;
+  - `@dist-yandex-build-tag` — `window.BUILD` начинается с `ya-` и имеет 19 символов;
+  - `@dist-yandex-sdk-ready` — `window.ysdk` есть, `LoadingAPI.ready` вызван, `window.ADS.interstitial/rewarded` — функции;
+  - `@dist-yandex-ads-pause` — прямой вызов `window.ADS.interstitial()` даёт `paused===true` внутри `onOpen` и `false` после `onClose` (проверять через `window.adsPause`-обёртку: перед вызовом подменить `window.adsPause` на запись состояний);
+  - `@dist-yandex-cloud-merge` — облачный `trainer_gearbox:'MT'` попал в localStorage только при пустом локальном; `window.__ysave()` кладёт в `setData` все `trainer_*` ключи;
+  - `@dist-yandex-console-clean` — ноль `pageerror` и ноль `console.error` за 3 с после старта уровня 1 (`doAct('start')` через `pressKey`/кнопку, как в mt-check).
+  Файлы: `tools/yandex-check.mjs` (новый). Логи: строки `ok/ПРОВАЛ` + итоговый JSON `{total, failed, names}` как у mt-check.
+- [x] Task 3: Сценарии `specs/features/dist/yandex.feature` (`# language: ru`, блок `Ссылка:` → доска #176, аудит 25.09) — шесть `@ui @dist @dist-yandex-*` сценариев с теми же кодами, что в Task 2; добавить область `dist` в `AREA_TAGS` (`tools/gherkin-parse.mjs:19`) и `AREA_RU` (`tools/qa-checklist.mjs:24`, «Сборки для площадок»); пересобрать `docs/qa-checklist.md` (`node tools/qa-checklist.mjs`); `node tools/gherkin-check.mjs` → 0 разрывов (depends on 2).
+  Файлы: `specs/features/dist/yandex.feature` (новый), `tools/gherkin-parse.mjs`, `tools/qa-checklist.mjs`, `docs/qa-checklist.md` (генерат), `specs/README.md` (строка `dist/` в таблице каталогов). Логи: вывод gherkin-check.
 
-### Phase 2: Руль и колонка (≈2 ч)
-- [x] Task 5: `emitWheel` — тор вместо брусков. (after-p2: салон 0, демо 0, кадр 2,15 мс; дорога над ободом) (зависит от 3, 4)
-  - Обод: тор 24 сегмента × 6 сторон, `Rw` 0,185, трубка 0,017, материал leather с градиентом вокруг трубки; хваты «10 и 2» — те же сегменты трубкой 0,022; центр `WC` и `tilt` без изменений (верх обода ≤ 1,10 м — ниже кромки капота).
-  - Спицы: три плоские сужающиеся (коробки satin) от 12-угольной ступицы к внутренней поверхности обода, конец на 2 мм не доходит до трубки (без взаимопроникновения); подушка airbag — 12-угольник поменьше НА ступице; значок — маленькая lit-грань.
-  - Метка «12 часов» и риска на кожухе — как есть (`emitLit`); кожух колонки — 8-гранный `pushBar` matte; подрулевые рычаги — 6-гранные с закруглённым торцом.
-  - Логи: нет.
-  - Files: `index.html` (`emitWheel`).
-  - **Проверка:** `cockpit-shots after-p2` — sortInterior 0; на `fwd` дорога видна над ободом; блик-полоса на верхе тора.
+### Phase 3: Документация и доска
+- [x] Task 4: CLAUDE.md — в «Commands»/блок проверок строка `PW_DIR=/tmp/pw node tools/yandex-check.mjs   # билд Яндекс Игр + мок SDK`; в «Distribution builds» одно предложение: регэксп вырезания SW должен переживать любую форму строки регистрации, поломка 9–25.09 жила без гейта. `docs/PUBLISH.md`: перед загрузкой ZIP — прогнать `yandex-check`. Vikunja #176 → `done:true` полным payload (GET → правка → POST) с итогом в описании (depends on 3).
+  Файлы: `CLAUDE.md`, `docs/PUBLISH.md`. Логи: нет.
 
-### Phase 3: Торпедо и приборы (≈4 ч)
-- [x] Task 6: Торпедо с валиком и стыками. (зависит от 3)
-  - Верхняя подушка — `strip` из 5 подполос: от жабо (z 0,86) через кромку (z 0,63) вниз к фасаду (y 0,90), нормали вверх → вперёд → вниз, softtouch; козырёк щитка — полуцилиндр 6 полос; нижняя часть торпедо светлее (matte); декоративная satin-полоса вдоль торпедо на y≈1,0; линии панельных зазоров — тёмные бруски r 0,003 между подушкой/фасадом/бардачком; полоса AO у жабо (`ao` 0,6); контур бардачка; лобовое (тон + солнцезащитная полоса) без изменений.
-  - Логи: нет.
-  - Files: `index.html` (`emitDash`, `cabinCtx`).
-- [x] Task 7: Приборы картинками. (зависит от 2)
-  - `pushImg(quad, canvas, bias)` → грань `{img}`; `flushFaces` рисует через `setTransform` (аффинно по v0,v1,v3) с клипом по контуру грани; off-screen канвасы создаются один раз при загрузке.
-  - `dialCanvas()` 256×256: тёмный циферблат, тёплая подсветка, риски и числа 0…60, «км/ч»; стрелка — прежний lit-брусок; `selCanvas(sel)` — 4 кэшированных LCD-полосы P R N D (текущая — зелёная), заменяет кубики `emitSelector` на щитке (рычаг на тоннеле остаётся); повторители поворотников — как есть; экран центральной консоли — статичная картинка без текста-подсказок (компас/«P»), неяркая; блок климата — картинка с ручками, без подсветки (правило: ниже линии дороги ничего яркого).
-  - Логи: `console.warn('[img] канвас не создан', name)` при отказе `getContext`.
-  - Files: `index.html` (`flushFaces`, `emitCluster`, `emitSelector`, `emitDash`).
-- [x] Task 8: Дефлекторы и мелочь. (зависит от 6)
-  - Четыре круглых дефлектора (12-угольное satin-кольцо + 3 тёмные ламели) на ±0,52 и ±0,16; ручки консоли — 8-гранные цилиндры; ряд кнопок — картинка; кнопка аварийки — красный треугольник без подсветки; ручник с закруглённой рукояткой; педали как есть.
-  - Логи: нет.
-  - Files: `index.html` (`emitDash`).
-  - **Проверка фазы 3:** `cockpit-shots after-p3` — на `cluster` читаются циферблат и P R N D; sortInterior 0; frameCost ≤ 5 мс; повторители поворотников мигают (кадр с `car.blink='L'`).
-
-### Phase 4: Стойки, потолок, двери, сиденья (≈4 ч)
-- [x] Task 9: Стойки, поперечина, потолок. (зависит от 3, 4)
-  - Стойки A/B/C — 6-гранные `pushBar` cloth (тёплый светло-серый, по-прежнему светлее обивки) с тёмным резиновым уплотнителем вдоль стекла (тонкий брусок); поперечина — 6-гранная (4 куска как сейчас); потолок cloth с зерном и AO к корме; плафон — 12-угольный ободок + линза; козырьки с линией зеркальца; поручень скруглён; рельсы крыши без изменений.
-  - Логи: нет.
-  - Files: `index.html` (`emitCabinShell`, `emitCabinRear`).
-- [x] Task 10: Карты дверей и сиденья. (зависит от 4)
-  - Дверь: верхняя вставка cloth, низ leather с зерном, подлокотник с валиком (`strip` 3), ниша ручки (тёмная, `ao` 0,5), решётка динамика — грань с паттерном, твитер, блок стеклоподъёмников — картинка с 4 клавишами, ручка satin, панельные зазоры; `SILL` — светлая линия без изменений (ориентир).
-  - Сиденья: подушка + 2 валика, спинка + 2 валика, скруглённый подголовник (fabric с зерном), ремни как есть; корма: полка, задние подголовники скруглены (в салонном зеркале); верх подголовников ≤ 1,195 / 1,14.
-  - Логи: нет.
-  - Files: `index.html` (`emitCabinShell`, `emitCabinRear`, `CAB`).
-  - **Проверка фазы 4:** `cockpit-shots after-p4` — `left45`, `right45`, `back165` + кроп салонного зеркала; sortInterior 0 на 8 углах; demoWarns 0.
-
-### Phase 5: Финал (≈1 ч)
-- [x] Task 11: Перф и мобильный. (телефон 844×390 DPR 2: салон 0, кадр 3,14 мс — без правок) (зависит от 5, 8, 10)
-  - Прогон инструмента с эмуляцией телефона (390×844, DPR 2, `trainer_touch=1`): frameCost ≤ 8 мс; при превышении — сечение тора 5 сторон, лимит граней с зерном; убедиться, что кроме градиентов в кадре нет новых аллокаций; логика `dprCap`/`trailBudget` не тронута.
-  - Логи: JSON инструмента с `mobile:true`.
-  - Files: `tools/cockpit-shots.mjs` (флаг `--mobile`), `index.html` (только если бюджет превышен).
-- [x] Task 12: Документация и доска. (зависит от 11)
-  - CLAUDE.md: абзацы «Cabin»/«Cabin lighting» — модель материалов (`MAT`, свет из лобового, блик, `ao`), градиентные грани (`n2`), грани-картинки (`img`), зерно с привязкой к поверхности, инструмент `tools/cockpit-shots.mjs` и правило «после правки геометрии салона — прогон»; журнал `.ai-factory/RALPH-BOARD.md`; патч-заметка в `.ai-factory/patches/`; #60 на доске — `done:true` полным payload; деплой — только по команде владельца.
-  - Логи: нет.
-  - Files: `CLAUDE.md`, `.ai-factory/RALPH-BOARD.md`, `.ai-factory/patches/2026-09-06-*.md`.
-
-## Критерии готовности (для /aif-verify)
-1. `cockpit-shots after-p4`: sortInterior = 0 на 8 углах, demoWarns = 0, frameCost ≤ 5 мс (десктоп) и ≤ 8 мс (телефон), консоль без ошибок.
-2. Скриншот `fwd`: дорога видна над ободом (линия капота не перекрыта), обод — гладкий тор с бликом, торпедо и обод различимы по тону, приборы читаются на `cluster`.
-3. Chase-вид попиксельно не изменился (уличные грани без материала) — сравнение `before-chase.png` и `after-chase.png`.
-4. Владелец смотрит пары «до/после» по 5 позам и подтверждает, что салон перестал читаться как кубики.
+## Проверка перед коммитом
+- `./build-yandex.sh` → «ГОТОВО», `unzip -l build/yandex.zip` показывает один `index.html`
+- `PW_DIR=/tmp/pw node tools/yandex-check.mjs` → `{"failed":0}`
+- `node tools/gherkin-check.mjs` → 0 разрывов; `git diff --stat docs/qa-checklist.md` непустой
+- `bash tools/mirror-script.sh --check` — index.html не менялся, зеркало в паритете
+- Коммит один: `fix(yandex): билд площадки не вырезал регистрацию SW — гейт tools/yandex-check.mjs`

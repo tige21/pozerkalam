@@ -20,8 +20,12 @@ s = open('build/yandex/index.html').read()
 # PWA-строки в билде площадки не нужны
 s = s.replace('<link rel="manifest" href="/manifest.webmanifest">', '')
 s = s.replace('<link rel="icon" type="image/png" href="/icon-192.png">', '')
-s = re.sub(r'try\{"serviceWorker"in navigator&&navigator\.serviceWorker\.register\("/sw\.js"\)\}catch\(\w+\)\{\}', '', s)
+# Ленивое .*? переживает любую форму строки регистрации: с 9.09 в index.html стоит
+# .register('/sw.js').catch(()=>{}), и точный регэксп молча ронял билд 16 дней.
+s, n = re.subn(r'try\{"serviceWorker"in navigator&&.*?\}catch\(\w+\)\{\}', '', s)
+assert n == 1, 'ожидалась ровно одна регистрация SW, найдено %d' % n
 assert 'serviceWorker' not in s, 'SW-регистрация не вырезана'
+print('SW-регистраций вырезано:', n)
 import hashlib
 # Версия сборки нужна в отчётах об ошибках: без неё отчёт из Яндекс Игр не привязать
 # к конкретному билду. Считаем до вставки адаптера.

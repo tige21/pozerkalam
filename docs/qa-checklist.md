@@ -6,7 +6,7 @@
 «авто» — исполняет `tools/gherkin-run.mjs`, человеку нужен как источник эталонных чисел.
 «руками» — закрыто инструментом в браузере, перед деплоем стоит пройти глазами.
 
-<!-- codes: e8a494aae53e -->
+<!-- codes: 9a1aa9424421 -->
 
 ## Город и разметка
 
@@ -171,6 +171,75 @@
 - **И** проверяется касание
 - **И** проверяется касание
 - **Тогда** засчитано 1 касание
+
+## Сборки для площадок
+
+### Полноэкранная реклама ставит игру на паузу и снимает её
+
+`dist-yandex-ads-pause` · руками · `specs/features/dist/yandex.feature:33`
+
+Ссылка: доска #176 — build-yandex.sh падал на вырезании регистрации SW с 9.09.2026,
+
+- **Дано** собран build/yandex/index.html
+- **Когда** вызвана window.ADS.interstitial и затем window.ADS.rewarded
+- **Тогда** adsPause получает true на onOpen и false на onClose для каждой
+- **И** колбэк награды вызван на onRewarded
+
+### Билд площадки несёт свой тег сборки
+
+`dist-yandex-build-tag` · руками · `specs/features/dist/yandex.feature:20`
+
+Ссылка: доска #176 — build-yandex.sh падал на вырезании регистрации SW с 9.09.2026,
+
+- **Дано** собран build/yandex/index.html
+- **Когда** страница открыта из билда площадки
+- **Тогда** window.BUILD имеет вид "ya-" и 16 шестнадцатеричных знаков
+
+### Облачные сейвы сливаются без затирания локальных
+
+`dist-yandex-cloud-merge` · руками · `specs/features/dist/yandex.feature:40`
+
+Ссылка: доска #176 — build-yandex.sh падал на вырезании регистрации SW с 9.09.2026,
+
+- **Дано** в облаке лежат trainer_gearbox "MT" и trainer_marks "0"
+- **И** локально trainer_gearbox пуст, а trainer_marks равен "1"
+- **Когда** YaGames.init отдал ysdk и игрок загружен
+- **Тогда** локальный trainer_gearbox равен "MT", а trainer_marks остаётся "1"
+- **И** __ysave отправляет в setData все ключи trainer_* и только их
+
+### Уровень стартует из билда площадки без ошибок
+
+`dist-yandex-console-clean` · руками · `specs/features/dist/yandex.feature:48`
+
+Ссылка: доска #176 — build-yandex.sh падал на вырезании регистрации SW с 9.09.2026,
+
+- **Дано** собран build/yandex/index.html
+- **Когда** нажато «Поехали» и загружен уровень 1
+- **И** проходит 3 секунды
+- **Тогда** игра не на паузе и кадр рисует грани
+- **И** в консоли нет ошибок, а все запросы страницы успешны
+
+### В билде площадки нет service worker и манифеста
+
+`dist-yandex-no-sw` · руками · `specs/features/dist/yandex.feature:13`
+
+Ссылка: доска #176 — build-yandex.sh падал на вырезании регистрации SW с 9.09.2026,
+
+- **Дано** собран build/yandex/index.html
+- **Когда** страница открыта из билда площадки
+- **Тогда** в html нет строки "serviceWorker" и нет ссылки на manifest.webmanifest
+- **И** у страницы 0 регистраций service worker
+
+### SDK площадки инициализирован и адаптер рекламы на месте
+
+`dist-yandex-sdk-ready` · руками · `specs/features/dist/yandex.feature:26`
+
+Ссылка: доска #176 — build-yandex.sh падал на вырезании регистрации SW с 9.09.2026,
+
+- **Дано** собран build/yandex/index.html
+- **Когда** YaGames.init отдал ysdk
+- **Тогда** window.ysdk задан и LoadingAPI.ready вызван
+- **И** window.ADS.interstitial и window.ADS.rewarded — функции
 
 ## Экзамен
 
