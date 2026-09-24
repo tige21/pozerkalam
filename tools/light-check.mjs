@@ -79,7 +79,11 @@ const res = await page.evaluate((DISTS)=>{
     const r={ y:Math.round(p.y), rgb:`${d[0]},${d[1]},${d[2]}`,
               lit: Math.abs(d[0]-c[0])<30 && Math.abs(d[1]-c[1])<30 && Math.abs(d[2]-c[2])<30 };
     if(!r.lit && opt.camMode===CAM_FP){ const k=inCabin(Lo, LY[ph]);
-      r.honest = !k.glass ? 'крыша/стойка' : (k.mirror ? 'зеркало' : ''); }
+      /* планка салонного зеркала привязана к голове (24.09) и на экране стоит там, где нарисована,
+         а не где CMIR в кузове: честность по её экранной рамке с полями корпуса */
+      const mr=(typeof mirrorGlassRect==='function') ? mirrorGlassRect('center') : null;
+      const inMir = !!mr && p.x>=mr.x-mr.w*0.08 && p.x<=mr.x+mr.w*1.08 && p.y>=mr.y-mr.h*0.4 && p.y<=mr.y+mr.h*1.4;
+      r.honest = !k.glass ? 'крыша/стойка' : ((k.mirror||inMir) ? 'зеркало' : ''); }
     return r;
   };
   const out=[];
