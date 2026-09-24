@@ -16,7 +16,7 @@ export function codesHash(scenarios) {
 
 /* теги-обвязки: они говорят про вид и область, а не про конкретное требование */
 export const KIND_TAGS = new Set(['domain', 'ui']);
-export const AREA_TAGS = new Set(['collision', 'clearance', 'city', 'traffic', 'exam', 'mt', 'render', 'dist']);
+export const AREA_TAGS = new Set(['collision', 'clearance', 'city', 'traffic', 'exam', 'mt', 'render', 'dist', 'app']);
 
 const RE_TAG = /@([\w-]+)/g;
 const RE_FEATURE = /^(Функция|Feature):\s*(.+)$/;

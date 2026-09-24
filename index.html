@@ -8593,6 +8593,42 @@ function fbCtx(){
     runs:runsCnt, t:+game.t.toFixed(1), build:window.BUILD||'dev',
     ua:navigator.userAgent };
 }
+/* Крэш-отчёт: исключение в кадре повторяется 60 раз в секунду, поэтому в консоль и в приёмник
+   оно уходит один раз — на место (crashN) и на сессию (crashSent). Headless-гейты гоняют
+   настоящий frame под playwright (navigator.webdriver) и с file:// — оттуда отчёт не уходит,
+   иначе каждый прогон tools/ слал бы владельцу «баг» в Telegram; CRASH_REPORT_FORCE — обход для
+   проверки самого отчёта */
+const crashN={};
+let crashSent=false;
+function crashAllowed(){
+  if(window.CRASH_REPORT_FORCE) return true;
+  return !navigator.webdriver && location.protocol!=='file:';
+}
+function crashReport(where, e){
+  if(crashSent || !crashAllowed()) return false;
+  crashSent=true;
+  const msg=(e && (e.message||String(e)))||'без сообщения';
+  const stack=(e && e.stack ? String(e.stack).split('\n').slice(0,6).join('\n') : '');
+  const text='[crash] '+where+': '+msg+(stack ? '\n'+stack : '');
+  let ctx={}; try{ ctx=fbCtx(); }catch(err){}
+  try{
+    fetch(FB_URL,{ method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ kind:'bug', text:text, contact:'', hp:'', ctx:ctx }) }).catch(()=>{});
+  }catch(err){}
+  return true;
+}
+function crashHit(where, e){
+  crashN[where]=(crashN[where]||0)+1;
+  if(crashN[where]>1) return;
+  console.error('[crash]', where, e);
+  crashReport(where, e);
+  const msg='Что-то сломалось в кадре — перезапусти уровень (R)';
+  toast(msg, 6);
+  /* тост рисует сам updateHUD; если упал он — карточку пишем напрямую, иначе игрок не узнает */
+  if(where==='hud'){ try{ const c=$('coach'); if(c) c.textContent='⚠ '+msg; }catch(err){} }
+}
+window.addEventListener('error', ev=>{ crashReport('window', ev.error||ev.message); });
+window.addEventListener('unhandledrejection', ev=>{ crashReport('promise', ev.reason); });
 /* Снимок берём в момент нажатия, до showOv: оверлей ставит паузу, кадр перестаёт
    перерисовываться, и переснять то, что игрок видел, будет уже нечем. */
 function fbGrab(){
@@ -8713,6 +8749,7 @@ function showLevelPick(){ showOv(levelPickHTML()); }
 function hideOv(){ ovEl.style.display='none'; paused=false; helpOpen=false;
   document.body.classList.remove('ov'); }
 function doAct(a){
+  if(!a) return;
   /* уровень уже пройден или провален: закрывать оверлей нельзя — физика стоит на game.done */
   if(a==='resume' && game.done){
     showOv(exam&&exam.done ? (exam.failed?examFailHTML():examPassHTML())
@@ -9672,7 +9709,13 @@ const PROG_KEY='trainer_progress';
 const PROG_RENAME={'27 · Экзамен: маршрут с инспектором':'32 · Экзамен: маршрут с инспектором'};
 let progMigrated=false;
 function progAll(){
-  try{ const r=localStorage.getItem(PROG_KEY); const a=r?JSON.parse(r)||{}:{};
+  try{ const r=localStorage.getItem(PROG_KEY); let a=r?JSON.parse(r)||{}:{};
+    /* запись из localStorage может быть чем угодно — старой схемой, правкой руками, мусором
+       из облака площадки; не-объект и не-объектные записи роняли win() на progAdd */
+    if(typeof a!=='object' || Array.isArray(a)) a={};
+    for(const k in a){ const p=a[k];
+      if(!p || typeof p!=='object' || Array.isArray(p)){ delete a[k]; continue; }
+      p.n=+p.n||0; p.clean=+p.clean||0; }
     if(!progMigrated){ progMigrated=true;
       let ch=false;
       for(const from in PROG_RENAME){ const to=PROG_RENAME[from];
@@ -10471,6 +10514,9 @@ function frame(ts){
     frameGap += (gap-frameGap)*0.1; rdt=Math.min(0.25, gap/1000); } perfLastTs=ts;
   const now=ts/1000;
   let dt=last? Math.min(0.05, now-last) : 0.016; last=now;
+  /* три блока кадра под своим try: исключение в HUD не останавливает мир, исключение в физике
+     не гасит карточку, и rAF выше уже запрошен — цикл живёт при любом падении */
+  try{
   if(!paused && !game.done){
     if(demo) demoStep(dt);
     /* статисты двигаются до подшагов физики: скорости ≤2 м/с, туннелирования нет.
@@ -10502,10 +10548,11 @@ function frame(ts){
   tutTick();
   parkBeep(dt);
   engineSound(mtOn() ? (car.rpm/MT.max)*7 : Math.abs(car.vel));
+  }catch(e){ crashHit('sim', e); }
   const t0=performance.now();
   facesFrame=0;
-  render(dt);
-  updateHUD();
+  try{ render(dt); }catch(e){ crashHit('render', e); }
+  try{ updateHUD(); }catch(e){ crashHit('hud', e); }
   frameCost += (performance.now()-t0 - frameCost)*0.08;
   if(PERF_ON) perfTick(dt);
   if(frameCost > 11) trailBudget = Math.max(70, trailBudget-10);

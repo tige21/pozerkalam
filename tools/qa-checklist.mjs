@@ -22,7 +22,7 @@ const { scenarios, errors } = parseFeatures(REPO);
 if (errors.length) { errors.forEach((e) => console.error('ОШИБКА РАЗБОРА · ' + e)); process.exit(1); }
 
 const AREA_RU = { collision: 'Касания и габариты', clearance: 'Зазоры и обзор', city: 'Город и разметка',
-  traffic: 'Поток машин', exam: 'Экзамен', mt: 'Механическая коробка', dist: 'Сборки для площадок' };
+  traffic: 'Поток машин', exam: 'Экзамен', mt: 'Механическая коробка', dist: 'Сборки для площадок', app: 'Устойчивость приложения' };
 
 const list = scenarios
   .filter((s) => (!area || s.area === area) && (!only || s.kind === only))
