@@ -1428,35 +1428,53 @@ function emitCarBody(u,v,th,col){
     }
   }
 }
-/* корпус бокового зеркала: ножка к двери, восьмигранная (скосы 2 см) коробка цвета кузова с
-   z 0,645 до 0,76, чёрная рамка на задней грани и стекло. У своей машины (kind задан) стекло —
-   живой буфер зеркала как img-грань: (0,0) картинки → угол +lat вверху, (w,0) → −lat, так
-   картинка идёт зеркально к проходу камеры (та смотрит назад), и своё крыло оказывается у
-   внутреннего края, как в жизни. Камера зеркала стоит на z 0,63 — стекло (0,643) у неё за
-   спиной и в проход не попадает. Ранее корпус был двумя ящиками — «шакально» */
-const MIR_H={zb:0.645, zf:0.76, y0:0.955, y1:1.065, lin:0.93, lout:1.10, ch:0.02};
+/* корпус бокового зеркала: чёрное основание на двери, кожух цвета кузова — восьмигранник со
+   скосами 3 см, к носу сужается до 55 % (усечённая пирамида читается как капля, прямая коробка
+   читалась как ящик с кубиком-ножкой сбоку), чёрная рамка сзади и стекло. У своей машины (kind
+   задан) стекло — живой буфер зеркала как img-грань: (0,0) картинки → угол +lat вверху, (w,0) →
+   −lat, так картинка идёт зеркально к проходу камеры (та смотрит назад), и своё крыло оказывается
+   у внутреннего края, как в жизни. Стекло наклоняется на половину настройки зеркала (mirAdj):
+   зеркало, повёрнутое на φ, поворачивает отражённый луч на 2φ — иначе при настройке двигалось
+   только отражение, а стекло стояло. Камера зеркала стоит на z 0,63 — стекло (0,643) у неё за
+   спиной и в проход не попадает */
+const MIR_H={zb:0.645, zf:0.735, y0:0.955, y1:1.065, lin:0.93, lout:1.10, ch:0.03, taper:0.55};
+const MIR_BASE=[38,42,48];
+/* поворот точки в системе кузова вокруг оси зеркала: pitch — вокруг поперечной оси (вверх при
+   θ>0), yaw — вокруг вертикали (по часовой сверху при φ>0, как heading) */
+function mirRot(dl, dy, dz, yaw, pitch){
+  const cp=Math.cos(pitch), sp=Math.sin(pitch), cy=Math.cos(yaw), sy=Math.sin(yaw);
+  const y1=dy*cp-dz*sp, z1=dy*sp+dz*cp;
+  return [dl*cy+z1*sy, y1, -dl*sy+z1*cy];
+}
 function emitMirrorHousing(P, F, R, sg, col, kind){
-  const M=MIR_H, li=sg*M.lin, lo=sg*M.lout, ym=(M.y0+M.y1)*0.5, zm=(M.zb+M.zf)*0.5;
-  const ref=P(sg*(M.lin+M.lout)*0.5, ym, zm);
+  const M=MIR_H, li=sg*M.lin, lo=sg*M.lout, ym=(M.y0+M.y1)*0.5, zm=(M.zb+M.zf)*0.5, lm=(li+lo)*0.5;
+  const ref=P(lm, ym, zm);
   /* дальше 40 м блик и отражение не видны, а pow на каждую грань — виден (как в emitCarBody) */
   const dx=cam.pos.x-ref.x, dz=cam.pos.z-ref.z, near=QUALITY[qLevel].cars && dx*dx+dz*dz<1600;
   const paint=near?MO.paint:undefined, plastic=near?MO.plastic:undefined;
-  /* ножка: ref — её центр, pushQuad разворачивает нормали от него наружу */
-  const a0=sg*0.895, a1=sg*0.935, aref=P(sg*0.915,1.01,0.70);
-  pushQuad(P(a0,0.99,0.665),P(a1,0.99,0.665),P(a1,1.03,0.665),P(a0,1.03,0.665), col, aref, 0, paint);
-  pushQuad(P(a0,0.99,0.735),P(a1,0.99,0.735),P(a1,1.03,0.735),P(a0,1.03,0.735), col, aref, 0, paint);
-  pushQuad(P(a0,1.03,0.665),P(a1,1.03,0.665),P(a1,1.03,0.735),P(a0,1.03,0.735), col, aref, 0, paint);
-  pushQuad(P(a0,0.99,0.665),P(a1,0.99,0.665),P(a1,0.99,0.735),P(a0,0.99,0.735), col, aref, 0, paint);
-  /* восьмиугольник сечения в (lat, y), обход от внутреннего нижнего угла */
+  /* основание: чёрная опора от двери (lat 0,895 — внутри борта) до кожуха, во всю его глубину и
+     на две трети высоты — узкая пластина читалась отдельным кубиком рядом с кожухом; торцы
+     спрятаны в двери и в кожухе — только четыре грани */
+  const b0=sg*0.895, b1=sg*0.935, by0=0.960, by1=1.030, bz0=0.652, bz1=0.732, bref=P(sg*0.915,(by0+by1)*0.5,(bz0+bz1)*0.5);
+  pushQuad(P(b0,by0,bz0),P(b1,by0,bz0),P(b1,by1,bz0),P(b0,by1,bz0), MIR_BASE, bref, 0, plastic);
+  pushQuad(P(b0,by0,bz1),P(b1,by0,bz1),P(b1,by1,bz1),P(b0,by1,bz1), MIR_BASE, bref, 0, plastic);
+  pushQuad(P(b0,by1,bz0),P(b1,by1,bz0),P(b1,by1,bz1),P(b0,by1,bz1), MIR_BASE, bref, 0, plastic);
+  pushQuad(P(b0,by0,bz0),P(b1,by0,bz0),P(b1,by0,bz1),P(b0,by0,bz1), MIR_BASE, bref, 0, plastic);
+  /* кожух: задний восьмиугольник в (lat, y) и его уменьшенная копия спереди, центр копии чуть
+     наружу и вниз — как у настоящего колпака */
   const c=M.ch, oct=[[li, M.y0+c],[li+sg*c, M.y0],[lo-sg*c, M.y0],[lo, M.y0+c],[lo, M.y1-c],[lo-sg*c, M.y1],[li+sg*c, M.y1],[li, M.y1-c]];
-  const back=oct.map(q=>P(q[0],q[1],M.zb)), front=oct.map(q=>P(q[0],q[1],M.zf));
+  const fc=lm+sg*0.012, fy=ym-0.008, t=M.taper;
+  const back=oct.map(q=>P(q[0],q[1],M.zb)), front=oct.map(q=>P(fc+(q[0]-fc)*t, fy+(q[1]-fy)*t, M.zf));
   for(let i=0;i<8;i++){ const j=(i+1)%8; pushQuad(back[i],back[j],front[j],front[i], col, ref, 0, paint); }
   pushPoly(front, col, ref, 0, paint);
   pushPoly(back.slice().reverse(), [34,38,44], ref, 0, plastic);          /* рамка */
-  /* стекло: отступ 8 мм от рамки, на 2 мм за её плоскостью, bias — накладка на рамку */
-  const g0=li+sg*0.008, g1=lo-sg*0.008, gy0=M.y0+0.012, gy1=M.y1-0.012, gz=M.zb-0.002;
-  const lp=Math.max(g0,g1), ln=Math.min(g0,g1);                                /* +lat и −lat края стекла */
-  const v0=P(lp,gy1,gz), v1=P(ln,gy1,gz), v2=P(ln,gy0,gz), v3=P(lp,gy0,gz);
+  /* стекло: отступ 5 мм от рамки, на 2 мм за её плоскостью, bias — накладка на рамку; углы
+     повёрнуты на половину настройки вокруг центра стекла */
+  const g0=li+sg*0.005, g1=lo-sg*0.005, gy0=M.y0+0.009, gy1=M.y1-0.009, gz=M.zb-0.002;
+  const lp=Math.max(g0,g1), ln=Math.min(g0,g1), gc=(lp+ln)*0.5, gyc=(gy0+gy1)*0.5;
+  const adj = kind ? mirAdj(kind) : null, yaw = adj ? adj.yaw*0.5 : 0, pitch = adj ? adj.pitch*0.5 : 0;
+  const G=(l,y)=>{ const r=mirRot(l-gc, y-gyc, 0, yaw, pitch); return P(gc+r[0], gyc+r[1], gz+r[2]); };
+  const v0=G(lp,gy1), v1=G(ln,gy1), v2=G(ln,gy0), v3=G(lp,gy0);
   const img = kind ? mirrorGlassImg(kind) : null;
   if(kind) mirGlassW[kind]=[v0,v1,v2,v3];
   pushQuad(v0,v1,v2,v3, [44,50,58], P(sg*1.0,ym,M.zf), 0.02, img ? {img} : (near?MO.glass:undefined));
@@ -1769,14 +1787,27 @@ function emitDash(K){
   emitLit(()=>emitSelector(K));
   /* зеркало висит ниже поперечины крыши, не перекрывая её на экране: его центр ближе к глазу,
      чем центр куска поперечины, и верх корпуса рисовался поверх неё */
-  box(CMIR.lat,CMIR.y,CMIR.z, CMIR.w,CMIR.h,CMIR.d, [96,102,112], 0, MO.softtouch);      /* корпус салонного зеркала */
   box(0, CMIR.y+CMIR.h+0.004, CMIR.z-0.004, 0.02, 0.004, 0.010, [60,64,70], 0, MO.matte); /* крепление к стеклу */
-  /* стекло — живой буфер салонного зеркала; порядок углов зеркалит проход камеры (см. emitMirrorHousing) */
-  { const gz=CMIR.z-CMIR.d-0.002, gw=CMIR.w-0.006, gh=CMIR.h-0.005;
-    const v0=[ gw,CMIR.y+gh,gz], v1=[-gw,CMIR.y+gh,gz], v2=[-gw,CMIR.y-gh,gz], v3=[ gw,CMIR.y-gh,gz];
+  /* корпус и стекло салонного зеркала поворачиваются вокруг крепления на половину настройки
+     (mirAdj.center): при настройке двигалось только отражение, а само зеркало стояло. Корпус —
+     шесть граней вручную, потому что box не умеет наклон; стекло — живой буфер, порядок углов
+     зеркалит проход камеры (см. emitMirrorHousing) */
+  { const adj=mirAdj('center'), yaw=adj.yaw*0.5, pitch=adj.pitch*0.5, py=CMIR.y+CMIR.h, pz=CMIR.z;
+    const Rm=(l,y,z)=>{ const r=mirRot(l, y-py, z-pz, yaw, pitch); return [r[0], py+r[1], pz+r[2]]; };
+    const w=CMIR.w, h=CMIR.h, d=CMIR.d, y0=CMIR.y-h, y1=CMIR.y+h, z0=pz-d, z1=pz+d;
+    const cnr=[Rm(-w,y0,z0),Rm(w,y0,z0),Rm(w,y1,z0),Rm(-w,y1,z0),Rm(-w,y0,z1),Rm(w,y0,z1),Rm(w,y1,z1),Rm(-w,y1,z1)];
+    const hc=Rm(0,CMIR.y,pz), HC=[96,102,112];
+    quad(cnr[0],cnr[1],cnr[2],cnr[3], HC, hc, 0, MO.softtouch);   /* задняя (к водителю) */
+    quad(cnr[4],cnr[5],cnr[6],cnr[7], HC, hc, 0, MO.softtouch);   /* передняя */
+    quad(cnr[3],cnr[2],cnr[6],cnr[7], HC, hc, 0, MO.softtouch);   /* верх */
+    quad(cnr[0],cnr[1],cnr[5],cnr[4], HC, hc, 0, MO.softtouch);   /* низ */
+    quad(cnr[1],cnr[2],cnr[6],cnr[5], HC, hc, 0, MO.softtouch);   /* +lat торец */
+    quad(cnr[0],cnr[3],cnr[7],cnr[4], HC, hc, 0, MO.softtouch);   /* −lat торец */
+    const gz=z0-0.002, gw=w-0.006, gh=h-0.005;
+    const v0=Rm( gw,CMIR.y+gh,gz), v1=Rm(-gw,CMIR.y+gh,gz), v2=Rm(-gw,CMIR.y-gh,gz), v3=Rm( gw,CMIR.y-gh,gz);
     const img=mirrorGlassImg('center');
     mirGlassW.center=[P(v0[0],v0[1],v0[2]),P(v1[0],v1[1],v1[2]),P(v2[0],v2[1],v2[2]),P(v3[0],v3[1],v3[2])];
-    emitLit(()=>quad(v0,v1,v2,v3, [40,46,54], [0,CMIR.y,CMIR.z+0.5], 0.01, img ? {img} : MO.gloss)); }
+    emitLit(()=>quad(v0,v1,v2,v3, [40,46,54], Rm(0,CMIR.y,pz+0.5), 0.01, img ? {img} : MO.gloss)); }
   /* круглые дефлекторы: сатиновое кольцо, тёмная ниша и три ламели. Ниже линии взгляда
      на дорогу они деталь, а не индикатор — без подсветки */
   const vent=(lat,y,ro)=>{
