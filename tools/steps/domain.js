@@ -53,6 +53,12 @@
         level.actors = [a];
       }],
 
+    [new RegExp('^на дороге один трамвай в точке \\(' + N + ', ' + N + '\\) курсом ' + N + '° со скоростью ' + N + ' м/с$'),
+      (u, v, yaw, sp) => {
+        const t = tramCar(+u, +v, +yaw, 100, +sp, null);
+        level.actors = [t];
+      }],
+
     [new RegExp('^машина игрока едет вперёд со скоростью ' + N + ' м/с$'), (sp) => {
       car.sel = 'D'; car.gear = 1; car.vel = +sp;
     }],

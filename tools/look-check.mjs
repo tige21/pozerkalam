@@ -236,6 +236,40 @@ await shot('chase-l2');
   await pose(() => { loadLevel(0); }, null, 300);
 }
 
+/* --- маркер виден из салона: уровень 24 у фазы «прижмись к жёлтой линии», уровень 31 у стоп-линии --- */
+for (const c of [{ l: 23, u: 2.6, v: -8, th: 0, name: 'L24 «прижмись к жёлтой линии»' }, { l: 30, u: -78, v: -16, th: 0, name: 'L31 «остановись у линии»' }]) {
+  /* габаритные столбики своей машины тоже жёлтые и стоят над капотом — на время проверки refs=0,
+     иначе она зелёная и без маркера */
+  await pose((c) => { loadLevel(c.l); while (opt.camMode !== CAM_FP) pressKey('KeyC'); while (hudMode !== 2) cycleHud(); opt.mirrors = false; opt.fpYaw = 0; opt.fpPitch = 0; opt.refs = 0;
+    setBody(c.u, c.v, c.th); car.vel = 0; }, c, 500);
+  await shot('mark-' + c.l);
+  /* жёлтые пиксели маркера выше линии капота (верхние 60 % кадра): линия на асфальте под капотом
+     их не даёт, столбики на концах — дают */
+  const n = await page.evaluate(() => { const g = canvas.getContext('2d'), k = DPR, d = g.getImageData(0, 0, Math.round(W * k), Math.round(H * 0.6 * k)).data; let n = 0;
+    /* цвет маркера [250,204,21] под ламбертом: b/r < 0,13 и g/r ≈ 0,82; у щита «главная дорога»
+       [236,186,44] b/r 0,19, у габаритных столбиков [255,206,60] 0,24 — не считаются */
+    for (let i = 0; i < d.length; i += 4) { const r = d[i], g = d[i + 1], b = d[i + 2]; if (r > 110 && g > 85 && b / r < 0.13 && g / r > 0.74 && g / r < 0.9) n++; } return n; });
+  check(`жёлтый маркер виден из салона выше капота — ${c.name} (@render-mark-visible)`, n >= 40, `жёлтых пикселей ${n}`);
+}
+await pose(() => { opt.refs = 1; loadLevel(0); }, null, 300);
+
+/* --- столб не просвечивает сквозь щит: знак «уступи» уровня 30 с 8 и 12 м из салона (ближе щит
+   уходит под салонное зеркало — оно висит ровно на том же азимуте) --- */
+for (const d of [8, 12]) {
+  await pose((d) => { loadLevel(29); while (opt.camMode !== CAM_FP) pressKey('KeyC'); while (hudMode !== 2) cycleHud(); opt.mirrors = false; opt.fpYaw = 0; opt.fpPitch = 0;
+    setBody(59 - d, -4.95, rad(90)); car.vel = 0; }, d, 500);
+  await shot('sign-' + d);
+  /* центр белого поля треугольника: пиксель не белый и не красный — это столб */
+  const r = await page.evaluate(() => { const V = viewCam, p = { x: -59, y: SIGN_H - 0.42 - 0.02, z: -8.6 };
+    const s = viewProject(p); if (!s) return null; const g = canvas.getContext('2d'), k = DPR, R = 5;
+    const dd = g.getImageData(Math.round((s.x - R) * k), Math.round((s.y - R) * k), Math.round(2 * R * k), Math.round(2 * R * k)).data; let bad = 0, n = 0;
+    /* столб — нейтральный серый темнее белого поля; красная кайма и её антиалиасинг не считаются */
+    for (let i = 0; i < dd.length; i += 4) { n++; const r = dd[i], gg = dd[i + 1], b = dd[i + 2]; const grey = Math.abs(r - gg) < 25 && Math.abs(gg - b) < 25 && (r + gg + b) / 3 < 190; if (grey) bad++; }
+    return { bad, n, x: Math.round(s.x), y: Math.round(s.y) }; });
+  check(`столб не просвечивает сквозь щит знака с ${d} м (@render-sign-post)`, r && r.bad === 0, r ? `чужих пикселей ${r.bad} из ${r.n} в центре щита (${r.x},${r.y})` : 'щит вне кадра');
+}
+await pose(() => { loadLevel(0); }, null, 300);
+
 /* --- бордюры сверху: уровень 14, вид сверху --- */
 await pose(() => { loadLevel(13); while (opt.camMode !== CAM_TOP) pressKey('KeyC'); }, null, 500);
 await shot('top-l14');

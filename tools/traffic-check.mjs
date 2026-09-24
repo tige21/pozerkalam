@@ -55,6 +55,27 @@ let bad = 0;
   console.log((ok ? 'OK   ' : 'FAIL ') + 'дальняя машина потока — упрощённый кузов (@traffic-flow-lod) · граней '
     + r.lowF + ' против ' + r.fullF + (r.called ? '' : ' · emitCarLow не вызван'));
 }
+
+/* гудок: игрок стоит в полосе перед машиной потока — через 3 с тишина, через 7 с ровно один
+   сигнал (машина 2,5 с тормозит, ожидание идёт со стоянки), к 10 с повтора ещё нет */
+{
+  const r = await page.evaluate(() => {
+    loadLevel(LEVELS.findIndex(d => d.traffic)); hideOv(); paused = true;
+    const a = level.actors.find(x => x.act && x.act.flow && x.act.rt); if (!a) return null;
+    const p = trafPose(a.act.rt, a.act.s + 9, { u: 0, v: 0, yaw: 0 });
+    setBody(p.u, p.v, p.yaw); car.vel = 0; car.sel = 'D';
+    let n = 0; const H = honk; honk = () => { n++; };
+    const step = (secs) => { const dt = 1 / 30; for (let k = 0; k < Math.round(secs / dt); k++) { game.t += dt; actorsTick(dt); } };
+    /* машина сначала тормозит с 6 м/с (≈2,5 с), ожидание считается со стоянки: гудок в 6–7 с */
+    try { step(3); const at3 = n; step(4); const at6 = n; step(3); const at9 = n; return { at3, at6, at9, v: +a.act.v.toFixed(2), waitT: +(a.act.waitT || 0).toFixed(1) }; }
+    finally { honk = H; }
+  });
+  const ok = r && r.at3 === 0 && r.at6 === 1 && r.at9 === 1;
+  if (!ok) bad++;
+  console.log((ok ? 'OK   ' : 'FAIL ') + 'машина потока гудит игроку, стоящему в её полосе (@traffic-honk-wait)'
+    + (r ? ' · гудков через 3/7/10 с: ' + r.at3 + '/' + r.at6 + '/' + r.at9 + ' · скорость ' + r.v + ' · ожидание ' + r.waitT + ' с' : ' · машина потока не найдена'));
+  if (pageErr) { console.log('     PAGEERR ' + pageErr); pageErr = null; }
+}
 for (const li of levels) {
   const r = await page.evaluate(({ li, secs }) => {
     loadLevel(li); hideOv(); paused = true;
@@ -67,7 +88,7 @@ for (const li of levels) {
       /* отрицательное значение — «чем меньше, тем хуже»: храним худший замер */
       if (p === undefined || (val < 0 ? val > p : val > p)) seen[k] = val;
       if (p !== undefined && val < 0 && val < p) seen[k] = p; };
-    const stuck = new Map(), crossed = new Map();
+    const stuck = new Map(), crossed = new Map(), prevYaw = new Map(); let maxJump = 0;
     const dt = 1 / 30, n = Math.round(secs / dt);
     let minGap = 99, vsum = 0, vn = 0, windows = 0;
     for (let k = 0; k < n; k++) {
@@ -77,6 +98,10 @@ for (const li of levels) {
       for (let i = 0; i < flow.length; i++) {
         const a = flow[i];
         vsum += a.act.v; vn++;
+        /* курс по касательной: скачок курса за 0,1 с не больше 8° — поворот 90° на 6 м/с честно
+           даёт до 6°, а со ступенчатым курсом с сегмента на кольце было 12° и на стыке петли 77° */
+        if (prevYaw.has(i)) { const j = Math.abs(deg(angNorm(a.yaw - prevYaw.get(i)))); if (j > maxJump) maxJump = j; }
+        prevYaw.set(i, a.yaw);
         /* на проезжей части и в своей половине. Внутри перекрёстка полос нет — там линию
            ведёт дуга, и привязка к соседнему лучу дала бы ложный «выезд на встречную» */
         if (level.city.graph) {
@@ -135,6 +160,7 @@ for (const li of levels) {
         stuck.set(i, st);
         if (st > 20) note('машина стоит без помехи, с (@traffic-flow-stuck)', Math.round(st));
       }
+      if (maxJump > 8) note('скачок курса машины потока за 0,1 с, ° (@traffic-heading-smooth)', +maxJump.toFixed(1));
       /* окно для выезжающего: сколько раз за прогон путь игрока свободен дольше 3 с */
       if (k % 90 === 0 && !flow.some(a => Math.hypot(a.u - level.start.u, a.v - level.start.v) < 18)) windows++;
     }

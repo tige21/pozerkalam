@@ -87,7 +87,9 @@ await page.waitForTimeout(300);
 
 const demoWarns = await page.evaluate(() => {
   const warns = [], orig = console.warn;
-  console.warn = (...a) => { warns.push(a.map(String).join(' ')); };
+  /* [FIX:…] — диагностика (счётчики потока, стыки петель), не таймаут показа; без фильтра
+     гейт краснел на каждом городском уровне с момента появления потока */
+  console.warn = (...a) => { const m = a.map(String).join(' '); if (!m.startsWith('[FIX:')) warns.push(m); };
   try { for (let i = 0; i < LEVELS.length; i++) loadLevel(i); }
   finally { console.warn = orig; }
   loadLevel(0);

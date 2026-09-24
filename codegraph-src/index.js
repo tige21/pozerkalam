@@ -1945,6 +1945,12 @@ function signPic(pic){
         g.closePath(); g.fill();
       }
     }
+    else if(pic==='uturn'){
+      /* петля: вверх по правому краю, через верх, вниз по левому — стрелка вниз */
+      g.strokeStyle='#f4f6f8'; g.fillStyle='#f4f6f8'; g.lineWidth=13; g.lineCap='butt';
+      g.beginPath(); g.moveTo(86,112); g.lineTo(86,58); g.arc(64,58,22,0,Math.PI,true); g.lineTo(42,80); g.stroke();
+      g.beginPath(); g.moveTo(24,78); g.lineTo(60,78); g.lineTo(42,108); g.closePath(); g.fill();
+    }
     else if(pic==='ped'){
       g.fillStyle='#f4f6f8';
       g.beginPath(); g.moveTo(cx,10); g.lineTo(w-10,h-12); g.lineTo(10,h-12); g.closePath(); g.fill();
@@ -2161,6 +2167,16 @@ function emitCarMesh(u, v, th, col, st, lights){
   pushWheelCyl(w1.u,w1.v,th,-1); pushWheelCyl(w2.u,w2.v,th,1);
   pushWheelCyl(w3.u,w3.v,th+a.l,-1); pushWheelCyl(w4.u,w4.v,th+a.r,1);
   const lit = lights || {};
+  /* аварийка стоящей машины: четыре янтарных сегмента по углам мигают по времени игры (фаза от
+     game.t, не от часов — computeIdealPath проигрывает уровень тем же временем) */
+  if(lit.hazard){
+    const on = Math.floor(game.t/0.75)%2===0, hz = on ? [255,176,40] : [128,92,30], ho = on ? MO.emit : undefined;
+    const nF2={x:F.x,y:0,z:F.z}, nB2={x:-F.x,y:0,z:-F.z};
+    for(const sg of [-1,1]){
+      pushFace([P(sg*0.82,0.62,2.226),P(sg*0.94,0.62,2.226),P(sg*0.94,0.74,2.226),P(sg*0.82,0.74,2.226)], nF2, hz, 0.01, ho);
+      pushFace([P(sg*0.78,0.88,-2.226),P(sg*0.90,0.88,-2.226),P(sg*0.90,1.00,-2.226),P(sg*0.78,1.00,-2.226)], nB2, hz, 0.01, ho);
+    }
+  }
   const tail = lit.brake ? [255,66,54] : [156,40,38];
   const head = lit.rev ? [255,255,240] : [226,230,224];
   const nF={x:F.x,y:0,z:F.z}, nB={x:-F.x,y:0,z:-F.z};
@@ -2180,7 +2196,7 @@ function emitCarMesh(u, v, th, col, st, lights){
     /* габаритные усы на кромке капота: из-за руля не видно ни бампера, ни углов,
        и это единственная точка кузова, по которой водитель целится вперёд.
        Ярче — только у своей машины, у припаркованных они остаются деталью кузова */
-    const own = !!lights;
+    const own = !!(lights && lights.own);
     const fg=at(sg*(HALF_W-0.09), HOOD_Z-0.16);
     pushBox(fg.u, HOOD_Y+0.05, fg.v, 0.030, own?0.088:0.048, 0.030, th,
             own&&opt.refs>=1 ? [255,206,60] : [34,38,44]);
@@ -2208,8 +2224,8 @@ function deckZone(u,v,yaw,w,len,h){
 function wall(u,v,w,l,h,col,yaw,tex){ return {kind:'wall',u,v,w,l,h:h||2.6,yaw:yaw||0,solid:true,col:col||[168,166,166],tex:tex||'concrete'}; }
 function kerb(u,v,w,l){ return {kind:'kerb',u,v,w,l,h:0.16,yaw:0,solid:false,col:[190,190,184],tex:'concrete'}; }
 function hedge(u,v,w,l,h){ return {kind:'wall',u,v,w,l,h:h||1.25,yaw:0,solid:true,col:[74,110,66],tex:'hedge'}; }
-function pcar(u,v,yaw,col){ return {kind:'car',u,v,w:CAR.width,l:CAR.length,h:CAR.height,
-  yaw:rad(yaw||0),solid:true,col:col||PALETTE[0]}; }
+function pcar(u,v,yaw,col,hazard){ return {kind:'car',u,v,w:CAR.width,l:CAR.length,h:CAR.height,
+  yaw:rad(yaw||0),solid:true,col:col||PALETTE[0],hazard:!!hazard}; }
 function cone(u,v){ return {kind:'cone',u,v,w:0.46,l:0.46,h:0.64,yaw:0,solid:false,col:[236,104,26]}; }
 function post(u,v,h){ return {kind:'wall',u,v,w:0.28,l:0.28,h:h||1.1,yaw:0,solid:true,col:[220,196,60]}; }
 
@@ -2522,19 +2538,68 @@ function cityPathNodes(g, from, to){
 /* дуга по кольцу: правостороннее движение — островок остаётся слева, то есть обход против
    часовой стрелки в осях (u на восток, v на север). Проверяется маршрутами экзамена:
    вход с юга, «второй съезд» — на запад; вход с запада, «первый съезд» — на юг */
-function ringArc(N, p0, p1, out){
+/* дуга по кольцу от p0 до p1 против часовой (островок слева). Точка, стоящая не на кольце
+   (устье полосы въезда/съезда), соединяется с ним кубической кривой по касательной: раньше
+   линия шла от устья к кольцу по радиусу — 4,9 м прямой и поворот на 87° в одной вершине,
+   машина потока «ломалась» на въезде и на съезде. Курсы въезда/выезда — по полосе, если
+   заданы, иначе по радиусу к центру */
+function ringArc(N, p0, p1, out, yawIn, yawOut){
   const R=Math.max(2, N.round-3.5);
-  const a0=Math.atan2(p0.v-N.v, p0.u-N.u), a1=Math.atan2(p1.v-N.v, p1.u-N.u);
+  let a0=Math.atan2(p0.v-N.v, p0.u-N.u), a1=Math.atan2(p1.v-N.v, p1.u-N.u);
+  const r0=Math.hypot(p0.u-N.u, p0.v-N.v), r1=Math.hypot(p1.u-N.u, p1.v-N.v);
+  const join0=Math.abs(r0-R)>0.5, join1=Math.abs(r1-R)>0.5;
   let d=a1-a0; while(d<=0.05) d+=TAU; while(d>TAU) d-=TAU;
-  const n=Math.max(2, Math.ceil(d/rad(12)));
-  for(let i=0;i<=n;i++){ const a=a0+d*i/n; out({u:N.u+Math.cos(a)*R, v:N.v+Math.sin(a)*R}); }
+  const dl=Math.min(6/R, d*0.4);
+  const ring=(a)=>({u:N.u+Math.cos(a)*R, v:N.v+Math.sin(a)*R});
+  const tang=(a)=>({u:-Math.sin(a), v:Math.cos(a)});
+  const cubic=(q0,c1,c2,q1)=>{ for(let i=1;i<=8;i++){ const t=i/9, it=1-t;
+    out({u:it*it*it*q0.u+3*it*it*t*c1.u+3*it*t*t*c2.u+t*t*t*q1.u,
+         v:it*it*it*q0.v+3*it*it*t*c1.v+3*it*t*t*c2.v+t*t*t*q1.v}); } };
+  if(join0){
+    const e=ring(a0+dl), t=tang(a0+dl), L=Math.hypot(e.u-p0.u, e.v-p0.v)*0.45;
+    const dIn = yawIn!==undefined ? fuv(yawIn) : {u:(N.u-p0.u)/r0, v:(N.v-p0.v)/r0};
+    cubic(p0, {u:p0.u+dIn.u*L, v:p0.v+dIn.v*L}, {u:e.u-t.u*L, v:e.v-t.v*L}, e);
+    a0+=dl; d-=dl;
+  }
+  const b1 = join1 ? a1-dl : a1;
+  if(join1) d-=dl;
+  /* шаг 5°, не 12: курс машины берётся с сегмента, и на 12° она ехала по кольцу «квадратом» */
+  const n=Math.max(2, Math.ceil(d/rad(5)));
+  for(let i=join0?1:0;i<=n;i++) out(ring(a0+d*i/n));
+  if(join1){
+    const e=ring(b1), t=tang(b1), L=Math.hypot(p1.u-e.u, p1.v-e.v)*0.45;
+    const dOut = yawOut!==undefined ? fuv(yawOut) : {u:(p1.u-N.u)/r1, v:(p1.v-N.v)/r1};
+    cubic(e, {u:e.u+t.u*L, v:e.v+t.v*L}, {u:p1.u-dOut.u*L, v:p1.v-dOut.v*L}, p1);
+  }
 }
-/* поворот внутри перекрёстка: квадратичная кривая с контрольной точкой в центре узла —
-   линия входит и выходит дугой, а не углом, и не срезает по газону */
-function cornerArc(N, p0, p1, out){
-  if(N.round){ ringArc(N, p0, p1, out); return; }
-  for(let i=1;i<=6;i++){ const t=i/7, it=1-t;
-    out({u:it*it*p0.u+2*it*t*N.u+t*t*p1.u, v:it*it*p0.v+2*it*t*N.v+t*t*p1.v}); }
+/* поворот внутри перекрёстка. С курсами въезда и выезда (yawIn/yawOut) контрольная точка —
+   пересечение осей въездной и выездной полосы: правый поворот прижат к углу, левый идёт широко
+   через центр; с точкой в центре узла правый поворот выпирал к середине перекрёстка, и линия
+   экзамена читалась «кривой». Разворот (поворот > 120°) — кубическая кривая с плечами L: раньше
+   петля потока разворачивалась через центр узла радиусом полметра, и машина крутилась на месте.
+   Без курсов (старые вызовы) — прежняя квадратичная кривая через центр */
+function cornerArc(N, p0, p1, out, yawIn, yawOut){
+  if(N.round){ ringArc(N, p0, p1, out, yawIn, yawOut); return; }
+  let C=N;
+  if(yawIn!==undefined && yawOut!==undefined){
+    const a=fuv(yawIn), b=fuv(yawOut), turn=angNorm(yawOut-yawIn);
+    if(Math.abs(turn)>rad(120)){
+      const L=clamp(0.9*Math.hypot(p1.u-p0.u, p1.v-p0.v), 4, 7);
+      const c1={u:p0.u+a.u*L, v:p0.v+a.v*L}, c2={u:p1.u-b.u*L, v:p1.v-b.v*L};
+      for(let i=1;i<=14;i++){ const t=i/15, it=1-t;
+        out({u:it*it*it*p0.u+3*it*it*t*c1.u+3*it*t*t*c2.u+t*t*t*p1.u,
+             v:it*it*it*p0.v+3*it*it*t*c1.v+3*it*t*t*c2.v+t*t*t*p1.v}); }
+      return;
+    }
+    const cr=a.u*b.v-a.v*b.u;
+    if(Math.abs(cr)<0.05) return;                /* прямой проезд — узел соединяется прямой */
+    const du=p1.u-p0.u, dv=p1.v-p0.v;
+    const ta=(du*b.v-dv*b.u)/cr;                  /* p0 + a·ta = p1 − b·tb */
+    const tb=(dv*a.u-du*a.v)/cr;
+    if(ta>0.3 && tb>0.3) C={u:p0.u+a.u*ta, v:p0.v+a.v*ta};
+  }
+  for(let i=1;i<=10;i++){ const t=i/11, it=1-t;
+    out({u:it*it*p0.u+2*it*t*C.u+t*t*p1.u, v:it*it*p0.v+2*it*t*C.v+t*t*p1.v}); }
 }
 /* точка на оси полосы в метре s от начала ребра */
 function lanePt(g, e, s, off){
@@ -2551,7 +2616,8 @@ function edgeRun(g, e, sa, sb, sideA, sideB, out){
   for(let i=0;i<=n;i++){
     const s=sa+(sb-sa)*i/n;
     const k = oA===oB ? 0 : clamp((Math.abs(s-sa)-(L-shift))/shift, 0, 1);
-    out(lanePt(g, e, s, oA+(oB-oA)*(k*k*(3-2*k))));
+    const q=lanePt(g, e, s, oA+(oB-oA)*(k*k*(3-2*k))); q.lane=true;   /* точка на полосе, не в узле — по ней склеивают маршруты (routeSplice) */
+    out(q);
   }
 }
 /* путь от точки к точке по проезжей части. o.side — полоса на ПОСЛЕДНЕМ участке
@@ -2592,10 +2658,12 @@ function cityRoute(from, to, o){
   /* линия начинается там, где стоит машина, а не на оси полосы: диагональ от капота к
      своему ряду — это и есть указание «встань правее» */
   out(s0.ring ? {u:s0.u, v:s0.v} : {u:from.u, v:from.v});
+  let prevYaw;                                   /* курс движения по предыдущему ребру — для дуги угла */
   for(let i=0;i<runs.length;i++){
     const r=runs[i], last=(i===runs.length-1);
     const sideB = last ? (o.side||'right') : 'right';
     const dir = r.sb>=r.sa ? 1 : -1;
+    const yawRun = dir>0 ? r.e.yaw : r.e.yaw+PI;
     /* участок обрезается радиусом перекрёстка с обоих концов: внутри узла полос нет,
        там линию ведёт cornerArc */
     let sa=r.sa, sb=r.sb;
@@ -2603,9 +2671,10 @@ function cityRoute(from, to, o){
     if(r.nodeEnd)   sb -= dir*(g.V[r.nodeEnd].r+0.6);
     const prev=pts[pts.length-1];
     /* смещённая пара узлов стоит теснее суммы радиусов — прямого участка не остаётся */
-    if((sb-sa)*dir<=0.2){ if(r.nodeEnd) cornerArc(g.V[r.nodeEnd], prev, g.V[r.nodeEnd], out); continue; }
-    if(r.nodeStart) cornerArc(g.V[r.nodeStart], prev, lanePt(g, r.e, sa, laneOffset(r.e,'right')*dir), out);
+    if((sb-sa)*dir<=0.2){ if(r.nodeEnd) cornerArc(g.V[r.nodeEnd], prev, g.V[r.nodeEnd], out); prevYaw=yawRun; continue; }
+    if(r.nodeStart) cornerArc(g.V[r.nodeStart], prev, lanePt(g, r.e, sa, laneOffset(r.e,'right')*dir), out, prevYaw, yawRun);
     edgeRun(g, r.e, sa, sb, 'right', sideB, out);
+    prevYaw=yawRun;
     legs.push({name:r.e.name, len:Math.abs(sb-sa)});
   }
   /* цель внутри кольца — это сам островок: вести линию в его центр значило бы вести
@@ -2737,14 +2806,20 @@ function inPocket(p){
    прямой: на кольце и в повороте прямая врёт на всю дугу.
    Возврат в секундах, 99 — путь свободен. */
 const GAP_AHEAD=6.0, GAP_R=6.5, GAP_MAX=9;
-function trafficGap(u, v, d){
-  const R=d||GAP_R, f0=fuv(car.th), cu=u+f0.u*GAP_AHEAD, cv=v+f0.v*GAP_AHEAD;
+function trafficGap(u, v, d, at){
+  const R=d||GAP_R, f0=fuv(car.th);
+  /* at — своя точка опасности уровня (level.def.gapAt): на развороте она стоит там, где дуга
+     пересекает встречные полосы и трамвайный путь, а не в 6 м перед капотом на своём полотне */
+  const cu=at ? at.u : u+f0.u*GAP_AHEAD, cv=at ? at.v : v+f0.v*GAP_AHEAD;
   let best=99;
   for(const a of level.actors){
     const s=a.act;
     if(!s.started || s.done || Math.abs(s.v)<0.3) continue;
     /* сзади в твоём же ряду — не помеха: он ждёт вместе с тобой */
     if((a.u-u)*f0.u+(a.v-v)*f0.v<0 && Math.abs(angNorm(a.yaw-car.th))<rad(60)) continue;
+    /* точка опасности у него за спиной — он к ней не приедет: попутный впереди, уходящий от
+       неё, закрывал бы окно на первой же полусекунде */
+    { const af=fuv(a.yaw); if((cu-a.u)*af.u+(cv-a.v)*af.v<0) continue; }
     const sp=Math.max(0.5, Math.abs(s.v));
     for(let t=0.5;t<=GAP_MAX;t+=0.5){
       let pu, pv;
@@ -2791,8 +2866,46 @@ function actorCar(u,v,yaw,col,wps,sp,trig){
   /* v — живая скорость, sp — желаемая. Сценарный статист стартует сразу на своей скорости:
      иначе разгон с нуля сдвинул бы его по времени, а под него откалиброваны показы 26/30/31 */
   o.act={wps, sp:sp||2.0, v:sp||2.0, trig:trig||null, i:0, started:!trig, done:false,
-         u0:u, v0:v, yaw0:o.yaw};
+         u0:u, v0:v, yaw0:o.yaw, rt:actorPath(u,v,wps||[]), s:0, s0:0, flow:false};
   return o;
+}
+
+/* трамвай: статист на рельсах. Путь — прямая по оси своего пути длиной len (actorPath, открытый),
+   OBB 2,2×14, solid — с ним сталкиваются как с машиной (collision-actor через _hitByPlayer).
+   rail: в trafBlock узкие ворота (0,2 м, не 0,6) и свои габариты — иначе он тормозил перед
+   машиной, стоящей на соседнем пути в 2,4 м от его оси, и урок «трамвай не уступает» не показывался */
+const TRAM_W=2.2, TRAM_L=14, TRAM_H=3.0;
+function tramCar(u,v,yaw,len,sp,trig){
+  const f=fuv(rad(yaw||0));
+  const o={kind:'tram', u, v, w:TRAM_W, l:TRAM_L, h:TRAM_H, yaw:rad(yaw||0), solid:true, col:[206,48,42],
+           hw:TRAM_W/2, hl:TRAM_L/2};
+  o.act={wps:[], sp:sp||6, v:sp||6, trig:trig||null, i:0, started:!trig, done:false,
+         u0:u, v0:v, yaw0:o.yaw, rt:actorPath(u, v, [{u:u+f.u*len, v:v+f.v*len}]), s:0, s0:0, flow:false, rail:true};
+  return o;
+}
+function emitTram(o){
+  const u=o.u, v=o.v, yaw=o.yaw, f=fuv(yaw), R=rgt(yaw), F=fwd(yaw), col=o.col;
+  const at=(s)=>[u+f.u*s, v+f.v*s];
+  const P=(lat,y,z)=>({x:-u+R.x*lat+F.x*z, y, z:v+R.z*lat+F.z*z});
+  const HW=TRAM_W/2, HL=TRAM_L/2;
+  for(const sgn of [-1,1]){ const c=at(sgn*4.2); pushBox(c[0],0.30,c[1],0.85,0.16,1.15,yaw,[38,40,44]); }
+  pushBox(u,0.74,v,HW,0.32,HL,yaw,col);                     /* нижний пояс 0,42–1,06 */
+  pushBox(u,1.55,v,HW-0.02,0.49,HL,yaw,col);                /* оконный пояс: стойки — это его красный между стёклами */
+  pushBox(u,2.40,v,HW,0.36,HL,yaw,col);                     /* верхний пояс 2,04–2,76 */
+  pushBox(u,2.88,v,HW-0.05,0.12,HL-0.1,yaw,[58,62,68]);     /* крыша */
+  const glass=[150,178,196];
+  for(const sd of [-1,1]){ const n={x:R.x*sd, y:0, z:R.z*sd}, lat=sd*(HW+0.004);
+    for(let k=-2;k<=2;k++){ const z0=k*2.6-1.05, z1=k*2.6+1.05;
+      pushFace([P(lat,2.02,z0), P(lat,2.02,z1), P(lat,1.10,z1), P(lat,1.10,z0)], n, glass, 0.05); } }
+  for(const sd of [-1,1]){ const n={x:F.x*sd, y:0, z:F.z*sd}, z=sd*(HL+0.004);
+    pushFace([P(-0.85,2.05,z), P(0.85,2.05,z), P(0.85,1.15,z), P(-0.85,1.15,z)], n, [96,116,132], 0.05);
+    for(const lat of [-0.62,0.62])
+      pushFace([P(lat-0.14,0.78,z), P(lat+0.14,0.78,z), P(lat+0.14,0.58,z), P(lat-0.14,0.58,z)], n,
+               sd>0 ? [255,242,196] : [200,40,30], 0.06, MO.emit); }
+  /* пантограф: две стойки и токосъёмная планка */
+  for(const sgn of [-1,1]){ const c=at(sgn*0.55); pushBox(c[0],3.18,c[1],0.02,0.18,0.02,yaw,[40,42,46]); }
+  pushBox(u,3.36,v,0.02,0.02,0.58,yaw,[40,42,46]);
+  pushBox(u,3.38,v,0.55,0.015,0.03,yaw,[40,42,46]);
 }
 
 /* ---------- поток машин ----------
@@ -2866,24 +2979,74 @@ function trafClose(pts){
   const tail=Math.hypot(pts[0].u-pts[pts.length-1].u, pts[0].v-pts[pts.length-1].v);
   return {pts, cum, len:cum[cum.length-1]+tail};
 }
+/* курс — не с сегмента, а по касательной: в вершине полилинии курс — среднее соседних сегментов,
+   внутри сегмента — лерп между курсами его вершин. Со ступенчатым курсом машина на кольце и в
+   повороте дёргала носом на каждой вершине — «едут угловато, по квадрату». Открытый путь
+   (rt.open, актёры) не зацикливается: s зажимается в [0, len] */
+function trafSegYaw(rt, i){
+  const n=rt.pts.length, a=rt.pts[((i%n)+n)%n], b=rt.pts[(((i+1)%n)+n)%n];
+  return Math.atan2(b.u-a.u, b.v-a.v);
+}
+function trafSegLen(rt, i){
+  const n=rt.pts.length, a=rt.pts[((i%n)+n)%n], b=rt.pts[(((i+1)%n)+n)%n];
+  return Math.sqrt((b.u-a.u)*(b.u-a.u)+(b.v-a.v)*(b.v-a.v));
+}
+function trafVertYaw(rt, i){
+  const n=rt.pts.length;
+  if(rt.open){ if(i<=0) return trafSegYaw(rt,0); if(i>=n-1) return trafSegYaw(rt,n-2); }
+  const h0=trafSegYaw(rt,i-1), h1=trafSegYaw(rt,i);
+  /* хвост замыкания петли бывает коротким и обратным (конец последнего плеча чуть за началом
+     первого): усреднять с ним нельзя — машина на стыке поворачивала на 90°. Короткий или
+     развёрнутый сосед не участвует */
+  if(trafSegLen(rt,i-1)<0.3) return h1;
+  if(trafSegLen(rt,i)<0.3) return h0;
+  const d=angNorm(h1-h0);
+  if(Math.abs(d)>rad(120)) return h1;
+  return h0+d*0.5;
+}
 function trafPose(rt, s, out){
-  const L=rt.len; s=((s%L)+L)%L;
+  const L=rt.len; s = rt.open ? clamp(s,0,L) : ((s%L)+L)%L;
   const c=rt.cum, n=rt.pts.length;
   let lo=0, hi=n-1;
   while(lo<hi){ const m=(lo+hi+1)>>1; if(c[m]<=s) lo=m; else hi=m-1; }
+  if(rt.open && lo>=n-1) lo=n-2;
   const a=rt.pts[lo], b=rt.pts[(lo+1)%n];
   const seg=((lo+1<n ? c[lo+1] : L)-c[lo])||1;
   const t=clamp((s-c[lo])/seg, 0, 1);
   out=out||{};
   out.u=a.u+(b.u-a.u)*t; out.v=a.v+(b.v-a.v)*t;
-  out.yaw=Math.atan2(b.u-a.u, b.v-a.v);
+  const y0=trafVertYaw(rt,lo), y1=trafVertYaw(rt,lo+1);
+  out.yaw=y0+angNorm(y1-y0)*t;
   return out;
+}
+/* путь сценарного актёра: от точки спавна через путевые точки, углы скруглены дугой радиуса
+   min(4 м, 0,45 меньшего плеча) — квадратичной кривой через угол. Раньше актёр ехал по прямым между
+   редкими точками с лимитом 1,6 рад/с и на развороте «ломался» по кузову */
+function actorPath(u0, v0, wps){
+  const raw=[{u:u0,v:v0}]; for(const w of wps) if(Math.hypot(w.u-raw[raw.length-1].u, w.v-raw[raw.length-1].v)>0.05) raw.push({u:w.u,v:w.v});
+  if(raw.length<2){ console.warn('[actor] путь из одной точки', u0, v0); return null; }
+  const pts=[raw[0]];
+  for(let i=1;i<raw.length-1;i++){
+    const P=raw[i-1], C=raw[i], N=raw[i+1];
+    const l1=Math.hypot(C.u-P.u,C.v-P.v), l2=Math.hypot(N.u-C.u,N.v-C.v);
+    const r=Math.min(4, 0.45*Math.min(l1,l2));
+    const a={u:C.u+(P.u-C.u)*r/l1, v:C.v+(P.v-C.v)*r/l1}, b={u:C.u+(N.u-C.u)*r/l2, v:C.v+(N.v-C.v)*r/l2};
+    pts.push(a);
+    for(let k=1;k<8;k++){ const t=k/8, it=1-t; pts.push({u:it*it*a.u+2*it*t*C.u+t*t*b.u, v:it*it*a.v+2*it*t*C.v+t*t*b.v}); }
+    pts.push(b);
+  }
+  pts.push(raw[raw.length-1]);
+  const cum=[0];
+  for(let i=1;i<pts.length;i++) cum.push(cum[i-1]+Math.hypot(pts[i].u-pts[i-1].u, pts[i].v-pts[i-1].v));
+  return {pts, cum, len:cum[cum.length-1], open:true};
 }
 function trafCar(rt, s0, col){
   const p=trafPose(rt, s0);
   const o=pcar(p.u, p.v, 0, col);
   o.yaw=p.yaw; o.hw=o.w/2; o.hl=o.l/2;
-  o.act={flow:true, rt, s:s0, s0, sp:TRAF.sp, v:TRAF.sp, started:true, done:false,
+  /* стартовая скорость — по кривизне места спавна: машина, рождённая в повороте на полном
+     ходу, первые полсекунды крутилась там быстрее, чем ей позволяет trafCurveSpeed */
+  o.act={flow:true, rt, s:s0, s0, sp:TRAF.sp, v:Math.min(TRAF.sp, trafCurveSpeed(rt, s0)), started:true, done:false,
          wps:null, i:0, trig:null, u0:p.u, v0:p.v, yaw0:p.yaw};
   return o;
 }
@@ -2894,7 +3057,10 @@ function trafCityLoops(){
   if(!cityGraph()) return null;
   const out=[];
   const A=trafPath([{u:0,v:-35},{u:-40,v:-70},{u:-78,v:-35},{u:-40,v:0}]);
-  const B=trafPath([{u:0,v:-35},{u:40,v:0},{u:90,v:0},{u:20,v:0}]);
+  /* восточная петля замкнута через Восточную и Садовую — все повороты направо. Прежний
+     маршрут {0,−35}→кольцо→{20,0}→{0,−35} замыкался разворотом посреди Ленина через
+     трамвайное полотно: последняя точка стояла в южной полосе, первая — в северной */
+  const B=trafPath([{u:0,v:-35},{u:40,v:0},{u:90,v:0},{u:78,v:-35},{u:30,v:-70}]);
   if(A) out.push(A);
   if(B) out.push(B);
   return out;
@@ -2903,12 +3069,15 @@ function trafCityLoops(){
    ±1,65. Петля разворачивается за пределами игровой площадки, в 60 м от выезда */
 function trafYardLoops(){
   const U=58, pts=[];
+  /* разворот на концах улицы — полуокружность радиусом 1,65 м между осями полос, шаг 15°;
+     машина проходит её на TRAF_V_MIN (trafCurveSpeed). Западная дуга шла с −sin — в обратную
+     сторону, и на стыке машина прыгала курсом на 28° */
+  const hair=(u0,a0)=>{ for(let k=1;k<=11;k++){ const a=a0+Math.PI*k/12;
+    pts.push({u:u0+Math.cos(a)*1.65, v:Math.sin(a)*1.65}); } };
   for(let u=-U;u<=U;u+=4) pts.push({u, v:-1.65});
-  for(let k=1;k<=6;k++){ const a=Math.PI*(k/7)-Math.PI/2;
-    pts.push({u:U+Math.cos(a)*1.9, v:Math.sin(a)*1.65}); }
+  hair(U, -Math.PI/2);
   for(let u=U;u>=-U;u-=4) pts.push({u, v:1.65});
-  for(let k=1;k<=6;k++){ const a=Math.PI*(k/7)+Math.PI/2;
-    pts.push({u:-U+Math.cos(a)*1.9, v:-Math.sin(a)*1.65}); }
+  hair(-U, Math.PI/2);
   return [trafClose(pts)];
 }
 function trafCount(){ let n=0; for(const a of level.actors) if(a.act && a.act.flow) n++; return n; }
@@ -2964,14 +3133,18 @@ function trafficInit(){
    ДЛИНУ, а не ширину. По центрам гейт пропускал машину, вставшую поперёк перекрёстка (центр
    в 2,55 м от полосы, кузов — прямо на пути), и поток въезжал ей в борт.
    Результат кладём в общий _ex: функция зовётся сотни раз за кадр */
-function carExtent(yaw, f, r){
-  const or_=ruv(yaw), of_=fuv(yaw);
-  _ex.lat=HALF_W*Math.abs(or_.u*r.u+or_.v*r.v)+HALF_L*Math.abs(of_.u*r.u+of_.v*r.v);
-  _ex.lon=HALF_W*Math.abs(or_.u*f.u+or_.v*f.v)+HALF_L*Math.abs(of_.u*f.u+of_.v*f.v);
+function carExtent(yaw, f, r, hw, hl){
+  const or_=ruv(yaw), of_=fuv(yaw), W=hw||HALF_W, L=hl||HALF_L;
+  _ex.lat=W*Math.abs(or_.u*r.u+or_.v*r.v)+L*Math.abs(of_.u*r.u+of_.v*r.v);
+  _ex.lon=W*Math.abs(or_.u*f.u+or_.v*f.v)+L*Math.abs(of_.u*f.u+of_.v*f.v);
   return _ex;
 }
+/* кто перекрыл дорогу машине потока в последнем trafBlock: 'player' | 'car' | null — по нему
+   считается ожидание за игроком для гудка; модульная переменная, не объект на машину */
+let trafBlockBy=null;
 function trafBlock(a, ai){
   const s=a.act, rt=s.rt, lim=TRAF.see, pb=bodyPos();
+  trafBlockBy=null;
   const n=Math.ceil(lim/TRAF.step);
   for(let k=1;k<=n;k++){
     const d=k*TRAF.step;
@@ -2981,14 +3154,15 @@ function trafBlock(a, ai){
     const f=fuv(p.yaw), r=ruv(p.yaw);
     /* вблизи запас шире, вдали уже: иначе съезжающиеся в одну полосу машины двух петель
        не видят друг друга, пока не сойдутся бортами */
-    const mLat = d<14 ? 0.6 : 0.25;
+    const mLat = s.rail ? 0.2 : d<14 ? 0.6 : 0.25;
+    const myW = s.rail ? a.hw : HALF_W, myL = s.rail ? a.hl : HALF_L;
     let du=pb.u-p.u, dv=pb.v-p.v;
     const pe=carExtent(car.th, f, r);
     /* до игрока держим лишние 2,4 м: его машина стоит в полосе целыми минутами, а любое
        касание кузова считается наездом ИГРОКА (_hitByPlayer защёлкивается на пересечении
        OBB, кто бы ни двигался) — и попытка сгорала бы за то, что в него въехали сзади */
-    if(Math.abs(du*r.u+dv*r.v)<HALF_W+pe.lat+mLat && Math.abs(du*f.u+dv*f.v)<HALF_L+pe.lon+0.4)
-      return Math.max(0, d+du*f.u+dv*f.v-2.4);
+    if(Math.abs(du*r.u+dv*r.v)<myW+pe.lat+mLat && Math.abs(du*f.u+dv*f.v)<myL+pe.lon+0.4)
+      { trafBlockBy='player'; return Math.max(0, d+du*f.u+dv*f.v-2.4); }
     const tMe=d/Math.max(0.7, s.v);
     for(let j=0;j<level.actors.length;j++){
       if(j===ai) continue;
@@ -2997,7 +3171,7 @@ function trafBlock(a, ai){
       const ov=Math.abs(os.v), stopped=ov<0.25;
       du=o.u-p.u; dv=o.v-p.v;
       const lonC=du*f.u+dv*f.v, latC=du*r.u+dv*r.v;
-      const oe=carExtent(o.yaw, f, r), gLat=HALF_W+oe.lat+mLat, gLon=HALF_L+oe.lon+0.4;
+      const oe=carExtent(o.yaw, f, r, o.hw, o.hl), gLat=myW+oe.lat+mLat, gLon=myL+oe.lon+0.4;
       const hitNow = Math.abs(latC)<=gLat && Math.abs(lonC)<=gLon;
       /* кроме «где он сейчас», смотрим, где он будет, когда я доеду до этой точки: по
          нынешнему месту слияние двух петель в одну полосу Ленина замечалось за 3 м —
@@ -3076,21 +3250,45 @@ function trafSpeed(d){
   if(d>=TRAF.see) return TRAF.sp;
   return clamp(Math.sqrt(2*TRAF.dec*Math.max(0, d-TRAF.gap)), 0, TRAF.sp);
 }
+/* скорость по кривизне пути впереди: угловая скорость машины не выше TRAF_YAW_RATE. Кривизна
+   берётся по курсу пути на окнах по 1 м от 0 до 10 м вперёд (тормозной путь с 6,2 м/с при
+   2,9 м/с² — 5,4 м), берётся худшее; окно шире метра размазывает пик кривизны в тесном углу
+   (полуокружность R 1,65 на дворовой петле). Правый поворот в тесном узле идёт радиусом ≈2,7 м —
+   на полном ходу машина крутилась там на 170°/с, как на карусели; кольцо R 11,5 не режет */
+const TRAF_YAW_RATE=1.0, TRAF_V_MIN=1.4;
+function trafCurveSpeed(rt, s0){
+  let vmax=TRAF.sp, a=trafPose(rt, s0, _tq).yaw;
+  for(let d=1;d<=10;d++){
+    const b=trafPose(rt, s0+d, _tq).yaw, k=Math.abs(angNorm(b-a));
+    if(k>1e-3) vmax=Math.min(vmax, TRAF_YAW_RATE/k);
+    a=b;
+  }
+  return Math.max(TRAF_V_MIN, vmax);
+}
 function actorsTick(dt){
   for(let i=0;i<level.actors.length;i++){
     const a=level.actors[i], s=a.act;
     if(s.done) continue;
     if(!s.started){ if(s.trig && s.trig(curS)) s.started=true; else continue; }
-    const block=Math.min(trafBlock(a,i), trafConflict(a,i), s.rt ? trafLight(a) : TRAF.see);
-    const want=Math.min(s.sp, trafSpeed(block));
+    const blk=trafBlock(a,i), byPlayer=trafBlockBy==='player';
+    const block=Math.min(blk, trafConflict(a,i), s.rt && s.flow ? trafLight(a) : TRAF.see);
+    let want=Math.min(s.sp, trafSpeed(block));
+    if(s.rt) want=Math.min(want, trafCurveSpeed(s.rt, s.s));
     s.v = want>s.v ? Math.min(want, s.v+TRAF.acc*dt) : Math.max(want, s.v-TRAF.dec*dt);
     if(s.v<0.01) s.v=0;
+    /* гудок: машина стоит за игроком, игрок стоит — через HONK_WAIT с двойной сигнал, повтор не
+       раньше HONK_REST; в показе и в headless-проигрыше молчит (honk сам проверяет) */
+    if(byPlayer && s.v<0.3 && Math.abs(car.vel)<0.3){ s.waitT=(s.waitT||0)+dt; }
+    else s.waitT=0;
+    if(s.honkT>0) s.honkT-=dt;
+    if(s.waitT>=HONK_WAIT && !(s.honkT>0)){ honk(blk); s.honkT=HONK_REST; }
     if(trafDbg && s.rt && i===0)
       console.warn('[FIX:traffic] a0 v='+s.v.toFixed(1)+' block='+block.toFixed(1)+' s='+s.s.toFixed(0));
     if(s.rt){
       s.s += s.v*dt;
       const p=trafPose(s.rt, s.s, _tp);
       a.u=p.u; a.v=p.v; a.yaw=p.yaw;
+      if(s.rt.open && s.s>=s.rt.len) s.done=true;   /* открытый путь актёра кончился */
       continue;
     }
     const wp=s.wps[s.i];
@@ -4794,7 +4992,7 @@ const LEVELS = [
 
 { name:'28 · Перестроение до сплошной', traffic:'city',
   strict:true,
-  task:'В твоей полосе стоит машина, а через 30 м разметка станет сплошной. Перестроиться вправо с поворотником — пока это ещё можно. Грубая ошибка (сплошная, столкновение, встречная) — попытка не засчитана.',
+  task:'В твоей полосе стоит машина с аварийкой, а через 30 м разметка станет сплошной. Перестроиться вправо с поворотником — пока это ещё можно. Грубая ошибка (сплошная, столкновение, встречная) — попытка не засчитана.',
   tip:'Перестроение начинается с сигнала, а не с руля. Сплошную не пересекают ни на сантиметр — даже если места полно.',
   steps:[
     'Включи правый поворотник (E) заранее, ещё до руля.',
@@ -4812,7 +5010,7 @@ const LEVELS = [
   transfer:'Пересечение сплошной — 5 баллов и почти всегда незачёт. Перестраиваются заранее, а не у самого перекрёстка.',
   build(){
     const b=cityBase();
-    b.obs.push(pcar(32,-1.65,90,PALETTE[5]));
+    b.obs.push(pcar(32,-1.65,90,PALETTE[5],true));   /* стоит с аварийкой — иначе непонятно, что она не поедет */
     b.city.oncoming.push({u:34, v:3.3, yaw:rad(90), w:6.6, l:52});
     return { obs:b.obs, dec:b.dec, city:b.city,
              start:{u:13,v:-1.65,th:rad(90)},
@@ -4854,12 +5052,17 @@ const LEVELS = [
 
 { name:'29 · Разворот на трамвайных путях', traffic:'city',
   strict:true,
-  task:'Развернуться на проспекте Ленина с трамвайными путями посередине. Разворот выполняют С ПУТЕЙ попутного направления — сначала перестройся на них. Грубая ошибка (встречная, столкновение) — попытка не засчитана.',
+  /* точка опасности для чипа «окно» и показа: пересечение дуги со встречным путём и встречными
+     полосами (u −8…−1,6). Штатная точка в 6 м перед капотом стоит на своём полотне и не видит
+     встречных машин на u=−8,15 — показ выезжал под них (demo-vio) */
+  gapAt:{u:-4.5, v:-34},
+  task:'Развернуться на проспекте Ленина с трамвайными путями посередине — там, где стоит знак «место для разворота». Разворот выполняют С ПУТЕЙ попутного направления — сначала перестройся на них. Навстречу идёт трамвай: он не уступает, пропусти его перед дугой. Грубая ошибка (встречная, столкновение, непропуск) — попытка не засчитана.',
   tip:'Пути посередине на одном уровне с дорогой — это ещё одна полоса. Разворот из правой полосы отсюда запрещён.',
   steps:[
     'Включи левый поворотник (Q) заранее.',
     'Перестройся на трамвайные пути попутного направления — тёмное полотно у оси.',
     'Останови руль в ноль, дай машине выкатиться к месту разворота.',
+    'Встречный трамвай пропусти: стой на своём пути, пока он не пройдёт.',
     'Руль ВЛЕВО до упора и веди дугу через встречные пути.',
     'Выходи в свою правую полосу и останови машину в зоне.',
   ],
@@ -4875,15 +5078,25 @@ const LEVELS = [
     b.city.turnZones.push({u:0, v:-35, yaw:0, w:19.6, l:16, uturn:true, blink:'L', dir:0});
     b.city.oncoming.push({u:-4.9, v:-52, yaw:0, w:9.8, l:10});
     b.city.oncoming.push({u:-4.9, v:-20, yaw:0, w:9.8, l:12});
+    /* трамвай по встречному пути (ось −TRAM_HW/2): выходит с севера, когда игрок уже на полотне
+       (trig), и проходит место разворота как раз к началу дуги. Зона непропуска — над зоной
+       разворота, dist 22: центр 14-метрового кузова далеко, когда его нос уже рядом */
+    b.obs.push(tramCar(-TRAM_HW/2, 40, 180, 140, 6.2, s=>s.u<3.4&&s.v>-48));
+    b.city.yieldZones.push({u:0, v:-35, yaw:0, w:19.6, l:16, dist:22});
+    b.obs.push(sign('uturn', 11.0, -46, rad(180)));
     return { obs:b.obs, dec:b.dec, city:b.city,
              start:{u:8.15,v:-56,th:0},
              goal:{u:-8.15,v:-52,w:3.0,l:5.6,th:rad(180),tol:rad(20)} }; },
   marks(){ return {
-    /* обе отметки стоят там, где реально идёт показ: на пути он выходит к v=−38,
-       а дугу начинает с центра полотна на v=−32. Прежние −42 и −38 обещали начало
-       разворота на десять метров южнее, чем машина туда приезжает */
-    tram: mline([{u:-3.2,v:-38},{u:3.2,v:-38}],'rgba(250,204,21,.9)',{label:'к этой линии — уже на полотне'}),
-    ghost: mghost(0.75,-32,rad(-21),'отсюда дуга разворота'),
+    /* обе отметки стоят там, где реально идёт показ: на путь он выходит к v=−41, ровно на
+       север встаёт к −37 и оттуда, пропустив трамвай, начинает дугу. Прежние −42 и −38
+       обещали начало разворота на десять метров южнее, чем машина туда приезжает */
+    tram: mline([{u:-3.2,v:-41},{u:3.2,v:-41}],'rgba(250,204,21,.9)',{label:'к этой линии — уже на полотне'}),
+    ghost: mghost(1.1,-37,0,'отсюда дуга разворота'),
+    /* дуга полного левого от правого пути до встречной половины — та же, что рисует экзамен
+       (uturnArc); столбики на концах видны из салона, где ни линия, ни «призрак» не читались */
+    arc: (()=>{ const a=[]; uturnArc({u:0,v:-35,yaw:0}, p=>a.push(p));
+      return mline(a,'rgba(250,204,21,.9)',{label:'дуга разворота — полный левый', dash:[6,6]}); })(),
     zone: mline([{u:-9.7,v:-49.6},{u:-6.6,v:-49.6}],'rgba(80,220,140,.8)',{label:'зона после разворота'})
   }; },
   phases:[
@@ -4894,21 +5107,38 @@ const LEVELS = [
      goal:{text:'стрелка влево мигает'},
      why:'Сигнал идёт перед перестроением на пути, а не перед самой дугой: манёвров два, а поворотник один — включай на первый.',
      hint:'Включи левый поворотник (Q) заранее — до того, как поедешь на пути.', marks:['tram','ghost']},
-    {when:s=>s.v<-42&&s.u>3.4&&s.gear>=0,
+    /* u>1,6 (ось попутного пути), не 3,4: на последнем метре перестроения машина уже западнее
+       кромки полотна, но ещё под углом — ни одна фаза дуги её не брала, и на секунду выпадала
+       последняя «останови машину в зоне» */
+    {when:s=>s.v<-30&&s.u>1.6&&s.gear>=0,
      icon:'↰', act:'Перестройся на трамвайные пути', wheel:'left', blinker:'L',
      goal:{text:'кузов на тёмном полотне'},
      why:'Разворот выполняют с трамвайных путей попутного направления. Из правой полосы это отдельное нарушение, даже если места хватает.',
      hint:'Перестройся на трамвайные пути — тёмное полотно у оси улицы.', marks:['tram','ghost']},
+    /* трамвай навстречу: стоять, пока чип «окно» не дойдёт до 8 с (дуга до встречного пути на
+       малом ходу — 4–5 с, окна в 6 с показу не хватило — demo-vio). Уже поехавшего с окном ≥5 с
+       не останавливаем: машина, появившаяся за 7,9 с, возвращала карточку «стой» на первом метре дуги. Только с курсом на север —
+       машина, уже пошедшая в дугу, должна её закончить, а не вставать поперёк путей */
+    {when:s=>s.gear>=0&&s.v>-46&&s.v<-28&&s.u<3.4&&s.u>-3.4&&s.gap<8&&(Math.abs(s.vel)<0.6||s.gap<5)&&(((deg(angNorm(s.th))+360)%360)<12||((deg(angNorm(s.th))+360)%360)>320),
+     icon:'⏹', act:'Трамвай идёт — стой на своём пути', move:'stop', wheel:'straight',
+     goal:{metric:'gap',target:8,dir:'up'},
+     why:'Трамвай тяжелее машины в десять раз, тормозной путь у него длиннее — уступает всегда машина. Стой на попутном пути, дуга подождёт.',
+     hint:'Трамвай идёт навстречу — стой на своём пути, пока чип «окно» не покажет 8 с.', marks:['arc']},
     /* фазы дуги ограничены участком до v=−46: без границы машина, прошедшая юг, снова
        попадала в «руль влево до упора», и ученик наматывал круги до таймаута */
-    {when:s=>s.gear>=0&&s.v>-46&&s.u<3.4&&(((deg(angNorm(s.th))+360)%360)<12||((deg(angNorm(s.th))+360)%360)>348),
+    /* до 320°, не 348: перед дугой машина стоит на полотне под −21…−34° (так её ставит
+       перестроение), и с порогом 348 этот угол читался как «дуга уже идёт» — фаза «веди дугу до
+       юга» показывалась стоящей машине всё ожидание трамвая (level-audit: 73 с без движения чипа) */
+    {when:s=>s.gear>=0&&s.v>-46&&s.u<3.4&&(((deg(angNorm(s.th))+360)%360)<12||((deg(angNorm(s.th))+360)%360)>320),
      icon:'↰', act:'Руль ВЛЕВО до упора — начинай дугу', wheel:'lockL', blinker:'L',
      goal:{metric:'ang',target:0,dir:'down'},
      why:'Полный левый на месте, потом ход: так дуга получается самой короткой и встречные пути пересекаются один раз.',
-     hint:'Выверни руль влево до упора и веди машину по дуге.', marks:['tram']},
+     hint:'Выверни руль влево до упора и веди машину по дуге.', marks:['arc']},
     /* 205°, а не 195°: доворот вправо на выходе поднимает курс до ~196°, и на пороге 195
        фаза дуги включалась заново уже после разворота */
-    {when:s=>s.v>-56&&((deg(angNorm(s.th))+360)%360)>205&&s.gear>=0,
+    /* u<0,5: на дуге кузов уже западнее старта, а на последнем метре перестроения курс тоже
+       326–339° — без границы по u «веди дугу» показывалось ещё до полотна */
+    {when:s=>s.v>-56&&s.u<0.5&&((deg(angNorm(s.th))+360)%360)>205&&((deg(angNorm(s.th))+360)%360)<=320&&s.gear>=0,
      icon:'↰', act:'Веди дугу до курса на юг', wheel:'lockL',
      goal:{metric:'ang',target:0,dir:'down'},
      why:'Не спрямляй руль раньше времени: недокрутил — окажешься на встречных путях.',
@@ -4955,8 +5185,12 @@ const LEVELS = [
     /* статист стоит НЕ на дуге демо: computeIdealPath гоняет показ headless, актёры там
        не двигаются, и машина на кольце превращалась в неподвижное препятствие поперёк пути.
        Он выезжает на кольцо с юга и уходит на запад — успевает попасть под «уступи» */
-    b.obs.push(actorCar(76.35, -22, 0, PALETTE[1],
-      [{u:76.35,v:-15},{u:78,v:-11.5},{u:71,v:-9},{u:66.8,v:-2},{u:63,v:4.95},{u:30,v:4.95}],
+    /* статист идёт по кольцу против часовой (островок слева), как весь поток: въезжает с
+       северного луча, проходит перед игроком справа налево и уходит на юг. Прежний путь
+       {юг → запад} шёл по часовой — навстречу потоку, лоб в лоб машинам петли */
+    b.obs.push(actorCar(76.35, 24, rad(180), PALETTE[1],
+      [{u:76.35,v:15},{u:76.0,v:11.3},{u:69.9,v:8.1},{u:66.5,v:0},{u:69.9,v:-8.1},{u:76.0,v:-11.3},
+       {u:76.35,v:-15},{u:76.35,v:-45}],
       2.4, s=>s.u>40));
     return { obs:b.obs, dec:b.dec, city:b.city,
              start:{u:46,v:-4.95,th:rad(90)},
@@ -5300,7 +5534,7 @@ function shiftSel(step){
 const game = { t:0, hits:0, holdT:0, done:false, li:0, hitCd:0, flash:0, moved:false,
                hitMsg:'', hitMsgT:0 };
 /* разбор касания: чем и обо что — именно это знание переносится на реальную машину */
-const OBST_NAME={car:'машину', wall:'стену', kerb:'бордюр', cone:'конус'};
+const OBST_NAME={car:'машину', wall:'стену', kerb:'бордюр', cone:'конус', tram:'трамвай'};
 function hitReason(o){
   const c=bodyPos(), f=fuv(car.th), r=ruv(car.th);
   let best=null, bd=1e9;
@@ -5417,7 +5651,7 @@ function buildRenderList(obs){
   for(const o of obs){
     /* sign и guide проходят целиком: сегментация копирует только базовые поля и потеряла
        бы pic и rows */
-    if(o.kind==='car'||o.kind==='cone'||o.kind==='sign'||o.kind==='light'||o.kind==='guide'){
+    if(o.kind==='car'||o.kind==='cone'||o.kind==='sign'||o.kind==='light'||o.kind==='guide'||o.kind==='tram'){
       out.push(o); continue; }
     /* 3,5 м, не 7: у длинного сегмента бордюра центр ближе к камере, чем колесо соседа перед
        ним, и бордюр рисовался поверх колеса */
@@ -5503,7 +5737,12 @@ function restart(){
   for(const o of level.obs){ o.knocked=false; o._touch=false; o._hitByPlayer=false; }
   for(const a of level.actors){ a.u=a.act.u0; a.v=a.act.v0; a.yaw=a.act.yaw0;
     a.act.i=0; a.act.started=!a.act.trig; a.act.done=false; a._vioFired=false;
-    a.act.v=a.act.sp; if(a.act.rt) a.act.s=a.act.s0; }
+    a.act.v=a.act.rt ? Math.min(a.act.sp, trafCurveSpeed(a.act.rt, a.act.s0)) : a.act.sp;
+    if(a.act.rt) a.act.s=a.act.s0; }
+  /* триггеры статистов читают curS, а его заполняет phaseTick ПОСЛЕ actorsTick: на первом кадре
+     после перезапуска в нём лежала прошлая поза, и трамвай уровня 29 выходил сразу, если игрок
+     перед этим стоял на полотне */
+  { const sp=bodyPos(); curS.u=sp.u; curS.v=sp.v; curS.th=car.th; curS.gear=car.gear; curS.vel=0; curS.gap=99; }
   cityReset();
   attempt = level.def.strict ? {strikes:0, log:[], failed:false, why:'', code:''} : null;
   attWarn=''; attWarnT=0;
@@ -6180,7 +6419,8 @@ function examBriefHTML(){
     +examRouteSvg()
     +'<ul class="startlist">'+rows+'</ul>'
     +'<p style="color:#93a7bd">Допустимо до '+(EXAM_FAIL_SUM-1)+' штрафных баллов. '
-    +'Порядок манёвров и финишный карман в каждом заезде свои.'
+    +'Порядок манёвров и финишный карман в каждом заезде свои. '
+    +'Линия на асфальте — твоя полоса: правая, перед манёвром переходит в нужную.'
     +(started?' Карта в углу открывает этот список в любой момент.':'')+'</p>'
     +'<button data-act="brief">'+(started?'Продолжить':'Поехали')+'</button> '
     + (started?'':examModeBtnHTML())
@@ -6321,6 +6561,29 @@ function examLegSide(st){
   if(st.turn==='U'){ const s=citySnap(st.at); if(s && s.e && s.e.tram) return 'tram'; }
   return 'right';
 }
+/* узел графа, в центр которого легла точка: команда «направо/налево на …» стоит в центре перекрёстка */
+function nodeAt(sn){
+  if(!sn || !sn.e || sn.d>0.5) return null;
+  const g=cityGraph();
+  if(sn.s<0.5) return g.V[sn.e.a];
+  if(sn.s>sn.e.len-0.5) return g.V[sn.e.b];
+  return null;
+}
+/* склейка двух маршрутов, сходящихся в центре узла J (машина → команда → следующая команда):
+   хвост первого за последней точкой полосы (сырой центр узла) и голова второго до первой
+   точки полосы (центр + дуга через центр) выбрасываются, вместо них — cornerArc по курсам
+   въезда и выезда. Без склейки линия шла в центр перекрёстка по диагонали и ломалась там
+   углом — то самое «пунктирная траектория абсолютно кривая» */
+function routeSplice(pts, b, J){
+  let ia=-1; for(let i=pts.length-1;i>0;i--) if(pts[i].lane){ ia=i; break; }
+  let ib=-1; for(let i=1;i<b.length-1;i++) if(b[i].lane){ ib=i; break; }
+  if(!J || J.round || ia<1 || ib<0){ for(let i=1;i<b.length;i++) pts.push(b[i]); return; }
+  const pA=pts[ia], qA=pts[ia-1], pB=b[ib], qB=b[ib+1];
+  const yawIn=Math.atan2(pA.u-qA.u, pA.v-qA.v), yawOut=Math.atan2(qB.u-pB.u, qB.v-pB.v);
+  pts.length=ia+1;
+  cornerArc(J, pA, pB, p=>pts.push(p), yawIn, yawOut);
+  for(let i=ib;i<b.length;i++) pts.push(b[i]);
+}
 function examLegBuild(){
   exam.legT=EXAM_LEG_T; exam.leg=null;
   const st=exam.route[exam.stage]; if(!st || !st.at) return;
@@ -6344,7 +6607,7 @@ function examLegBuild(){
     }
   } else if(nx && nx.at){
     const b=cityRoute(st.at, nx.at, {side:examLegSide(nx)});
-    if(b) for(let i=1;i<b.pts.length;i++) pts.push(b.pts[i]);
+    if(b) routeSplice(pts, b.pts, nodeAt(rs));
   }
   let L=0, cut=pts.length;
   for(let i=1;i<pts.length;i++){ L+=Math.hypot(pts[i].u-pts[i-1].u, pts[i].v-pts[i-1].v);
@@ -7035,6 +7298,7 @@ function drawShadows(){
     if(Math.hypot(o.u-cu,o.v-cv)>55) continue;
     /* статист движется — кэш _shadow оставил бы тень на месте старта. Дальнюю машину
        потока оставляем без тени: она и сама рисуется коробкой */
+    if(o.kind==='tram'){ fillGroundPoly(shadowPoly(o.u,o.v,o.w,o.l,o.yaw,TRAM_H),'rgba(0,0,0,.22)',null,0,0.010); continue; }
     if(o.act){ if(Math.hypot(o.u-cu,o.v-cv)<=trafLod()) carShadow(o.u,o.v,o.yaw); continue; }
     if(!o._shadow || o.knocked) continue;
     fillGroundPoly(o._shadow,'rgba(0,0,0,.22)',null,0,0.010);
@@ -7080,13 +7344,25 @@ function drawRefs(){
    мировые подсказки по фазам уровня: стоп-линии, маячки, стрелки и «призрак»
    идеальной позиции. Геометрия создаётся один раз в marks() уровня при загрузке —
    в кадре только отрисовка, без аллокаций */
+/* маркер обязан быть виден из салона: ближние 5,4 м дороги закрыты капотом, и линия на асфальте
+   пропадала ровно тогда, когда подсказка говорила «прижмись к жёлтой линии» — владелец её не
+   видел ни разу. У линии с подписью на концах стоят столбики цвета линии (posts), у точки — один;
+   цвет разбирается один раз в фабрике, не в кадре */
+function markCol(col){
+  if(Array.isArray(col)) return col;
+  const m=/rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(col||'');
+  return m ? [+m[1],+m[2],+m[3]] : [250,204,21];
+}
 function mline(pts,col,o){ o=o||{};
+  const posts = o.posts!==undefined ? o.posts : !!o.label;
   return {kind:'line',pts,col,dash:o.dash===null?null:(o.dash||[12,7]),lw:o.lw||2.5,
-          label:o.label,la:o.la||pts[pts.length>>1]}; }
+          label:o.label,la:o.la||pts[pts.length>>1],
+          posts:posts ? [pts[0], pts[pts.length-1]] : null, colArr:markCol(col)}; }
 function mpoint(u,v,label,col){ return {kind:'point',u,v,label,col:col||[255,214,60]}; }
 function mspot(u,v,label){
   const p=[]; for(let i=0;i<=16;i++){const a=i/16*TAU; p.push({u:u+Math.cos(a)*0.36, v:v+Math.sin(a)*0.36});}
-  return {kind:'line',pts:p,col:'rgba(250,204,21,.9)',dash:null,lw:2.5,label,la:{u,v}}; }
+  return {kind:'line',pts:p,col:'rgba(250,204,21,.9)',dash:null,lw:2.5,label,la:{u,v},
+          posts:[{u,v}], colArr:[250,204,21]}; }
 function marrow(a,b,label){
   const du=b.u-a.u,dv=b.v-a.v,L=Math.hypot(du,dv)||1,nu=du/L,nv=dv/L;
   const hu=-nv,hv=nu, hb={u:b.u-nu*0.8,v:b.v-nv*0.8};
@@ -7109,7 +7385,13 @@ function drawMarks(list,s,withLabels,pulse){
   const cap=MOB?2:3; let nl=0;
   if(pulse) ctx.globalAlpha=0.45+0.4*Math.sin(game.t*7);
   for(const m of list){
-    if(m.kind==='line') strokeGroundPath(m.pts,m.col,m.lw,m.dash,0.055);
+    if(m.kind==='line'){
+      strokeGroundPath(m.pts,m.col,m.lw,m.dash,0.055);
+      if(m.posts) for(const q of m.posts){
+        pushBox(q.u,0.65,q.v,0.03,0.65,0.03,0,m.colArr);
+        pushBox(q.u,1.36,q.v,0.07,0.07,0.07,0,m.colArr);
+      }
+    }
     else if(m.kind==='arrow'){ for(const sg of m.segs) strokeGroundPath(sg,m.col,3,null,0.055); }
     else if(m.kind==='ghost'){
       const col=ghostOk(m,s)?'rgba(74,222,128,.95)':'rgba(125,216,255,.8)';
@@ -7212,7 +7494,7 @@ function phaseTick(dt){
   curS.blink=car.blink; curS.roll=car.roll; curS.hand=car.hand;
   curS.front=lastClear.front; curS.rear=lastClear.rear;
   curS.left=lastClear.left; curS.right=lastClear.right;
-  curS.gap=level.actors.length ? trafficGap(c.u, c.v, 6) : 99;
+  curS.gap=level.actors.length ? trafficGap(c.u, c.v, 6, level.def.gapAt) : 99;
   const ph=level.def.phases;
   if(!ph){ curPhase=null; return; }
   let want=null;
@@ -7333,6 +7615,7 @@ function drawGuides(){
     strokeGroundPath([{u:i.u,v:i.v},{u:car.ru,v:car.rv}],'rgba(255,255,255,.35)',1.5,[5,7],0.05);
   }
 }
+const HAZ_LIGHTS={hazard:true};
 function emitObstacles(maxD){
   const cu=-cam.pos.x, cv=cam.pos.z;
   for(const o of level.rend){
@@ -7342,7 +7625,7 @@ function emitObstacles(maxD){
          двухсот граней, а на телефоне кадр упирается именно в число граней. Вблизи и у
          припаркованных всё по-прежнему */
       if(o.act && Math.hypot(o.u-cu,o.v-cv)>trafLod()){ emitCarLow(o.u,o.v,o.yaw,o.col); continue; }
-      emitCarMesh(o.u,o.v,o.yaw,o.col,0,null); continue; }
+      emitCarMesh(o.u,o.v,o.yaw,o.col,0,o.hazard ? HAZ_LIGHTS : null); continue; }
     if(o.kind==='cone'){
       if(o.knocked){ pushBox(o.u,0.09,o.v,0.30,0.09,0.30,0.6,[196,72,26]); continue; }
       pushBox(o.u,0.05,o.v,0.24,0.05,0.24,0,[206,88,26]);
@@ -7352,6 +7635,7 @@ function emitObstacles(maxD){
       continue;
     }
     if(o.kind==='sign'){ emitSign(o); continue; }
+    if(o.kind==='tram'){ emitTram(o); continue; }
     if(o.kind==='guide'){ emitGuide(o); continue; }
     if(o.kind==='light'){ emitTrafficLight(o); continue; }
     pushBox(o.u,o.h/2,o.v,o.w/2,o.h/2,o.l/2,o.yaw,o.col,0,o);
@@ -7362,7 +7646,8 @@ function emitObstacles(maxD){
    там, где от него зависит, тормозить или ехать */
 function emitTrafficLight(o){
   const ph=lightPhase(o);
-  pushBox(o.u,1.30,o.v,0.055,1.30,0.055,o.yaw,[122,128,136]);
+  /* столб до низа корпуса (LIGHT_H−0,92) — как у знака, иначе просвечивает сквозь корпус */
+  pushBox(o.u,(LIGHT_H-0.92)*0.5,o.v,0.055,(LIGHT_H-0.92)*0.5,0.055,o.yaw,[122,128,136]);
   pushBox(o.u,LIGHT_H-0.46,o.v,0.15,0.46,0.11,o.yaw,[46,50,56]);
   const f=fuv(o.yaw);
   const LENS={R:[[238,58,52],[92,34,34]], Y:[[244,190,52],[92,80,38]], G:[[70,214,110],[36,80,48]]};
@@ -7384,8 +7669,11 @@ function emitTrafficLight(o){
 /* щит знака: формы из pushPoly в вертикальной плоскости, лицом вдоль yaw знака.
    Кайма и заливка разнесены по глубине на 13 мм — ближе painter's algorithm
    сортирует их по средней глубине и слои мерцают (см. накладки торпедо) */
+/* столб кончается под щитом (щит от y SIGN_H−0,42−0,375): столб во весь рост сортировался по
+   центроиду ближе щита и просвечивал сквозь него; с рёбрами это стало бросаться в глаза */
+const SIGN_POST_H=SIGN_H-0.42-0.375;
 function emitSign(o){
-  pushBox(o.u,1.0,o.v,0.035,1.0,0.035,o.yaw,[132,138,146]);
+  pushBox(o.u,SIGN_POST_H*0.5,o.v,0.035,SIGN_POST_H*0.5,0.035,o.yaw,[132,138,146]);
   const f=fwd(o.yaw), R=rgt(o.yaw), cx=-o.u, cz=o.v, y=SIGN_H-0.42;
   const nf=Math.hypot(f.x*0.55,0.83,f.z*0.55);
   const nrm={x:f.x*0.55/nf, y:0.83/nf, z:f.z*0.55/nf};
@@ -7426,6 +7714,12 @@ function emitSign(o){
     case 'yield':
       mk([[-0.37,0.30],[0.37,0.30],[0,-0.36]],[204,46,50],0.020,true);
       mk([[-0.24,0.22],[0.24,0.22],[0,-0.21]],[242,244,246],0.036);
+      break;
+    case 'uturn':
+      /* 6.3.1 «место для разворота»: синий квадрат, белая кайма, белая петля-стрелка картинкой */
+      mk([[-0.36,0.36],[0.36,0.36],[0.36,-0.36],[-0.36,-0.36]],[240,242,246],0.020,true);
+      mk([[-0.32,0.32],[0.32,0.32],[0.32,-0.32],[-0.32,-0.32]],[28,78,164],0.036);
+      picq(0.27,0.27,0.052,signPic('uturn'),[28,78,164]);
       break;
     case 'main':
       mk(diamond(0.37),[240,242,246],0.020,true);
@@ -7485,7 +7779,7 @@ function drawSceneInto(o){
     carRampUse=true;
     try{
       emitCarMesh(c.u,c.v,car.th,[206,214,226],car.steer,
-                  {brake:input.back, rev:car.sel==='R'});
+                  {brake:input.back, rev:car.sel==='R', own:true});
       if(inside) emitInterior(c.u,c.v,car.th);
       if(opt.refs>=1) emitCornerPosts();
     } finally { carRampUse=false; }
@@ -7692,17 +7986,18 @@ function render(dt){
 function examMapPath(){
   if(exam._map) return exam._map;
   const pts=[], used={};
-  let prev=level.start ? {u:level.start.u, v:level.start.v} : null;
+  let prev=level.start ? {u:level.start.u, v:level.start.v} : null, prevNode=null;
   for(const st of exam.route){
     if(!st.at) continue;
     if(prev){
       const r=cityRoute(prev, st.at, {side:examLegSide(st)});
       if(r){
-        for(let i=(pts.length?1:0);i<r.pts.length;i++) pts.push(r.pts[i]);
+        if(!pts.length) for(const p of r.pts) pts.push(p);
+        else routeSplice(pts, r.pts, prevNode);
         for(const lg of r.legs) if(lg.name) used[lg.name]=true;
       }
     }
-    prev=st.at;
+    prev=st.at; prevNode=nodeAt(citySnap(st.at));
   }
   /* улицу подписываем один раз — на самом длинном её куске, иначе «Ленина» встанет трижды */
   const names=[];
@@ -9080,14 +9375,22 @@ const DEMOS = {
     /* до ЦЕНТРА полотна (0), а не до правого рельса (1,6): дуга полного левого кончается
        на 1,6 м западнее, и машине остаётся не 3 м поперечного схождения до своей полосы,
        а полтора — иначе она шла к полосе под 23° и задним углом скребла бордюр 3 секунды */
-    {g:'D', aim:{u:0,v:-30}, slow:true, uLte:0.8, max:18,
+    /* до u≤1,3 и затем выравнивание на север «морковкой» прямо по курсу: ждать трамвай надо
+       ровно, на своём пути — под −21° передний левый угол вылезал на встречный путь (u −0,64),
+       и трамвай либо бил в него (demo-vio), либо вставал перед ним и показ замирал навсегда */
+    {g:'D', aim:{u:-0.5,v:-38}, slow:true, uLte:1.5, max:18,
      say:'Разворот выполняют С ПУТЕЙ попутного направления — встаём на полотно'},
-    {g:'D', s:0, slow:true, vGte:-40, max:10},
+    {g:'D', aim:{u:1.5,v:-10}, slow:true, th:0, thTol:5, max:8},
+    /* окно в потоке, а не пауза: трамвай выходит по триггеру и проходит место разворота
+       как раз здесь — показ стоит, пока чип «окно» не отдаст 8 с, как и карточка игрока */
+    {g:'P', s:0, gap:8, max:24, say:'Трамвай по встречному пути — пропускаем: ему тормозить дольше'},
     {g:'D', s:-1, slow:true, th:rad(-176), thTol:5, max:26,
      say:'Полный левый: дуга через встречные пути, в один приём'},
     /* «морковка» близко: с дальней целью боковое схождение шло по 1 м на 12 м пути,
        и машина проходила зону мимо своей полосы */
-    {g:'D', aim:{u:-8.15,v:-44}, slow:true, vLte:-45, max:14, say:'Выходим в свою правую полосу'},
+    /* «морковка» на −50, не на −44: дуга теперь кончается на v≈−37, и до цели в 6 м погоня
+       доворачивала за юг и выносила борт на бордюр (level-audit: касание на выходе) */
+    {g:'D', aim:{u:-8.15,v:-50}, slow:true, vLte:-45, max:14, say:'Выходим в свою правую полосу'},
     {g:'D', aim:{u:-8.15,v:-62}, slow:true, goal:true, max:14, say:'И в зону'},
     {g:'P', time:0.9, say:'Из правой полосы здесь разворачиваться нельзя — это отдельное нарушение'}
   ]},
@@ -9186,7 +9489,7 @@ function demoDone(seg){
      свободно, и идеальная линия строится по пустому городу */
   if(seg.gap!==undefined){
     const c=bodyPos();
-    if(trafficGap(c.u, c.v, 6) >= seg.gap) return true;
+    if(trafficGap(c.u, c.v, 6, level.def.gapAt) >= seg.gap) return true;
   }
   if(seg.green){
     const L=(level.city&&level.city.lights||[])[0];
@@ -10191,6 +10494,15 @@ function frame(ts){
   if(frameCost > 11) trailBudget = Math.max(70, trailBudget-10);
   else if(frameCost < 7) trailBudget = Math.min(TRAIL_MAX, trailBudget+4);
   qTick(rdt);
+}
+/* гудок машины, которую держит игрок: два тона, громкость по дистанции. Молчит без звука, на
+   паузе, в показе и когда уровень закончен */
+const HONK_WAIT=4, HONK_REST=7;
+function honk(d){
+  if(paused||!opt.sound||!AC||game.done||demo) return;
+  const vol=clamp(0.5-d/40, 0.08, 0.5);
+  tone(430,0.18,vol,'square');
+  setTimeout(()=>{ if(!paused&&opt.sound&&AC) tone(470,0.22,vol,'square'); }, 220);
 }
 function parkBeep(dt){
   if(paused||!opt.sound||!AC) return;
