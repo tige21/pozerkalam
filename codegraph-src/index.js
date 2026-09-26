@@ -2928,15 +2928,18 @@ function emitTram(o){
    встречный поток в плотном трафике запирает перекрёсток насмерть.
    Поток создаётся ПОСЛЕ computeIdealPath (см. loadLevel): в headless-прогоне показа
    actorsTick не зовётся, и созданные заранее машины встали бы поперёк идеальной линии. */
-const TRAF={ sp:6.2, acc:1.3, dec:2.9, gap:6.2, see:28, lat:1.8, lon:2.6, cap:16, step:2.4 };
+/* cap 30: две городские петли ≈ 650 м, на «час пик» это ~22 машины плюс запас под trafMul;
+   третьей петли в графе нет — Ленина-север, Парковая, Южная и Косой съезд кончаются тупиками,
+   а разворот в петле потока запрещён, так что больше машин = гуще на тех же двух */
+const TRAF={ sp:6.2, acc:1.3, dec:2.9, gap:6.2, see:28, lat:1.8, lon:2.6, cap:30, step:2.4 };
 /* метров дороги на одну машину: чем меньше, тем гуще поток */
-const TRAF_SPACING={off:Infinity, calm:115, normal:74, dense:48};
-const TRAF_NAMES={off:'без машин', calm:'спокойный', normal:'обычный', dense:'плотный'};
+const TRAF_SPACING={off:Infinity, calm:115, normal:74, dense:48, heavy:30};
+const TRAF_NAMES={off:'без машин', calm:'спокойный', normal:'обычный', dense:'плотный', heavy:'час пик'};
 /* за этой дальностью машина потока рисуется коробкой, а тень ей не рисуется вовсе.
    Замер на кольце (CPU×4): девять машин добавляли 402 грани к 754 и 2,5 мс к кадру —
    лофт из 13 сечений там, где машина занимает полсантиметра экрана */
 function trafLod(){ return qDetail() ? 32 : 20; }
-const TRAF_ORDER=['off','calm','normal','dense'];
+const TRAF_ORDER=['off','calm','normal','dense','heavy'];
 const TRAF_COLS=[1,2,3,5,6,7];
 const _tp={u:0, v:0, yaw:0}, _tq={u:0, v:0, yaw:0}, _ex={lat:0, lon:0};
 let trafDbg=false;      /* ?traffic=1 — покадровый разбор причин торможения */
@@ -3116,17 +3119,29 @@ function trafficInit(){
   const key=trafKey(), spacing=TRAF_SPACING[key];
   /* «без машин» — город пустой: новичку сначала нужен сам манёвр, поток он включит потом */
   if(key==='off'){ console.warn('[FIX:traffic] '+def.name+': поток выключен игроком'); return; }
+  /* trafMul — авторская ручка уровня поверх общей ступени игрока: уровень, который учит
+     ждать окно в потоке, может быть гуще соседей, не трогая настройку у всех */
+  const mul=clamp(+def.trafMul || 1, 0.25, 4);
   let made=0, li=0;
   for(const rt of loops){
-    const k=clamp(Math.round(rt.len/spacing), 1, TRAF.cap-made);
+    const k=clamp(Math.round(rt.len/spacing*mul), 1, TRAF.cap-made);
     /* сдвиг фазы на петлю: машины разных петель не выходят на общую улицу строем */
     const ph=rt.len*0.37*(li++);
+    /* сдвиг от старта игрока идёт шагами по 15 м; при spacing 30 два шага клали машину
+       ровно на следующую — на «час пик» три уровня стартовали с наложением 1,8 м. Уже
+       расставленные позиции петли держат дистанцию: не ближе половины spacing и 9 м */
+    const placed=[];
+    const tooClose=(s)=>{ const min=Math.max(9, spacing*0.5);
+      for(const p of placed){ let d=Math.abs(((s-p)%rt.len+rt.len)%rt.len); d=Math.min(d, rt.len-d); if(d<min) return true; }
+      return false; };
     for(let i=0;i<k;i++){
       /* стартовая поза игрока на уровнях 30 и 31 стоит ровно в полосе потока: машина,
          заспавненная там, пересекалась с игроком на первом же кадре, а _hitByPlayer
          защёлкивается на любом пересечении OBB — попытка сгорала на 0,1 с, не тронувшись */
       let s0=rt.len*i/k+ph;
-      for(let g=0; g<4 && trafNearStart(rt, s0); g++) s0+=TRAF_START_CLEAR;
+      for(let g=0; g<8 && (trafNearStart(rt, s0) || tooClose(s0)); g++) s0+=TRAF_START_CLEAR;
+      if(trafNearStart(rt, s0) || tooClose(s0)) continue;
+      placed.push(s0);
       const o=trafCar(rt, s0, PALETTE[TRAF_COLS[made%TRAF_COLS.length]]);
       level.obs.push(o); level.rend.push(o); level.actors.push(o); made++;
     }

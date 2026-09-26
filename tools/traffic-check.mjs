@@ -29,6 +29,10 @@ await page.goto(url);
 await page.evaluate(() => { for (const k of ['trainer_seen', 'trainer_hint', 'trainer_drive']) localStorage.setItem(k, '1'); });
 await page.goto(url + '&r=1');
 await page.waitForTimeout(400);
+/* TRAFFIC=heavy — гонять поток на заданной ступени: без этого гейт видел только «обычный»,
+   а ступень «час пик» появилась бы слепой (пробки и наложения живут именно там) */
+const TRAFFIC = process.env.TRAFFIC || '';
+if (TRAFFIC) await page.evaluate(k => { if (!TRAF_SPACING[k]) throw new Error('нет ступени ' + k); opt.traffic = k; }, TRAFFIC);
 
 const asked = process.argv.slice(2).map(Number);
 const levels = asked.length ? asked
@@ -88,7 +92,7 @@ for (const li of levels) {
       /* отрицательное значение — «чем меньше, тем хуже»: храним худший замер */
       if (p === undefined || (val < 0 ? val > p : val > p)) seen[k] = val;
       if (p !== undefined && val < 0 && val < p) seen[k] = p; };
-    const stuck = new Map(), crossed = new Map(), prevYaw = new Map(); let maxJump = 0;
+    const stuck = new Map(), crossed = new Map(), prevYaw = new Map(); let maxJump = 0, firstHit = null;
     const dt = 1 / 30, n = Math.round(secs / dt);
     let minGap = 99, vsum = 0, vn = 0, windows = 0;
     for (let k = 0; k < n; k++) {
@@ -152,7 +156,11 @@ for (const li of levels) {
           if (d < minGap) minGap = d;
           const m = satMTV({ u: a.u, v: a.v, hw: HALF_W, hl: HALF_L, yaw: a.yaw },
                            { u: b.u, v: b.v, hw: HALF_W, hl: HALF_L, yaw: b.yaw });
-          if (m) note('кузова наложились на, м (@traffic-flow-gap)', m.depth.toFixed(2));
+          if (m) { note('кузова наложились на, м (@traffic-flow-gap)', m.depth.toFixed(2));
+            /* первое наложение с координатами и временем — иначе по одной цифре не найти, где
+               и почему (спавн, перекрёсток, стык петель) */
+            if (!firstHit) firstHit = { t: +(k * dt).toFixed(1), u: +a.u.toFixed(1), v: +a.v.toFixed(1), i, j,
+              va: +a.act.v.toFixed(1), vb: +b.act.v.toFixed(1), ya: Math.round(deg(a.yaw)), yb: Math.round(deg(b.yaw)) }; }
         }
         /* застряла без причины */
         const blocked = trafBlock(a, level.actors.indexOf(a)) < TRAF.see || trafLight(a) < TRAF.see;
@@ -165,7 +173,8 @@ for (const li of levels) {
       if (k % 90 === 0 && !flow.some(a => Math.hypot(a.u - level.start.u, a.v - level.start.v) < 18)) windows++;
     }
     return { name: level.def.name, cars: flow.length,
-      err: err.concat(Object.keys(seen).map(k => k + ': ' + Math.abs(seen[k]))),
+      err: err.concat(Object.keys(seen).map(k => k + ': ' + Math.abs(seen[k])))
+        .concat(firstHit ? ['первое наложение: ' + JSON.stringify(firstHit)] : []),
       vavg: +(vsum / vn).toFixed(2), minGap: +minGap.toFixed(1), windows };
   }, { li, secs: SECS });
 
@@ -176,6 +185,25 @@ for (const li of levels) {
     + ' · окон ' + (r.windows ?? 0)
     + (r.err.length ? '\n     ' + r.err.join('\n     ') : ''));
   if (pageErr) { console.log('     PAGEERR ' + pageErr); pageErr = null; }
+}
+/* ступени плотности и авторский множитель: «час пик» заметно гуще «плотного», trafMul
+   удваивает счёт до потолка; экзамен всегда dense и здесь не считается */
+for (const li of levels) {
+  const r = await page.evaluate(({ li, back }) => {
+    if (LEVELS[li].examRoute) return null;
+    const at = (k, mul) => { opt.traffic = k; LEVELS[li].trafMul = mul; loadLevel(li); hideOv(); paused = true; return trafCount(); };
+    const dense = at('dense'), heavy = at('heavy'), mul2 = at('heavy', 2);
+    delete LEVELS[li].trafMul; opt.traffic = back; loadLevel(li); hideOv(); paused = true;
+    return { name: level.def.name, dense, heavy, mul2, cap: TRAF.cap };
+  }, { li, back: TRAFFIC || 'normal' });
+  if (!r) continue;
+  const okHeavy = r.heavy >= r.dense * 1.4 && r.heavy <= r.cap;
+  /* две машины могут выпасть у стартовой позы игрока (TRAF_START_CLEAR) — это не дефект множителя */
+  const okMul = r.mul2 >= Math.min(r.cap, Math.round(r.heavy * 1.8)) - 2;
+  if (!okHeavy || !okMul) bad++;
+  console.log((okHeavy ? 'OK   ' : 'FAIL ') + r.name + ' · «час пик» гуще «плотного» (@traffic-density-heavy) · ' + r.dense + ' → ' + r.heavy + ' из ' + r.cap);
+  console.log((okMul ? 'OK   ' : 'FAIL ') + r.name + ' · trafMul 2 удваивает поток до потолка (@traffic-density-mul) · ' + r.heavy + ' → ' + r.mul2);
+  if (pageErr) { console.log('     PAGEERR ' + pageErr); pageErr = null; bad++; }
 }
 await browser.close();
 process.exit(bad ? 1 : 0);
