@@ -512,6 +512,56 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -3103,7 +3153,7 @@ function cycleTraffic(){
   const on=level && level.def && level.def.traffic;
   if(on) loadLevel(game.li);
   const exam=on && level.def.examRoute;
-  toast('Трафик: '+TRAF_NAMES[opt.traffic]+(!on?' — на этом уровне потока нет'
+  toast('Поток: '+TRAF_NAMES[opt.traffic]+(!on?' — на этом уровне потока нет'
     : exam?' — на экзамене поток всегда плотный' : ' · машин в городе: '+trafCount()+' · уровень начат заново'), 3);
 }
 const TRAF_START_CLEAR=15;      /* пустой участок петли вокруг стартовой позы игрока, м */
@@ -5591,7 +5641,8 @@ function blindZone(){
   return {front: front-HALF_L, rear: -(rear+HALF_L)};
 }
 /* refs: 0 — как в жизни, 1 — рамка и столбики габаритов, 2 — плюс метки расстояний и слепые зоны */
-const REFS_NAMES = ['выкл','габариты','всё'];
+/* имена ступеней, а не «габариты/всё»: в меню кнопка читалась «Габариты: габариты → всё» */
+const REFS_NAMES = ['выкл','рамка','с метками'];
 /* траектории по умолчанию выключены: у новичка на первом запуске дуги прогноза, след
    колёс и идеальная линия сливались в кашу поверх обучающих маркеров. G включает всё разом */
 const opt  = { guides:false, trails:false, sound:false, refs:2, marks:true, camMode:CAM_CHASE, camYaw:0, pitch:rad(22),
@@ -5739,7 +5790,7 @@ function loadLevel(i){
   restart();
   document.getElementById('lvlName').textContent = def.name;
   document.getElementById('lvlTask').textContent = def.task;
-  document.getElementById('lvlTip').textContent  = '💡 ' + def.tip;
+  document.getElementById('lvlTip').textContent  = def.tip;
   document.getElementById('lvlIdx').textContent  = 'уровень ' + (game.li+1) + ' / ' + LEVELS.length;
   track('level-start');
   /* маршрут показываем ДО старта: «слишком маленький и непонятный» был не про длину,
@@ -6062,7 +6113,20 @@ function syncHintLine(){
    (drawSteerPanel в render стоит на H−186): блок обязан в неё влезать, а не перекрывать */
 const HINT_ROW=16, HINT_PAD=12;
 let hintKey='', hintTick=0;
+/* меряются ячейки, а не сам #bar: в салоне на телефоне у него заданы и top, и bottom,
+   коробка тянется на весь экран, а ячейки стоят сверху */
+let barH='', barBot=0;
+function layoutBar(){
+  const b=$('bar'); if(!b) return;
+  let top=Infinity, bot=0;
+  for(const c of b.children){ const r=c.getBoundingClientRect();
+    if(r.height>0){ if(r.top<top) top=r.top; if(r.bottom>bot) bot=r.bottom; } }
+  barBot=bot;
+  const h=(bot>0 ? Math.round(H-top) : 18)+'px';
+  if(h!==barH){ barH=h; document.documentElement.style.setProperty('--barh', h); }
+}
 function layoutHint(){
+  layoutBar();
   const el=$('hint'), tl=$('topleft'); if(!el||!tl||!el.children.length) return;
   let top=tl.getBoundingClientRect().bottom;
   if(opt.mirrors){ const m=mirrorRects().left; top=Math.max(top, m.y+m.h); }
@@ -6384,15 +6448,15 @@ function examSvg(){
     +'</svg>';
 }
 function examFailHTML(){
-  return '<h1>❌ Экзамен не сдан</h1>'
+  return '<h1>Экзамен не сдан</h1>'
     +'<p><b>'+(exam.failWhy||'Набрано '+exam.score+' штрафных баллов')+'</b></p>'
     +'<p>Штрафные баллы: <b>'+exam.score+'</b> (допускается до '+(EXAM_FAIL_SUM-1)+')</p>'
     +examSvg()
     +'<ul class="startlist">'+examLogRows()+'</ul>'
     +'<p>На настоящем экзамене после трёх неудач пересдача — через полгода. Здесь — сразу.</p>'
-    +'<button data-act="again">Попробовать снова</button> '
-    +'<button data-act="pick" class="ghost">К уровням</button> '
-    +'<button data-act="feedback:fail" class="ghost">✉ Что-то не так</button>';
+    +'<button data-act="again">Заново'+(MOB?'':' (R)')+'</button> '
+    +'<button data-act="pick" class="ghost">Выбрать уровень</button> '
+    +'<button data-act="feedback:fail" class="ghost">✉︎ Что-то не так</button>';
 }
 /* брифинг: карта маршрута и список команд ДО старта. На настоящем экзамене инспектор
    тоже сообщает маршрут в общих чертах — молчит он про то, КАК ехать, а не КУДА */
@@ -6437,7 +6501,7 @@ function examBriefHTML(){
     i<exam.stage ? '<li style="opacity:.45">✓ '+st.cmd+'</li>'
     : i===exam.stage ? '<li><b style="color:#ffcf4d">▸ '+st.cmd+'</b></li>'
     : '<li>'+(i+1)+'. '+st.cmd+'</li>').join('');
-  return '<h1>🎓 Экзаменационный маршрут</h1>'
+  return '<h1>Экзаменационный маршрут</h1>'
     +'<p>'+(examTrain()
       ? 'Тренировочный режим: подсказки, зазоры и карта маршрута включены, ошибка не обрывает поездку — её разберут на месте.'
       : 'Настоящий режим: инспектор молчит, датчиков нет, грубая ошибка — незачёт сразу.')+'</p>'
@@ -6449,7 +6513,7 @@ function examBriefHTML(){
     +(started?' Карта в углу открывает этот список в любой момент.':'')+'</p>'
     +'<button data-act="brief">'+(started?'Продолжить':'Поехали')+'</button> '
     + (started?'':examModeBtnHTML())
-    +'<button data-act="pick" class="ghost">К уровням</button>';
+    +'<button data-act="pick" class="ghost">Выбрать уровень</button>';
 }
 function examAbortHTML(){
   return '<h2>Прервать экзамен?</h2>'
@@ -6511,16 +6575,16 @@ const FAIL_RULE={
 };
 function levelFailHTML(){
   const rule=FAIL_RULE[attempt.code]||'', tr=EXAM_TRAIN[attempt.code];
-  return '<h1>❌ Попытка не засчитана</h1>'
+  return '<h1>Попытка не засчитана</h1>'
     +'<p><b>'+attempt.why+'</b></p>'
     +(rule?'<p style="color:#93a7bd">'+rule+'</p>':'')
     +'<ul class="startlist">'+attempt.log.map(l=>'<li>'+l.txt
       +' <span style="opacity:.55">('+l.t.toFixed(0)+' с)</span></li>').join('')+'</ul>'
     +'<p>Грубая ошибка отменяет поездку целиком — так же, как на экзамене.</p>'
-    +'<button data-act="again">Начать заново</button> '
+    +'<button data-act="again">Заново'+(MOB?'':' (R)')+'</button> '
     +(tr!==undefined?'<button data-act="train:'+tr+'" class="ghost">Отработать приём</button> ':'')
-    +'<button data-act="pick" class="ghost">К уровням</button> '
-    +'<button data-act="feedback:fail" class="ghost">✉ Что-то не так</button>';
+    +'<button data-act="pick" class="ghost">Выбрать уровень</button> '
+    +'<button data-act="feedback:fail" class="ghost">✉︎ Что-то не так</button>';
 }
 
 /* начисления, не привязанные к городской геометрии, + ведение маршрута */
@@ -6549,8 +6613,8 @@ function examTick(dt){
 const TURN_GLYPH={L:'↰', R:'↱', U:'↻', stop:'⏹', park:'🅿', straight:'⬆'};
 function examNav(){
   const st=exam.route[exam.stage];
-  if(!st) return {glyph:'🎓', text:'—', dist:null};
-  const g=TURN_GLYPH[st.turn]||'🎓';
+  if(!st) return {glyph:'▸', text:'—', dist:null};
+  const g=TURN_GLYPH[st.turn]||'▸';
   if(!st.at) return {glyph:g, text:st.cmd, dist:null};
   /* расстояние считается ПО МАРШРУТУ: по прямой «через 60 м направо» врёт на каждом
      изгибе, а именно эту цифру игрок использует, чтобы понять, когда перестраиваться */
@@ -6790,15 +6854,15 @@ function examNextHTML(){
     +'Маршрут в следующем заезде выпадает жребием — сдай каждый.</p>';
 }
 function examPassHTML(){
-  return '<h1>✅ Экзамен сдан</h1>'
+  return '<h1>Экзамен сдан</h1>'
     +'<p>Штрафные баллы: <b>'+exam.score+'</b> из допустимых '+(EXAM_FAIL_SUM-1)+'</p>'
     +examSvg()
     +'<ul class="startlist">'+examLogRows()+'</ul>'
     +'<p>Время маршрута: <b>'+game.t.toFixed(0)+' с</b> · порядок манёвров в следующий раз может быть другим</p>'
     +examNextHTML()
     +'<button data-act="again">Ещё маршрут</button> '
-    +'<button data-act="pick" class="ghost">К уровням</button> '
-    +'<button data-act="feedback:win" class="ghost">✉ Что-то не так</button>';
+    +'<button data-act="pick" class="ghost">Выбрать уровень</button> '
+    +'<button data-act="feedback:win" class="ghost">✉︎ Что-то не так</button>';
 }
 /* когда поворотник в последний раз горел: перестроение засчитывается корректным,
    если сигнал был включён до начала манёвра, а не мигнул уже поперёк разметки */
@@ -7030,11 +7094,11 @@ function precReport(){
   const gap=(precGap()>=SENS_MAX-0.01?'больше 3 м':precGap().toFixed(2).replace('.',',')+' м');
   const want=p.target.toFixed(2).replace('.',',');
   if(!precAngOk())
-    return '❌ Встал под '+Math.round(deg(precAngOff()))+'° к оси: замер '+gap
+    return 'Встал под '+Math.round(deg(precAngOff()))+'° к оси: замер '+gap
          +', но боком он не считается. R — ещё раз, ровно.';
   if(Math.abs(e)<=p.tol)
-    return '✅ '+precGrade()+': '+gap+' при цели '+want+' м. Ошибка '+cm+' см. R — ещё раз, уже точнее.';
-  return (e>0 ? '❌ Не доехал '+cm+' см: ' : '❌ Перебрал '+cm+' см: ')
+    return precGrade()+': '+gap+' при цели '+want+' м. Ошибка '+cm+' см. R — ещё раз, уже точнее.';
+  return (e>0 ? 'Не доехал '+cm+' см: ' : 'Перебрал '+cm+' см: ')
        + gap+' вместо '+want+' м. Попытка одна — нажми R и попробуй снова.';
 }
 function goalReached(){
@@ -7450,16 +7514,26 @@ function drawPill(p, txt, sk){
   if(MOB && (sp.y > VP.y+VP.h-104 || sp.y < VP.y+mirBot+70)) return;
   ctx.font=(MOB?'10.5px':'12px')+' ui-sans-serif,system-ui';
   const w=ctx.measureText(txt).width+14, h=19;
+  /* пилюля у края кадра сдвигается внутрь целиком, а не срезается краем экрана */
+  const x=clamp(sp.x, VP.x+w/2+4, VP.x+VP.w-w/2-4);
   /* пилюли не должны наезжать друг на друга — сдвигаем вверх, пока место занято */
   let y=sp.y-23;
   for(let i=0;i<labelBoxes.length;i++){
     const b=labelBoxes[i];
-    if(Math.abs(b.x-sp.x) < (b.w+w)/2 && Math.abs(b.y-y) < h+3){ y=b.y-h-4; i=-1; }
+    if(Math.abs(b.x-x) < (b.w+w)/2 && Math.abs(b.y-y) < h+3){ y=b.y-h-4; i=-1; }
   }
-  labelBoxes.push({x:sp.x, y, w, h});
-  ctx.fillStyle=sk.bg; roundRect(sp.x-w/2,y,w,h,6); ctx.fill();
+  /* на телефоне HTML-ячейки зазоров встают в два ряда (на 568 px их низ на ~125 px), а боковые
+     зеркала рисуются поверх сцены: пилюля под ними читалась обрывком — «стоп линия: бампер не за неё» */
+  if(MOB){
+    if(y < barBot+4) return;
+    if(opt.mirrors){ const mr=mirrorRects();
+      for(const m of [mr.left, mr.right])
+        if(x+w/2>m.x && x-w/2<m.x+m.w && y<m.y+m.h && y+h>m.y) return; }
+  }
+  labelBoxes.push({x, y, w, h});
+  ctx.fillStyle=sk.bg; roundRect(x-w/2,y,w,h,6); ctx.fill();
   ctx.strokeStyle=sk.br; ctx.lineWidth=1; ctx.stroke();
-  ctx.fillStyle=sk.fg; ctx.textAlign='center'; ctx.fillText(txt,sp.x,y+14);
+  ctx.fillStyle=sk.fg; ctx.textAlign='center'; ctx.fillText(txt,x,y+14);
   ctx.textAlign='left';
 }
 function drawMarkLabels(s){
@@ -8172,17 +8246,18 @@ function drawSteerPanel(x,y,w,h){
   const turns=car.steer*CAR.steerRatio/TAU;
   ctx.fillStyle='#dbe7f3';
   ctx.fillText(Math.abs(turns)<0.03 ? 'руль прямо'
-     : Math.abs(turns).toFixed(2)+' об. '+(car.steer>0?'вправо':'влево')
+     : Math.abs(turns).toFixed(2).replace('.',',')+' об. '+(car.steer>0?'вправо':'влево')
        +'   ('+Math.abs(deg(car.steer)).toFixed(0)+'°)', x+14, y+h-32);
   ctx.fillStyle='#8fa6bd'; ctx.font='11px ui-monospace,Menlo,Consolas,monospace';
   ctx.fillText(sw.R===Infinity ? 'радиус ∞ — колёса прямо'
-     : 'R ось '+sw.R.toFixed(1)+' м · габарит '+sw.out.toFixed(1)+' м · коридор '+sw.corr.toFixed(1)+' м',
+     : 'R ось '+dec1(sw.R)+' м · габарит '+dec1(sw.out)+' м · коридор '+dec1(sw.corr)+' м',
      x+14, y+h-14);
   ctx.fillStyle = Math.abs(car.vel)<0.25 ? '#fbbf24' : '#7fd6a2';
   ctx.textAlign='right';
-  ctx.fillText('до упора '+lockTime().toFixed(1)+' с', x+w-14, y+h-32);
+  ctx.fillText('до упора '+dec1(lockTime())+' с', x+w-14, y+h-32);
   ctx.textAlign='left';
 }
+function dec1(v){ return v.toFixed(1).replace('.',','); }
 function clearColor(d){ return d<0.35?'#f87171' : d<0.9?'#fbbf24' : '#4ade80'; }
 let lastClear={front:3,rear:3,left:3,right:3};
 function drawMinimap(x,y,size){
@@ -8255,10 +8330,10 @@ let coachKey='';
 const COACH_METRICS={
   ang:  {cell:'angVal', fmt:v=>Math.round(v)+'°',
          get:()=>{ const gl=level.goal; return gl?Math.abs(deg(angNorm(car.th-gl.th))):0; }},
-  front:{cell:'cf', fmt:v=>v.toFixed(2)+' м', get:()=>lastClear.front},
-  rear: {cell:'cb', fmt:v=>v.toFixed(2)+' м', get:()=>lastClear.rear},
-  left: {cell:'cl', fmt:v=>v.toFixed(2)+' м', get:()=>lastClear.left},
-  right:{cell:'cr', fmt:v=>v.toFixed(2)+' м', get:()=>lastClear.right},
+  front:{cell:'cf', fmt:v=>v.toFixed(2).replace('.',',')+' м', get:()=>lastClear.front},
+  rear: {cell:'cb', fmt:v=>v.toFixed(2).replace('.',',')+' м', get:()=>lastClear.rear},
+  left: {cell:'cl', fmt:v=>v.toFixed(2).replace('.',',')+' м', get:()=>lastClear.left},
+  right:{cell:'cr', fmt:v=>v.toFixed(2).replace('.',',')+' м', get:()=>lastClear.right},
   /* окно в потоке — единственная метрика без своей клетки на панели: она про чужие
      машины, а не про габариты, поэтому тапом подсвечивать нечего */
   gap:  {cell:null, fmt:v=>v>=GAP_MAX?'больше 9 с':Math.round(v)+' с',
@@ -8296,7 +8371,7 @@ function coachCard(kind, icon, main, goal, ph){
     +(wheel?'<span class="cw '+wheel+'" title="'+WHEEL_TITLE[wheel]+'"></span>':'')
     +'<span class="cm"></span>'
     +(goal?' <span class="cg" title="нажми — подсветится показание на панели">'
-      +'<span class="cgt"></span><span class="cgv"></span>'
+      +'<span class="cgt"></span><span class="cgv" aria-live="off"></span>'
       +(m?'<span class="cgb"><i></i></span>':'')+'</span>':'')
     +(why&&!open?'<span class="cq" title="почему так (Slash)">?</span>':'')
     /* пробел перед блоком обязателен: textContent карточки читают ученик и скринридер,
@@ -8329,7 +8404,7 @@ function coachGoalTick(){
   const pct = done ? 100 : Math.abs(den)<1e-6 ? 100 : Math.round(clamp((g.start-v)/den*100,0,100));
   if(pct!==g.pct){ g.pct=pct; g.bEl.style.width=pct+'%'; g.el.classList.toggle('done', pct>=100); }
 }
-function fmtClear(d){ return d>=SENS_MAX-0.01 ? '3.0+' : d.toFixed(2); }
+function fmtClear(d){ return d>=SENS_MAX-0.01 ? '3,0+' : d.toFixed(2).replace('.',','); }
 function setClear(el,d){ setText(el, fmtClear(d)+' м');
   el.className = d<0.35?'bad':(d<0.9?'warn':'ok'); }
 function updateHUD(){
@@ -8357,7 +8432,8 @@ function updateHUD(){
     const needStart = mtOn() && car.stalled;
     const hv = needStart ? 'none' : '', sv = needStart ? '' : 'none';
     if($('thand').style.display!==hv) $('thand').style.display=hv;
-    if($('tstart').style.display!==sv) $('tstart').style.display=sv;
+    if($('tstart').style.display!==sv){ $('tstart').style.display=sv;
+      $('tstart').parentNode.classList.toggle('stalled', needStart); }
     $('tview').classList.toggle('act', opt.camMode===CAM_FP);
   }
   /* подсветка «нажми меня» адресная: на автомате это тормоз (из P выходят с ним),
@@ -8382,7 +8458,12 @@ function updateHUD(){
   const trafOn = level.def.traffic && !level.def.examRoute;
   const trafVis = (trafOn && (!opt.mirrors || mirrorRects().right.y>=242)) ? '' : 'none';
   if($('trafBtn').style.display!==trafVis) $('trafBtn').style.display=trafVis;
-  if(trafOn) setText($('trafBtn'), '🚗 поток: '+TRAF_NAMES[trafKey()]+' · '+trafCount());
+  /* кнопка называет переход, как и меню ≡: «поток: обычный · 7» читалось строкой состояния.
+     Число машин — в подсказке при наведении, кнопка живёт только на десктопе */
+  if(trafOn){ const tb=$('trafBtn'), nx=TRAF_ORDER[(TRAF_ORDER.indexOf(opt.traffic)+1)%TRAF_ORDER.length];
+    setText(tb, 'поток: '+TRAF_NAMES[trafKey()]+' → '+TRAF_NAMES[nx]);
+    const tt='Машин в городе: '+trafCount()+'. Нажми — поток станет «'+TRAF_NAMES[nx]+'»';
+    if(tb.title!==tt) tb.title=tt; }
   $('gearVal').classList.toggle('deny', selBlockT>0);
   const gearKey = mtOn() ? 'M'+car.mgear+(car.stalled?'s':'') : car.sel;
   if(gearShown!==gearKey){
@@ -8410,7 +8491,7 @@ function updateHUD(){
   setText($('steerVal'), Math.abs(turns)<0.03 ? 'прямо'
     : Math.abs(turns).toFixed(2)+' об. '+(car.steer>0?'вправо':'влево'));
   const sw=sweep(car.steer);
-  setText($('radVal'), sw.R===Infinity?'∞':(sw.R.toFixed(1)+' м'));
+  setText($('radVal'), sw.R===Infinity?'∞':(sw.R.toFixed(1).replace('.',',')+' м'));
   /* угол к оси цели: без этого числа подсказки вида «доверни до 45°» нечем мерить */
   const gl=level.goal;
   if(gl){
@@ -8437,8 +8518,8 @@ function updateHUD(){
     } }
   const bz=blindZone();
   $('blindCell').style.display = opt.refs>=2 ? '' : 'none';
-  setText($('bzf'), bz.front.toFixed(1)+' м');
-  setText($('bzr'), bz.rear.toFixed(1)+' м');
+  setText($('bzf'), bz.front.toFixed(1).replace('.',',')+' м');
+  setText($('bzr'), bz.rear.toFixed(1).replace('.',',')+' м');
   const c=bodyPos();
   /* в P и N подсказка манёвра не прячется: игрок должен видеть не только «как включить
      передачу», но и что делать дальше — иначе первый шаг уровня некому подсказать */
@@ -8447,7 +8528,7 @@ function updateHUD(){
   if(demo){ const dd=DEMOS[game.li], n=dd.segs.length, sg=dd.segs[Math.min(demo.i,n-1)];
     coachCard('demo','▶','Демо '+Math.min(demo.i+1,n)+'/'+n
       +(sg&&sg.say ? ' — '+sg.say : '')+' · любая кнопка прерывает'); }
-  else if(game.done) coachCard('ok','✅','Готово!');
+  else if(game.done) coachCard('ok','✓','Готово!');
   else if(selWarnT>0) coachCard('stop','⚠',selWarn);
   /* выше разбора касания: игрок должен узнать про вторую ошибку раньше, чем про угол удара */
   else if(attWarnT>0) coachCard('stop','⚠',attWarn);
@@ -8637,7 +8718,7 @@ function crashHit(where, e){
   if(crashN[where]>1) return;
   console.error('[crash]', where, e);
   crashReport(where, e);
-  const msg='Что-то сломалось в кадре — перезапусти уровень (R)';
+  const msg='Что-то сломалось в кадре — перезапусти уровень'+(MOB?' кнопкой ⟲':' (R)');
   toast(msg, 6);
   /* тост рисует сам updateHUD; если упал он — карточку пишем напрямую, иначе игрок не узнает */
   if(where==='hud'){ try{ const c=$('coach'); if(c) c.textContent='⚠ '+msg; }catch(err){} }
@@ -8662,10 +8743,10 @@ function fbHTML(){
   +'<p>Читаю всё сам. Что делал, что ожидал, что вышло — этого хватает, чтобы починить. '
   +'Уровень, коробка и версия сборки приложатся сами.</p>'
   +'<div class="gbrow"><span class="gbl">Это</span><span class="gbseg">'+seg+'</span></div>'
-  +'<textarea id="fbText" class="fbfield" maxlength="2000" placeholder="'
+  +'<textarea id="fbText" class="fbfield" maxlength="2000" enterkeyhint="enter" placeholder="'
   +'Например: на 8 уровне машина прошла сквозь бордюр, когда я сдавал назад с рулём до упора'
   +'"></textarea>'
-  +'<input id="fbContact" class="fbfield" maxlength="120" '
+  +'<input id="fbContact" class="fbfield" maxlength="120" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="done" '
   +'placeholder="Телеграм или почта — если нужен ответ. Необязательно">'
   +(fbShot?'<label class="fbrow"><input type="checkbox" id="fbShot" checked>'
     +'Приложить снимок экрана</label>':'')
@@ -8829,7 +8910,7 @@ function ctrlHTML(){ return ''
   +'<span class="kbd">Y</span> — завестись после заглоха</li>'
   +'<li><span class="kbd">V</span> 3-е лицо ⇄ из салона · <span class="kbd">C</span> цикл камер</li>'
   +'<li><span class="kbd">Shift</span> (держать) — взгляд назад через плечо</li>'
-  +'<li><span class="kbd">O</span> ориентиры манёвра · <span class="kbd">B</span> габариты (выкл → габариты → всё)</li>'
+  +'<li><span class="kbd">O</span> ориентиры манёвра · <span class="kbd">B</span> габариты (выкл → рамка → с метками)</li>'
   +'<li><span class="kbd">Z</span> зеркала · <span class="kbd">U</span> настройка зеркал (3 пресета)</li>'
   +'<li><b>тянуть по самому зеркалу</b> — повернуть его под себя, настройка сохраняется</li>'
   +'<li><span class="kbd">G</span> траектории · <span class="kbd">T</span> след колёс</li>'
@@ -8837,18 +8918,14 @@ function ctrlHTML(){ return ''
   +'<li><span class="kbd">K</span> редактор своей площадки</li>'
   +'<li><span class="kbd">R</span> заново · <span class="kbd">M</span> звук · <span class="kbd">H</span> справка</li>'
   +'</ul></div>'; }
-function lvlListHTML(){
-  let s='<h2>Уровни · клавиша L — выбрать</h2><ul class="lvls">';
-  LEVELS.forEach((l,i)=>{ s+='<li'+(i===game.li?' class="cur"':'')+'>'
-    +(l.custom?'★ ':'')+l.name+'</li>'; });
-  return s+'</ul><button data-act="pick" class="ghost">'
-    +'Выбрать уровень</button>';
-}
 /* уровней больше девяти, цифрами уже не покрыть — отдельный экран с карточками */
 function levelPickHTML(){
   let s='<h1>Выбор уровня</h1>'+readinessHTML()+'<div class="lvgrid">';
-  let drillHead=false;
-  const weakSet=new Set(examReadiness().weak);
+  let drillHead=false, cityHead=false;
+  /* «слабое место» подсвечивается только когда есть с чем сравнивать (при 0 % горели 12 карточек из 32)
+     и только у трёх уровней, которые названы в строке готовности: весь хвост слабых — это 13–15 карточек,
+     и выделение переставало выделять */
+  const rd=examReadiness(), weakSet=new Set(rd.pct>0?rd.weak.slice(0,3):[]);
   LEVELS.forEach((l,i)=>{
     /* упражнения на габариты — другой жанр: там тренируется не траектория, а глазомер.
        В общей сетке из 19 карточек они теряются, поэтому идут отдельным блоком */
@@ -8857,17 +8934,21 @@ function levelPickHTML(){
         +'<p style="color:#93a7bd;font-size:12.5px;margin:-6px 0 8px">'
         +'Показание нужной стороны скрыто: остановись там, где считаешь нужным, — '
         +'и увидишь ошибку в сантиметрах. Попытка одна, повтор — R.</p><div class="lvgrid">'; }
-    const nm=(l.name.split('· ')[1] || l.name).replace(/^★\s*/,'');
+    if(l.strict && !cityHead){ cityHead=true;
+      s+='</div><h2>Город и экзамен</h2>'
+        +'<p style="color:#93a7bd;font-size:12.5px;margin:-6px 0 8px">'
+        +'Грубая ошибка — столкновение, непропуск, красный — отменяет попытку, как на экзамене.</p><div class="lvgrid">'; }
+    const nm=l.custom ? l.name.replace(/^★\s*/,'') : (l.name.split('· ')[1] || l.name);
     const pg=progOf(l.name), done=progPassed(l.name);
-    s+='<div class="lvcard'+(i===game.li?' on':'')+(done?' pass':'')
+    s+='<button type="button" class="lvcard'+(i===game.li?' on':'')+(done?' pass':'')
       +(weakSet.has(i)?' weak':'')+'" data-lvl="'+i+'">'
-      +'<div class="n">'+(l.custom?'★':(i+1))+(done?' ✓':'')+'</div>'
-      +'<div class="t">'+nm+'</div>'
-      +'<div class="d">'+(l.strict?'⚠ грубая ошибка — заново · ':'')
-      +(pg?progLine(l.name):(l.task||'').slice(0,90))+'</div></div>';
+      +'<span class="n">'+(l.custom?'★':(i+1))+(done?' ✓':'')+'</span>'
+      +'<span class="t">'+nm+'</span>'
+      +'<span class="d">'
+      +(pg?progLine(l.name):esc(l.task||''))+'</span></button>';
   });
   s+='</div><p style="margin-top:10px;color:#93a7bd;font-size:12.5px">'
-    +'Первые девять — ещё и клавишами 1…9. ★ — твои площадки из редактора.</p>'
+    +(MOB?'':'Первые девять — ещё и клавишами 1…9. ')+'★ — твои площадки из редактора.</p>'
     +'<button data-act="resume" class="ghost">Назад</button>';
   return s;
 }
@@ -8893,10 +8974,10 @@ function startHTML(){
     +'<p>Держи телефон горизонтально. Карточка сверху ведёт манёвр: действие + до какого показания. '
     +'Оранжевые стойки показывают, где реально габариты машины. '
     +'Линии траекторий (дуги колёс, путь демо) — в меню, если захочется подсмотреть.</p>'
-    + touchCtrlHTML() + lvlListHTML()
-  +'<button data-act="touch" class="ghost">Экранное управление: '+(MOB?'ВКЛ':'выкл')+'</button>'
-    +'<button data-act="feedback:start" class="ghost">✉ Написать об ошибке или идее</button>'
-    +'<button data-act="start">Поехали</button>';
+    + touchCtrlHTML()
+    +'<button data-act="pick" class="ghost">Выбрать уровень</button>'
+  +'<button data-act="touch" class="ghost">'+(MOB?'Выключить экранное управление':'Включить экранное управление')+'</button>'
+    +'<button data-act="feedback:start" class="ghost">✉︎ Написать об ошибке или идее</button>';
   /* стена текста про Аккермана на старте отпугивала до первой поездки:
      4 буллета о главном, физика и полный список клавиш — в справке (H) */
   return ''
@@ -8918,19 +8999,19 @@ function startHTML(){
   +'<li><b>Запутался:</b> <span class="kbd">H</span> — справка с физикой и всеми клавишами, '
   +'кнопка «демонстрация» покажет манёвр сама.</li>'
   +'</ul>'
-  + lvlListHTML()
+  +'<button data-act="pick" class="ghost">Выбрать уровень (L)</button>'
   +'<button data-act="help" class="ghost">Как это устроено (H)</button>'
-  +'<button data-act="touch" class="ghost">Экранное управление: '+(MOB?'ВКЛ':'выкл')+'</button>'
-  +'<button data-act="feedback:start" class="ghost">✉ Написать об ошибке или идее</button>'
-  +'<button data-act="start">Поехали</button>'; }
+  +'<button data-act="touch" class="ghost">'+(MOB?'Выключить экранное управление':'Включить экранное управление')+'</button>'
+  +'<button data-act="feedback:start" class="ghost">✉︎ Написать об ошибке или идее</button>'; }
 function helpHTML(){
   if(MOB) return '<h1>Справка</h1>'
     +'<button data-act="resume">Продолжить</button>'
     +'<p>Линии траекторий включаются в меню («Линии траекторий»): жёлтые дуги — путь <b>задних</b> колёс '
     +'(срезают внутрь поворота), красные — углы кузова, зелёно-оранжевая линия — как едет демонстрация. '
     +'Белый крестик — центр поворота, он всегда на линии задней оси.</p>'
-    + touchCtrlHTML() + gearboxBtnHTML() + lvlListHTML()
-  +'<button data-act="touch" class="ghost">Экранное управление: '+(MOB?'ВКЛ':'выкл')+'</button>'
+    + touchCtrlHTML() + gearboxBtnHTML()
+    +'<button data-act="pick" class="ghost">Выбрать уровень</button>'
+  +'<button data-act="touch" class="ghost">'+(MOB?'Выключить экранное управление':'Включить экранное управление')+'</button>'
     +'<button data-act="task" class="ghost">Как парковаться на этом уровне</button>'
     +'<button data-act="resume">Продолжить</button>';
   return '<h1>Справка</h1>'
@@ -8947,8 +9028,9 @@ function helpHTML(){
   +'на месте до упора ~'+LOCK_STILL_S+' с, в качении вдвое быстрее (~'+LOCK_ROLL_S+' с) — в тесноте крути руль на ходу. '
   +'Выше 8 км/ч кастор сам плавно возвращает руль к нулю. Камера следует за машиной, '
   +'но угол держит тот, что задал ты мышью.</p>'
-  + ctrlHTML() + gearboxBtnHTML() + lvlListHTML()
-  +'<button data-act="touch" class="ghost">Экранное управление: '+(MOB?'ВКЛ':'выкл')+'</button>'
+  + ctrlHTML() + gearboxBtnHTML()
+  +'<button data-act="pick" class="ghost">Выбрать уровень (L)</button>'
+  +'<button data-act="touch" class="ghost">'+(MOB?'Выключить экранное управление':'Включить экранное управление')+'</button>'
   +'<button data-act="task" class="ghost">Как парковаться на этом уровне</button>'
   +'<button data-act="resume">Продолжить</button>'; }
 function winHTML(){
@@ -8966,7 +9048,7 @@ function winHTML(){
         +'то есть по-настоящему.</p>'
       : '<p style="color:#93a7bd;font-size:13px">Теперь то же самое с выключенными габаритами '
         +'(клавиша <b>B</b> до «выкл») — вот это и будет навык.</p>';
-    return '<h1>✅ '+level.def.name+' — зачёт</h1>'
+    return '<h1>'+level.def.name+' — зачёт</h1>'
     +'<p>Ошибка: <b>'+cm+' см</b> · оценка: <b>'+precGrade()+'</b>'
     +(game.hits?' · касаний: <b>'+game.hits+'</b>':'')+'</p>' + rec + blind
     +(level.def.transfer?'<h2>Запомни для реальной дороги</h2><p>'+level.def.transfer+'</p>':'')
@@ -8974,15 +9056,15 @@ function winHTML(){
   }
   const rec = p ? '<p style="color:#93a7bd;font-size:13px">Этот уровень пройден <b>'+p.n+'</b> раз'
       +(p.clean?', из них <b>'+p.clean+'</b> без касаний':'')
-      +' · лучшее время <b>'+p.best.toFixed(1)+' с</b>'
+      +' · лучшее время <b>'+p.best.toFixed(1).replace('.',',')+'&nbsp;с</b>'
       +(game.t<=p.best?' — это твой рекорд!':'')+'</p>' : '';
   const advice = game.hits>0
     ? '<p style="color:#93a7bd;font-size:13px">Следующая цель — пройти без касаний: '
       +'веди на крипе и останавливайся, когда зазор уходит ниже 0,3 м.</p>'
     : '<p style="color:#93a7bd;font-size:13px">Чисто. Повтори ещё раз — навык ставится повторением, '
       +'а не единичным успехом.</p>';
-  return '<h1>✅ '+level.def.name+' — зачёт</h1>'
-  +'<p>Время: <b>'+game.t.toFixed(1)+' с</b> · касаний: <b>'+game.hits+'</b>'
+  return '<h1>'+level.def.name+' — зачёт</h1>'
+  +'<p>Время: <b>'+game.t.toFixed(1).replace('.',',')+'&nbsp;с</b> · касаний: <b>'+game.hits+'</b>'
   +(game.hits===0?' — чисто, без единого касания.':'')+'</p>' + rec + advice
   +(level.def.transfer?'<h2>Запомни для реальной дороги</h2><p>'+level.def.transfer+'</p>':'')
   + winActsHTML(); }
@@ -8993,10 +9075,10 @@ function winActsHTML(){
   const nx=LEVELS[(game.li+1)%LEVELS.length];
   return '<div class="winacts">'
     +'<button data-act="pick" class="ghost">Выбрать уровень</button>'
-    +'<button data-act="again" class="ghost">Повторить (R)</button>'
-    +'<span class="nextgo"><button data-act="next">Следующий уровень (N)</button>'
+    +'<button data-act="again" class="ghost">Заново'+(MOB?'':' (R)')+'</button>'
+    +'<span class="nextgo"><button data-act="next">Следующий уровень'+(MOB?'':' (N)')+'</button>'
     +'<span class="nextname">'+(nx.custom?'★ ':'')+esc(nx.name)+'</span></span></div>'
-    +'<p class="winfb"><button data-act="feedback:win" class="linkbtn">✉ Что-то не так — написать</button></p>'; }
+    +'<p class="winfb"><button data-act="feedback:win" class="linkbtn">✉︎ Что-то не так — написать</button></p>'; }
 function toggleHelp(){
   if(helpOpen){ hideOv(); return; }
   if(!paused){ showOv(helpHTML()); helpOpen=true; return; }
@@ -9114,7 +9196,7 @@ function typingInField(e){
    (iOS игнорирует user-scalable=no) — гасим контекстное меню, выделение и жесты вне полей ввода */
 const inField=(t)=>!!(t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable));
 window.addEventListener('contextmenu', e=>{ if(MOB && !inField(e.target)) e.preventDefault(); });
-document.addEventListener('selectstart', e=>{ if(!inField(e.target)) e.preventDefault(); });
+document.addEventListener('selectstart', e=>{ if(!inField(e.target) && !(e.target.closest && e.target.closest('#overlay .card') && !e.target.closest('button'))) e.preventDefault(); });
 document.addEventListener('gesturestart', e=>e.preventDefault(), {passive:false});
 document.addEventListener('touchmove', e=>{ if(e.touches.length>1) e.preventDefault(); }, {passive:false});
 window.addEventListener('keydown',e=>{
@@ -9781,7 +9863,7 @@ function progLine(name){
   if(p.bestErr!==undefined && p.bestErr!==null)
     return 'пройден '+p.n+'× · лучшая точность '+p.bestErr+' см'
          + (p.bestBlind!==undefined && p.bestBlind!==null ? ' · вслепую '+p.bestBlind+' см' : '');
-  return 'пройден '+p.n+'× · чисто '+p.clean+'× · лучшее '+p.best.toFixed(1)+' с';
+  return 'пройден '+p.n+'× · чисто '+p.clean+'× · лучшее '+p.best.toFixed(1).replace('.',',')+'&nbsp;с';
 }
 /* экзаменационная запись: свой тип поверх trainer_progress, старые поля не трогаем */
 function progExam(passed){
@@ -10262,7 +10344,7 @@ function showTask(){
     +'</ol><h2>На какие ориентиры смотреть</h2><p>'+d.refs+'</p>'
     +(d.hacks?'<h2>Лайфхаки — работают и в реальной машине</h2><ul>'
       + d.hacks.map(x=>'<li>▸ '+x+'</li>').join('')+'</ul>':'')
-    +'<p style="margin-top:8px;color:#93a7bd;font-size:12.5px">💡 '+d.tip+'</p>'
+    +'<p style="margin-top:8px;color:#93a7bd;font-size:12.5px">'+d.tip+'</p>'
     +(DEMOS[game.li]?'<button data-act="demo">▶ Показать демонстрацию этого манёвра</button>':'')
     +'<button data-act="resume" class="ghost">Понятно, поехали</button>');
 }
@@ -10284,7 +10366,7 @@ function buildMenu(){
   add('Механика', ()=>setGearbox('MT'), ()=>mtOn());
   h('Экран');
   add(isFull()?'Выйти из полного экрана':'Во весь экран', ()=>{ toggleFull(); closeMenu(); }, ()=>isFull());
-  add(['панели: показывать всё','панели: только зазоры','панели: чистый экран'][hudMode], ()=>cycleHud(), ()=>hudMode>0);
+  add(['Скрыть панели, оставить зазоры','Скрыть все панели','Показать все панели'][hudMode], ()=>cycleHud(), ()=>hudMode>0);
   if(DEMOS[game.li]) add('▶ Показать демонстрацию', ()=>{ closeMenu(); startDemo(); }, ()=>demoActive());
   add('Как парковаться на этом уровне', ()=>{ closeMenu(); showTask(); });
   h('Камера');
@@ -10293,23 +10375,25 @@ function buildMenu(){
   add('Приблизить', ()=>pressKey('Equal'));
   h('Подсказки на экране');
   add('Ориентиры манёвра', ()=>pressKey('KeyO'), ()=>opt.marks);
-  add('Габариты: '+REFS_NAMES[opt.refs], ()=>pressKey('KeyB'), ()=>opt.refs>0);
+  add('Габариты: '+REFS_NAMES[opt.refs]+' → '+REFS_NAMES[(opt.refs+1)%3], ()=>pressKey('KeyB'), ()=>opt.refs>0);
   add('Линии траекторий', ()=>pressKey('KeyG'), ()=>opt.guides);
   add('След колёс', ()=>pressKey('KeyT'), ()=>opt.trails);
   add('Зеркала', ()=>pressKey('KeyZ'), ()=>opt.mirrors);
-  add('Настройка зеркал: '+MIR_PRESETS[mirPreset].name, ()=>pressKey('KeyU'));
+  add('Зеркала: '+MIR_PRESETS[mirPreset].name+' → '+MIR_PRESETS[(mirPreset+1)%MIR_PRESETS.length].name, ()=>pressKey('KeyU'));
   add('Сбросить зеркала', ()=>{ applyMirPreset(0); });
   h('Прочее');
   add('Подсказка: траектория манёвра', ()=>{
     adsRewarded(()=>{ opt.guides=true;
       toast('Идеальная траектория включена — смотри зелёно-оранжевую линию', 3.5); });
   }, ()=>opt.guides);
-  add('Экзамен: '+(examTrain()?'тренировочный':'настоящий'),
+  add('Экзамен: '+(examTrain()?'тренировочный → настоящий':'настоящий → тренировочный'),
       ()=>setExamMode(examTrain()?'real':'train'), ()=>!examTrain());
   /* качество: «авто» бережёт кадры и на слабой машине снимает зерно и мелочи, «максимум» —
      всё видно всегда, ценой fps. Регулятор в этом режиме молчит */
-  add('Зеркала: '+Math.round(opt.mirScale*100)+'%', ()=>cycleMirScale(1), ()=>opt.mirScale>1);
-  add('Графика: '+(opt.gfx==='max'?'максимум':'авто'), ()=>{
+  { const mi=Math.max(0,MIR_SCALES.indexOf(opt.mirScale)), mx=mi>=MIR_SCALES.length-1;
+    add('Зеркала крупнее: '+Math.round(opt.mirScale*100)+'%'+(mx?' (максимум)':' → '+Math.round(MIR_SCALES[mi+1]*100)+'%'),
+        ()=>cycleMirScale(1), ()=>opt.mirScale>1); }
+  add('Графика: '+(opt.gfx==='max'?'максимум → авто':'авто → максимум'), ()=>{
     opt.gfx = opt.gfx==='max' ? 'auto' : 'max';
     try{ localStorage.setItem('trainer_gfx', opt.gfx); }catch(e){}
     if(opt.gfx==='max'){ qBest=0; qApply(0); toast('Графика: максимум — все детали и зерно, кадры могут просесть', 4); }
@@ -10317,20 +10401,16 @@ function buildMenu(){
   }, ()=>opt.gfx==='max');
   /* плотность потока: городские уровни ставят на дорогу живой трафик, и новичку нужна
      возможность разобрать манёвр в спокойном движении. Экзамен идёт в плотном всегда */
-  add('Трафик: '+TRAF_NAMES[opt.traffic]+(level&&level.def.traffic&&!level.def.examRoute?' · машин '+trafCount():''), ()=>{ cycleTraffic(); }, ()=>opt.traffic!=='off');
+  add('Поток: '+TRAF_NAMES[opt.traffic]+' → '+TRAF_NAMES[TRAF_ORDER[(TRAF_ORDER.indexOf(opt.traffic)+1)%TRAF_ORDER.length]]
+      +(level&&level.def.traffic&&!level.def.examRoute?' · машин '+trafCount():''), ()=>{ cycleTraffic(); }, ()=>opt.traffic!=='off');
   add('Звук', ()=>pressKey('KeyM'), ()=>opt.sound);
-  add('Начать уровень заново', ()=>{ closeMenu(); pressKey('KeyR'); });
+  add('Уровень заново', ()=>{ closeMenu(); pressKey('KeyR'); });
   add('Что делают кнопки', ()=>{ closeMenu(); setTimeout(showTouchHelp,120); });
   add('Справка и правила', ()=>{ closeMenu(); pressKey('KeyH'); });
-  add('✉ Сообщить об ошибке', ()=>{ closeMenu(); doAct('feedback:menu'); });
+  add('✉︎ Сообщить об ошибке', ()=>{ closeMenu(); doAct('feedback:menu'); });
   h('Уровень');
   add('Выбрать уровень…', ()=>{ closeMenu(); showLevelPick(); });
   add('Редактор площадок', ()=>{ closeMenu(); openEditor(editorSource()); });
-  for(let i=1;i<=LEVELS.length;i++){
-    const nm=LEVELS[i-1].name.split('· ')[1] || LEVELS[i-1].name;
-    add((LEVELS[i-1].custom?'★ ':i+' · ')+nm, ()=>{ closeMenu(); loadLevel(i-1); hideOv(); },
-        ()=>game.li===i-1);
-  }
   const c=document.createElement('button'); c.className='tm-close'; c.textContent='Закрыть';
   c.addEventListener('click',closeMenu); g.appendChild(c);
 }
@@ -10471,6 +10551,8 @@ $('restartBtn').addEventListener('click',()=>{ initAudio(); pressKey('KeyR'); })
 $('demoBtn').addEventListener('click',()=>{ initAudio(); if(demo) stopDemo(); else startDemo(); });
 $('fbBtn').addEventListener('click',()=>{ initAudio(); doAct('feedback:game'); });
 $('trafBtn').addEventListener('click',()=>{ initAudio(); cycleTraffic(); });
+/* после клика мышью фокус остаётся на кнопке, и следующий Enter (D ⇄ R) нажал бы её снова */
+document.addEventListener('click',e=>{ const b=e.target.closest&&e.target.closest('button.sidebtn'); if(b&&e.detail>0) b.blur(); });
 $('trestart').addEventListener('pointerdown',e=>{ e.preventDefault(); initAudio();
   if(!paused) pressKey('KeyR'); },{passive:false});
 $('tmenu').addEventListener('pointerdown',e=>{ if(e.target.id==='tmenu') closeMenu(); });
