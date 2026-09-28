@@ -50,7 +50,7 @@ window.YaGames={init:function(){
   var ysdk={
     adv:{showFullscreenAdv:adv('fullscreen'),showRewardedVideo:adv('rewarded')},
     getPlayer:function(){rec('getPlayer');return Promise.resolve({
-      getData:function(){rec('getData');return Promise.resolve({trainer_gearbox:'MT',trainer_marks:'0'})},
+      getData:function(){rec('getData');return Promise.resolve({trainer_traffic:'dense',trainer_marks:'0'})},
       setData:function(o){rec('setData');window.__ya.saved=o;return Promise.resolve()}})},
     features:{LoadingAPI:{ready:function(){rec('ready');window.__ya.ready=true}}},
     environment:{i18n:{lang:'ru'}}
@@ -78,10 +78,10 @@ const results = [];
 const check = (name, ok, detail) => { results.push({ name, ok: !!ok, detail }); console.log((ok ? '  ok   ' : 'ПРОВАЛ ') + name + (detail ? ' — ' + detail : '')); };
 
 await page.goto(base + '/?nocache=' + Date.now());
-/* локальная коробка не задана — облачное значение обязано подхватиться; маркеры уже есть локально —
+/* локальная плотность потока не задана — облачное значение обязано подхватиться; маркеры уже есть локально —
    облачное 'trainer_marks' не должно их затереть */
 await page.evaluate(() => { localStorage.clear(); localStorage.setItem('trainer_marks', '1');
-  for (const k of ['trainer_seen', 'trainer_hint', 'trainer_drive', 'trainer_drive_mt']) localStorage.setItem(k, '1');
+  for (const k of ['trainer_seen', 'trainer_hint', 'trainer_drive']) localStorage.setItem(k, '1');
   localStorage.setItem('trainer_runs', '9'); localStorage.setItem('trainer_touch', '0'); });
 await page.goto(base + '/?nocache=' + Date.now() + 'r');
 await page.waitForTimeout(800);
@@ -116,15 +116,15 @@ check('реклама: пауза на onOpen, снятие на onClose, наг
 
 /* 5. облачные сейвы: merge без затирания локального, __ysave шлёт все trainer_* */
 const cloud = await page.evaluate(() => {
-  const gearbox = localStorage.getItem('trainer_gearbox'), marks = localStorage.getItem('trainer_marks');
+  const traffic = localStorage.getItem('trainer_traffic'), marks = localStorage.getItem('trainer_marks');
   window.__ysave();
   const saved = window.__ya.saved || {};
   const keys = Object.keys(saved), all = [];
   for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith('trainer_')) all.push(k); }
-  return { gearbox, marks, keys: keys.length, all: all.length, onlyTrainer: keys.every(k => k.startsWith('trainer_')) };
+  return { traffic, marks, keys: keys.length, all: all.length, onlyTrainer: keys.every(k => k.startsWith('trainer_')) };
 });
 check('облако: пустой локальный ключ берётся из облака, занятый не затирается, __ysave шлёт все trainer_* (@dist-yandex-cloud-merge)',
-  cloud.gearbox === 'MT' && cloud.marks === '1' && cloud.keys === cloud.all && cloud.keys > 0 && cloud.onlyTrainer, JSON.stringify(cloud));
+  cloud.traffic === 'dense' && cloud.marks === '1' && cloud.keys === cloud.all && cloud.keys > 0 && cloud.onlyTrainer, JSON.stringify(cloud));
 
 /* 6. уровень стартует и едет без ошибок в консоли */
 await page.evaluate(() => { doAct('start'); loadLevel(0); });

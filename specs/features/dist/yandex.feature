@@ -38,10 +38,10 @@
 
   @ui @dist @dist-yandex-cloud-merge
   Сценарий: Облачные сейвы сливаются без затирания локальных
-    Дано в облаке лежат trainer_gearbox "MT" и trainer_marks "0"
-    И локально trainer_gearbox пуст, а trainer_marks равен "1"
+    Дано в облаке лежат trainer_traffic "dense" и trainer_marks "0"
+    И локально trainer_traffic пуст, а trainer_marks равен "1"
     Когда YaGames.init отдал ysdk и игрок загружен
-    Тогда локальный trainer_gearbox равен "MT", а trainer_marks остаётся "1"
+    Тогда локальный trainer_traffic равен "dense", а trainer_marks остаётся "1"
     И __ysave отправляет в setData все ключи trainer_* и только их
 
   @ui @dist @dist-yandex-console-clean

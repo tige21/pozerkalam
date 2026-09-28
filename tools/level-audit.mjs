@@ -56,8 +56,8 @@ const report = await page.evaluate(() => {
     const d = DEMOS[i];
     if (!d) return null;
     const save = { ru: car.ru, rv: car.rv, th: car.th, steer: car.steer, vel: car.vel, gear: car.gear,
-                   sel: car.sel, t: game.t, snd: opt.sound, box: opt.gearbox, clear: lastClear };
-    opt.sound = false; opt.gearbox = 'AT';
+                   sel: car.sel, t: game.t, snd: opt.sound, clear: lastClear };
+    opt.sound = false;
     setBody(level.start.u, level.start.v, level.start.th);
     car.steer = 0; car.vel = 0; car.gear = 0; car.sel = 'P';
     if (d.start) setBody(d.start.u, d.start.v, d.start.th);
@@ -97,7 +97,7 @@ const report = await page.evaluate(() => {
     for (const k in input) input[k] = false;
     car.ru = save.ru; car.rv = save.rv; car.th = save.th; car.steer = save.steer;
     car.vel = save.vel; car.gear = save.gear; car.sel = save.sel; game.t = save.t;
-    opt.sound = save.snd; opt.gearbox = save.box; lastClear = save.clear;
+    opt.sound = save.snd; lastClear = save.clear;
     curPhase = null; phaseCand = null; phaseHold = 0;
     return { samples, reached, time: T, pts, hits: level.obs.filter(o => o._audit).map(o => o._audit) };
   }

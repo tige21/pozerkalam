@@ -45,7 +45,7 @@ const check = (name, ok, detail) => { results.push({ name, ok: !!ok, detail }); 
 
 const url = 'file://' + path.join(ROOT, 'index.html') + '?nocache=' + Date.now();
 await page.goto(url);
-await page.evaluate(() => { for (const k of ['trainer_seen', 'trainer_hint', 'trainer_drive', 'trainer_drive_mt']) localStorage.setItem(k, '1');
+await page.evaluate(() => { for (const k of ['trainer_seen', 'trainer_hint', 'trainer_drive']) localStorage.setItem(k, '1');
   localStorage.setItem('trainer_runs', '9'); localStorage.setItem('trainer_touch', '0'); });
 await page.goto(url + 'r');
 await page.waitForTimeout(400);
