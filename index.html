@@ -7,11 +7,11 @@
 <meta name="theme-color" content="#1b2735">
 <link rel="icon" type="image/png" href="/icon-192.png">
 <title>По зеркалам — тренажёр манёвров и парковки</title>
-<meta name="description" content="32 уровня манёвров, экзаменационный маршрут, АКПП и МКПП. Играть в браузере, без установки.">
+<meta name="description" content="32 уровня манёвров и экзаменационный маршрут. Играть в браузере, без установки.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://pozerkalam.space/play/">
 <meta property="og:title" content="По зеркалам — тренажёр манёвров и парковки">
-<meta property="og:description" content="32 уровня манёвров, экзаменационный маршрут, АКПП и МКПП. Играть в браузере, без установки.">
+<meta property="og:description" content="32 уровня манёвров и экзаменационный маршрут. Играть в браузере, без установки.">
 <meta property="og:image" content="https://pozerkalam.space/og.jpg">
 <meta property="og:image:width" content="2400">
 <meta property="og:image:height" content="1260">
@@ -129,15 +129,9 @@ body.compact #coach.haswhy{pointer-events:auto;cursor:pointer}
 #bar .lever span.on.d{color:#4ade80}
 #bar .lever.deny span,#tgear.deny span[data-gear]{border-color:#f87171!important;color:#f87171}
 #tgear.deny span[data-gear]{background:rgba(190,52,52,.35)}
-/* «нажми меня» на телефоне: на автомате это тормоз (из P выходят с ним), на механике —
-   сцепление, а после заглоха — стартер. Кнопка ищется по data-hold, а не по порядку детей:
-   зелёная подсветка ГАЗ раньше висела на :last-child и промахивалась мимо него */
-body.needbrake .tdrive [data-hold="back"],
-body.needclutch #tclutch{background:rgba(190,52,52,.8);border-color:#ff9a9a;color:#fff}
-body.needstart #tstart{background:rgba(190,52,52,.85);border-color:#ff9a9a;color:#fff;
-  animation:blinkA .9s step-end infinite}
-/* подпись ячейки передач — переключатель коробки: единственное место, которое видно всегда */
-#gearLbl{pointer-events:auto;cursor:pointer;border-bottom:1px dashed rgba(159,208,255,.45)}
+/* «нажми меня» на телефоне — тормоз: из P выходят с ним. Кнопка ищется по data-hold, а не
+   по порядку детей: зелёная подсветка ГАЗ раньше висела на :last-child и промахивалась мимо него */
+body.needbrake .tdrive [data-hold="back"]{background:rgba(190,52,52,.8);border-color:#ff9a9a;color:#fff}
 .ok{color:#4ade80!important}.warn{color:#fbbf24!important}.bad{color:#f87171!important}
 #overlay{position:fixed;inset:0;z-index:20;display:flex;align-items:flex-start;justify-content:center;
   overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior:contain;
@@ -243,7 +237,7 @@ body.compact #overlay .gbseg button{width:auto;margin:0;padding:10px 16px;font-s
 /* ---------- экранное управление (телефон/планшет) ---------- */
 #touchui,#tmenu,#rotate,#thelp{display:none}
 body.touch #touchui{display:block}
-.tcluster,#tview,#tclutch,#tmenubtn,#trestart,#tgear span{
+.tcluster,#tview,#tmenubtn,#trestart,#tgear span{
   position:fixed;z-index:9;border:1px solid rgba(255,255,255,.20);
   background:rgba(14,20,28,.62);backdrop-filter:blur(6px);
   color:#e8eef6;font-weight:700;letter-spacing:.4px;
@@ -264,15 +258,6 @@ body.touch #touchui{display:block}
   border-radius:12px;display:flex;align-items:center;justify-content:center;gap:7px;font-size:12px}
 #tview span{font-weight:600;opacity:.75;font-size:11px}
 #tview.act{background:rgba(56,132,214,.72);border-color:#7ab7ff}
-/* сцепление — над рулевым кластером слева: левый палец держит его, правый жмёт ГАЗ,
-   как левая и правая нога. Внутри правого кластера обе кнопки попадали под один палец,
-   и тронуться на механике было нечем. Отдельный элемент, а не пятая кнопка ряда:
-   кластеры уже упираются в центральный ряд передач на 667-пиксельном экране */
-#tclutch{left:calc(14px + env(safe-area-inset-left));bottom:calc(84px + var(--bot,0px));
-  width:156px;height:36px;border-radius:12px;display:none;align-items:center;justify-content:center;
-  font-size:12.5px;letter-spacing:1px}
-body.touch #tclutch.show{display:flex}
-#tstart{font-size:10.5px;letter-spacing:0}
 #tgear{position:fixed;z-index:9;left:50%;transform:translateX(-50%);bottom:calc(12px + var(--bot,0px));
   display:none;gap:5px;pointer-events:none}
 body.touch #tgear{display:flex}
@@ -298,7 +283,7 @@ body.touch #tgear{display:flex}
   font:bold 15px/22px ui-sans-serif,system-ui;text-align:center;text-shadow:0 0 8px rgba(248,113,113,.7)}
 /* на тач-экране оба состояния уже видны на самих кнопках (мигающая плитка поворотника, красный РУЧН) */
 body.touch #blinkers,body.touch #handbrake{display:none!important}
-#thand.act,#tclutch.act{opacity:1;background:rgba(190,52,52,.6);border-color:#ff9a9a;color:#ffe2e2}
+#thand.act{opacity:1;background:rgba(190,52,52,.6);border-color:#ff9a9a;color:#ffe2e2}
 .cbl{color:#ffd34d;margin-right:4px;vertical-align:middle;animation:blinkA .76s step-end infinite}
 #tgear span.on[data-gear="R"]{background:rgba(190,52,52,.75);border-color:#ff9a9a}
 #tgear span.on[data-gear="D"]{background:rgba(34,150,80,.75);border-color:#5ee39b}
@@ -406,7 +391,6 @@ body.hud-off #coach,body.hud-off #hint{display:none}
   #tmenubtn{width:40px;height:40px;font-size:16px;transform:translateX(-177px)}
   #trestart{width:40px;height:40px;font-size:16px;transform:translateX(137px)}
   #tview{width:132px;height:32px;font-size:11px;bottom:calc(70px + var(--bot,0px))}
-  #tclutch{width:132px;height:32px;font-size:11px;bottom:calc(70px + var(--bot,0px))}
 }
 /* Узкий экран (iPhone SE и подобные в альбомной): нижняя полоса шире экрана. По ширине
    в ней 14 целей — руль (3), ≡, передачи и поворотники (6), ⟲, газ с тормозом (3), — и на
@@ -419,18 +403,14 @@ body.hud-off #coach,body.hud-off #hint{display:none}
   .tbtnp{width:44px;height:50px;font-size:13px}
   .tbtnp.tmid{width:32px;font-size:11px}
   .tbtnp.twide{width:54px;font-size:10.5px}
-  /* 6 букв «ТОРМОЗ» в 54 px с разрядкой .4 оставляли 2 px полей; «ЗАВЕСТИ» в 44 px обрезалось */
-  .tbtnp.twide,#thand,#tstart{letter-spacing:0}
+  /* 6 букв «ТОРМОЗ» в 54 px с разрядкой .4 оставляли 2 px полей */
+  .tbtnp.twide,#thand{letter-spacing:0}
   #thand{font-size:10.5px}
-  /* ширина кластера не меняется: заглохшему ГАЗ не нужен, он отдаёт 10 px стартеру.
-     Лишние 10 px кластера ложились на плитку поворотника на 568 и на ⟲ на 667 */
-  #tstart{font-size:10px;width:54px}
-  .tdrive.stalled [data-hold="fwd"]{width:44px}
   #tgear span{width:36px;height:36px;font-size:14px}
   #tgear{gap:3px}
   #tmenubtn{width:38px;height:38px;font-size:15px;transform:translateX(-160px)}
   #trestart{width:38px;height:38px;font-size:15px;transform:translateX(122px)}
-  #tclutch,#tview{width:120px;height:30px;font-size:10.5px;bottom:calc(66px + var(--bot,0px))}
+  #tview{width:120px;height:30px;font-size:10.5px;bottom:calc(66px + var(--bot,0px))}
   #tview span{font-size:10px}
 }
 body.compact #overlay{padding:10px max(10px,env(safe-area-inset-right,0px)) 10px max(10px,env(safe-area-inset-left,0px))}
@@ -470,17 +450,15 @@ body.fp #hint{display:none}
   #coach .cq:hover{opacity:1}
   #bar .lever span:hover{opacity:.85;background:rgba(159,208,255,.18)}
   #bar .lever span.on:hover{opacity:1}
-  #gearLbl:hover{color:#9fd0ff}
   #overlay button.lvcard:hover{border-color:rgba(159,208,255,.6);background:rgba(30,42,58,.95)}
   button:hover{background:#2571c4}
   button.ghost:hover{background:rgba(159,208,255,.08);border-color:rgba(159,208,255,.35);color:#dce9f5}
   #overlay button.linkbtn:hover{color:#dce9f5;background:none}
   #edpal button:hover{border-color:rgba(159,208,255,.6)}
 }
-/* поворотники и стартер продолжают мигать: это сигнал с цветом, а не декор */
+/* поворотники продолжают мигать: это сигнал с цветом, а не декор */
 @media (prefers-reduced-motion:reduce){
   #thelp .onbring,#bar .cell.pulse{animation:none}
-  body.needstart #tstart{animation:none}
   #coach,#coach .cw,#overlay button.lvcard,button{transition:none}
   button:active{transform:none}
 }
@@ -510,9 +488,8 @@ body.fp #hint{display:none}
 
 <div id="perf" hidden></div>
 <div id="bar">
-  <div class="cell opt"><div class="k" id="gearLbl" title="переключить коробку (клавиша `)">автомат · сменить на механику</div><div class="v lever" id="gearVal">P</div></div>
+  <div class="cell opt"><div class="k">селектор · Enter = D ⇄ R</div><div class="v lever" id="gearVal">P</div></div>
   <div class="cell opt"><div class="k">скорость</div><div class="v" id="spdVal">0 км/ч</div></div>
-  <div class="cell opt" id="rpmCell" style="display:none"><div class="k">обороты · сцепление на Shift</div><div class="v" id="rpmVal">—</div></div>
   <div class="cell opt"><div class="k">руль</div><div class="v" id="steerVal">прямо</div></div>
   <div class="cell"><div class="k">угол к цели</div><div class="v" id="angVal">—</div></div>
   <div class="cell opt"><div class="k">радиус разворота</div><div class="v" id="radVal">∞</div></div>
@@ -536,9 +513,7 @@ body.fp #hint{display:none}
     <div class="tbtnp twide" data-hold="back">ТОРМОЗ</div>
     <div class="tbtnp twide" data-hold="fwd">ГАЗ</div>
     <div class="tbtnp" id="thand">РУЧН</div>
-    <div class="tbtnp" id="tstart" style="display:none">ЗАВЕСТИ</div>
   </div>
-  <div id="tclutch" data-hold="clutch">СЦЕПЛЕНИЕ</div>
   <div id="tview">ВИД<span id="tviewlbl">3-е лицо</span></div>
   <div id="tgear">
     <span data-blink="L">◀</span>
@@ -1918,11 +1893,8 @@ function imgCanvas(name, w, h, draw){
   draw(g, w, h); imgCache[name]=c; return c;
 }
 const DIAL_A0=rad(210), DIAL_SPAN=rad(240), DIAL_MAX=60;
-/* буквы на щитке — те же, что в коробке: на механике R N 1 2, на автомате P R N D.
-   Раньше циферблат всегда рисовал P R N D, и на механике водитель видел чужой селектор */
-function dialCanvas(mode, cur, stalled){
-  const labels = mode==='MT' ? MT_ORDER.map(g=>[String(g), MT_NAMES[g]]) : SEL_ORDER.map(g=>[g,g]);
-  return imgCanvas('dial-'+mode+'-'+cur+(stalled?'-s':''), 256, 256, (g,S)=>{
+function dialCanvas(cur){
+  return imgCanvas('dial-'+cur, 256, 256, (g,S)=>{
     const cx=S/2, cy=S/2, R=S*0.47;
     const rg=g.createRadialGradient(cx,cy,R*0.15,cx,cy,R); rg.addColorStop(0,'#2b2e35'); rg.addColorStop(1,'#111317');
     g.fillStyle=rg; g.beginPath(); g.arc(cx,cy,R,0,TAU); g.fill();
@@ -1938,10 +1910,8 @@ function dialCanvas(mode, cur, stalled){
     g.fillStyle='#8f96a3'; g.font='13px system-ui,-apple-system,sans-serif'; g.fillText('км/ч', cx, cy+R*0.34);
     /* передача — в верхней половине: нижнюю закрывает ступица руля */
     g.font='bold 20px system-ui,-apple-system,sans-serif';
-    labels.forEach(([key,L],i)=>{ g.fillStyle = key===cur ? '#7ef096' : '#5a606c';
+    SEL_ORDER.forEach((L,i)=>{ g.fillStyle = L===cur ? '#7ef096' : '#5a606c';
       g.fillText(L, cx+(i-1.5)*28, cy-R*0.22); });
-    if(stalled){ g.fillStyle='#f87171'; g.font='bold 15px system-ui,-apple-system,sans-serif';
-      g.fillText('заглох', cx, cy+R*0.52); }
   });
 }
 function screenCanvas(){
@@ -2068,7 +2038,7 @@ function emitCluster(K){
   const {P}=K, cx=-0.36, cy=0.985, cz=0.552, Rd=0.056;
   /* фон картинки прозрачный, подложка — грань цвета щитка в салонном освещении: сам циферблат
      не затеняется, а его квадрат не выделяется тёмной плитой на козырьке */
-  const img = mtOn() ? dialCanvas('MT', String(car.mgear), car.stalled) : dialCanvas('AT', car.sel, false);
+  const img = dialCanvas(car.sel);
   if(img){ const s0=cabinLit; cabinLit=true;
     try{ pushQuad(P(cx-Rd,cy+Rd,cz), P(cx+Rd,cy+Rd,cz), P(cx+Rd,cy-Rd,cz), P(cx-Rd,cy-Rd,cz),
                   CAB.DARK, P(cx,cy,cz+0.3), 0.01, {img, mat:'softtouch'}); }
@@ -2082,7 +2052,7 @@ function emitCluster(K){
    ниже поля зрения из салона, и без этого водитель не видит, что у него включено */
 function emitSelector(K){
   const {box}=K;
-  const cur = mtOn() ? MT_ORDER.indexOf(car.mgear) : SEL_ORDER.indexOf(car.sel);
+  const cur = SEL_ORDER.indexOf(car.sel);
   box(0, 0.72, 0.02-cur*0.075, 0.030,0.055,0.030, [150,156,166], 0, MO.satin);   /* рычаг на тоннеле */
 }
 function emitWheel(K){
@@ -5546,8 +5516,7 @@ const LEVELS = [
 ];
 
 /* ---------- состояние ---------- */
-const car = { ru:0, rv:0, th:0, steer:0, vel:0, gear:0, sel:'P', blink:null, blinkTh:0, roll:0, hand:false,
-              mgear:0, clu:1, rpm:850, stalled:false };
+const car = { ru:0, rv:0, th:0, steer:0, vel:0, gear:0, sel:'P', blink:null, blinkTh:0, roll:0, hand:false };
 const SEL_ORDER=['P','R','N','D'];
 const STOP_V=0.12;                 /* «полная остановка» — как на реальной АКПП */
 let selWarn='', selWarnT=0, selBlockT=0;
@@ -5806,9 +5775,7 @@ function restart(){
   car.steer=0; car.vel=0; car.gear=0; car.sel='P'; selWarn=''; selWarnT=0;
   car.blink=null; syncBlinkDom(); car.roll=0;
   car.hand=false; syncHandDom();
-  car.mgear=0; car.clu=0; car.rpm=MT.idle; car.stalled=false; input.clutch=false;
   game.t=0; game.hits=0; game.holdT=0; game.done=false; game.hitCd=0; game.flash=0; game.moved=false;
-  game.stalls=0;
   trails = {fl:[],fr:[],rl:[],rr:[]}; trailT=0;
   for(const o of level.obs){ o.knocked=false; o._touch=false; o._hitByPlayer=false; }
   for(const a of level.actors){ a.u=a.act.u0; a.v=a.act.v0; a.yaw=a.act.yaw0;
@@ -6065,47 +6032,17 @@ function clearances(){
 
 /* ---------- физика ---------- */
 const input = {};
-/* ---------- МКПП ----------
-   Опция trainer_gearbox: механика живёт ПОВЕРХ той же продольной модели — свой блок
-   вместо веток P/крип/газ. Сцепление на левом Shift: отпускание само замедляется
-   в зоне схватывания (бинарной клавишей «плавно отпустить» иначе невозможно).
-   Заглох: сцепление отпущено ниже порога, а обороты упали под нагрузкой */
-const MT={ idle:850, max:5800, stallRpm:520,
-  gears:{ '-1':{k:1.5, vmax:3.4}, '1':{k:1.6, vmax:6.5}, '2':{k:0.9, vmax:13.5} } };
-function mtOn(){ return opt.gearbox==='MT'; }
-/* одна точка переключения коробки — из меню и со стартового экрана: сохранить, перезапустить
-   уровень (селектор и сцепление стартуют из разных состояний), подсказать клавиши */
-function setGearbox(g){
-  const to = g==='MT' ? 'MT' : 'AT';
-  if(opt.gearbox===to) return;
-  opt.gearbox = to;
-  track('mt-'+opt.gearbox.toLowerCase());
-  try{ localStorage.setItem('trainer_gearbox', opt.gearbox); }catch(e){}
-  restart();
-  syncHintLine();
-  /* у каждой коробки свой ключ прохождения: сменил коробку — получаешь её гайд троганья,
-     иначе игрок, прошедший автомат, оставался на механике вообще без обучения */
-  maybeStartTut();
-  toast(mtOn() ? 'Механика. Уровень начат заново. Shift — сцепление, Enter — 1 ⇄ R, Y — завестись'
-               : 'Автомат. Уровень начат заново. Enter — D ⇄ R, из P выходи с тормозом', 4.5);
-}
-/* пара сегментов, а не кнопка-статус: игрок должен видеть обе коробки и текущую из них */
-const gearboxBtnHTML=()=>'<div class="gbrow"><span class="gbl">Коробка передач</span><span class="gbseg">'
-  +'<button data-act="gearbox:AT"'+(mtOn()?'':' class="on"')+'>автомат</button>'
-  +'<button data-act="gearbox:MT"'+(mtOn()?' class="on"':'')+'>механика</button></span></div>';
 /* подсказка клавиш — столбик слева, одна команда на строку: одной строкой через « · » она
    тянулась через весь экран поверх миникарты и не читалась. Порядок — по важности для езды:
    не влезающие в полосу строки уходят за последнюю, «H — справка», где есть полный список */
 const HINT_AT=[['Enter','сменить направление D ⇄ R'],['W','газ'],['S / пробел','тормоз'],['P','паркинг'],
   ['Q / E','поворотники'],[', и .','селектор по одной']];
-const HINT_MT=[['левый Shift','сцепление'],['Enter','1 ⇄ R'],['W','газ'],['S / пробел','тормоз'],['Y','завестись'],
-  ['Q / E','поворотники'],[', и .','передачи по одной (Б и Ю)']];
 const HINT_ALL=[['J','ручник'],['V','вид из салона'],['B','габариты (3 уровня)'],['O','ориентиры'],
-  ['U','настройка зеркал'],['`','коробка автомат ⇄ механика'],['I','панели'],['L','выбор уровня'],
+  ['U','настройка зеркал'],['I','панели'],['L','выбор уровня'],
   ['H','справка и все клавиши']];
 function syncHintLine(){
   const el=$('hint'); if(!el) return;
-  el.innerHTML=(mtOn()?HINT_MT:HINT_AT).concat(HINT_ALL)
+  el.innerHTML=HINT_AT.concat(HINT_ALL)
     .map(r=>'<div class="hr"><b>'+r[0]+'</b>'+r[1]+'</div>').join('');
   hintKey=''; layoutHint();
 }
@@ -6138,88 +6075,6 @@ function layoutHint(){
   el.classList.toggle('none', fit<2);
   for(let i=0;i<n;i++) rows[i].classList.toggle('off', !(i===n-1 || i<fit-1));
 }
-/* диагностика механики из консоли: в игре нет лог-инфраструктуры, а per-frame console.log
-   на 120 подшагах в секунду сам стал бы багом. window.mtDebug() отдаёт снимок по запросу */
-window.mtDebug=()=>({ gearbox:opt.gearbox, mgear:car.mgear, clu:+car.clu.toFixed(2),
-  rpm:Math.round(car.rpm), stalled:car.stalled, vel:+car.vel.toFixed(2), hand:!!car.hand,
-  tut: tut ? tut.i : null, tutKey: tutKey(),
-  needbrake: document.body.classList.contains('needbrake'),
-  needclutch: document.body.classList.contains('needclutch'),
-  needstart: document.body.classList.contains('needstart') });
-function mtWarn(msg){ selWarn=msg; selWarnT=2.4; selBlockT=0.5; tone(200,0.14,0.05); }
-const MT_ORDER=[-1,0,1,2], MT_NAMES={'-1':'R','0':'N','1':'1','2':'2'};
-/* все пути включения передачи (клавиши, буквы в панели, тач-кнопки) идут сюда: правила
-   «сначала сцепление» и «задняя только с остановки» должны быть в одном месте */
-function mtSelect(g){
-  if(car.mgear===g) return;
-  if(car.clu<0.85){ mtWarn(MOB ? 'Зажми СЦЕПЛЕНИЕ слева — потом передача'
-                              : 'Выжми сцепление (левый Shift) — потом передача'); return; }
-  if(g===-1 && Math.abs(car.vel)>STOP_V){ mtWarn('Задняя — только с полной остановки'); return; }
-  car.mgear=g; tone(500,0.04,0.05,'square');
-}
-function mtShift(step){
-  const i=MT_ORDER.indexOf(car.mgear), j=clamp(i+step,0,MT_ORDER.length-1);
-  if(j!==i) mtSelect(MT_ORDER[j]);
-}
-/* Enter = «сменить направление», как на автомате. Из НЕЙТРАЛИ он обязан дать первую:
-   раньше условие смотрело только на заднюю, и новичок, жавший Enter чтобы поехать,
-   уезжал назад — ровно на этом ломалось трогание на механике */
-function mtToggleRev(){ mtSelect(car.mgear>0 ? -1 : 1); }
-function mtStall(){
-  if(car.stalled) return;
-  car.stalled=true;
-  game.stalls=(game.stalls||0)+1;
-  tone(70,0.5,0.12,'sawtooth');
-  examPenalty('stall');
-  /* на эстакаде считаем заглохи как на экзамене: три подряд — попытка сгорела */
-  if(RAMP_ON && game.stalls>=3 && !examActive())
-    toast('Третий заглох — на экзамене это провал. R — попытка заново', 4.5);
-  else toast(MOB ? 'Заглох. Зажми СЦЕПЛЕНИЕ и нажми ЗАВЕСТИ'
-                 : 'Заглох. Выжми сцепление (Shift) и заведись (Y)', 3.5);
-}
-function mtStart(){
-  if(!car.stalled) return;
-  if(input.clutch || car.clu>0.8 || car.mgear===0){
-    car.stalled=false; car.rpm=MT.idle;
-    tone(180,0.28,0.08,'sawtooth'); toast('Завёлся', 1.2);
-  } else mtWarn(MOB ? 'Заводись, зажав СЦЕПЛЕНИЕ, или встань на нейтраль'
-                    : 'Заводись с выжатым сцеплением (Shift) или на нейтрали');
-}
-/* продольная динамика МКПП: зовётся из stepCar вместо АКПП-веток */
-function mtDrive(dt, gas, brakePedal, slow){
-  const tgt = input.clutch?1:0;
-  /* при равенстве значение стоит: «иначе — отпускание» снимало 2,3 % с выжатого до упора
-     сцепления на каждом подшаге, щиток застывал на 98 %, и часть тяги доходила до колёс (#153) */
-  if(tgt>car.clu) car.clu=Math.min(1, car.clu+5.0*dt);
-  else if(tgt<car.clu){
-    const inGrip = car.clu>0.25 && car.clu<0.75;
-    car.clu=Math.max(0, car.clu-(inGrip?0.5:2.8)*dt);
-  }
-  const spec=MT.gears[car.mgear], gas1=gas?1:0;
-  const rpmFree=MT.idle+(MT.max*0.62-MT.idle)*gas1;
-  if(car.stalled){ car.rpm=0; slow(CAR.drag); }
-  else if(!spec){ car.rpm=rpmFree; slow(CAR.drag*0.45); }
-  else {
-    const grip=1-car.clu;
-    const lockRpm=Math.abs(car.vel)/spec.vmax*MT.max;
-    car.rpm=rpmFree*(1-grip)+lockRpm*grip;
-    if(grip>0.45 && car.rpm<MT.stallRpm){ mtStall(); return; }
-    const dir=car.mgear<0?-1:1;
-    if(gas){
-      /* с затянутым ручником тяга режется: у МКПП передаточное 1,5–1,6 давало ускорение выше
-         тормозного усилия ручника, и машина спокойно разгонялась до максимума «на ручнике».
-         Теперь остаётся ползание, а при отпущенном сцеплении обороты падают и машина глохнет —
-         как в жизни, когда трогаешься, забыв снять ручник */
-      car.vel+=dir*CAR.accel*1.15*spec.k*grip*(car.hand?0.55:1)*dt;
-      if(Math.abs(car.vel)>spec.vmax) car.vel=dir*spec.vmax;
-    } else if(grip>0.3){
-      const crawl=dir*0.9;
-      if(dir>0? car.vel<crawl : car.vel>crawl) car.vel+=dir*0.55*grip*dt;
-      else slow(0.9*grip);
-    }
-  }
-  if(brakePedal) slow(CAR.brake);
-}
 function stepCar(dt){
   const want = (input.right?1:0) - (input.left?1:0);
   const srate = steerRateNow();
@@ -6240,9 +6095,7 @@ function stepCar(dt){
     car.steer += clamp(-car.steer, -back, back);
   }
 
-  const mt=mtOn();
-  const dir = mt ? (car.mgear<0?-1:(car.mgear>0?1:0))
-                 : (car.sel==='D' ? 1 : (car.sel==='R' ? -1 : 0));
+  const dir = car.sel==='D' ? 1 : (car.sel==='R' ? -1 : 0);
   car.gear = dir;
   const gas = input.fwd?1:0, brakePedal = input.back?1:0;
   /* уклон: продольная составляющая тяжести — ДО веток режимов, чтобы тормоз и P её
@@ -6257,8 +6110,7 @@ function stepCar(dt){
   /* ручник: держит на любом уклоне; трогание с затянутым — машина едва ползёт,
      ошибка чувствуется телом, а не сообщением */
   if(car.hand) slow(CAR.brake*(gas&&dir!==0 ? 0.45 : 1.5));
-  if(mt){ mtDrive(dt, gas, brakePedal, slow); }
-  else if(car.sel==='P'){
+  if(car.sel==='P'){
     slow(CAR.brake*2.2);
   } else if(brakePedal){
     slow(CAR.brake);
@@ -6371,7 +6223,6 @@ const PENALTIES={
   'stopline':        {pts:3, fatal:false, hard:true, txt:'Проезд стоп-линии без остановки'},
   'zebra':           {pts:3, fatal:false, txt:'Остановка на пешеходном переходе'},
   'no-blinker':      {pts:1, fatal:false, txt:'Манёвр без поворотника'},
-  'stall':           {pts:1, fatal:false, txt:'Заглох двигатель'},
   'handbrake-drive': {pts:1, fatal:false, txt:'Движение с затянутым ручником'},
   'redlight':        {pts:5, fatal:true,  txt:'Проезд на запрещающий сигнал'},
   'solid-line':      {pts:5, fatal:false, hard:true, txt:'Пересечение сплошной линии'},
@@ -6397,7 +6248,7 @@ function examPenalty(code){
   if(p.fatal || exam.score>=EXAM_FAIL_SUM) examFail(p.txt);
 }
 /* каждой ошибке — уровень, где её отрабатывают: протокол даёт ссылку «отработать» */
-const EXAM_TRAIN={rollback:19, stall:19, 'handbrake-drive':19, collision:21, kerb:21,
+const EXAM_TRAIN={rollback:19, 'handbrake-drive':19, collision:21, kerb:21,
   'no-blinker':22, oncoming:23, stopline:24, zebra:24, yield:25, 'collision-actor':25,
   redlight:26, 'stop-sign':26, 'solid-line':27, 'lane-blinker':27, 'tram-turn':28};
 /* первый проигрышный конец в игре: физика замирает на game.done, как при победе,
@@ -7209,7 +7060,6 @@ function initAudio(){
 }
 function engineSound(sp){
   if(!AC) return;
-  if(car.stalled){ engGain.gain.setTargetAtTime(0, AC.currentTime, 0.05); return; }
   const t=AC.currentTime, on=opt.sound&&!paused;
   engGain.gain.setTargetAtTime(on?(0.020+Math.min(1,sp/5)*0.040):0, t, 0.12);
   engOsc.frequency.setTargetAtTime(50+Math.min(1,sp/5)*95, t, 0.12);
@@ -8412,39 +8262,15 @@ function updateHUD(){
   document.body.classList.toggle('mir', opt.mirrors);
   setText($('hitsVal'), 'касаний: '+game.hits);
   if(MOB){
-    /* тач-кнопки — те же передачи, что в коробке: на механике P и D сбивали бы с толку */
-    document.querySelectorAll('#tgear span[data-gear]').forEach((el,i)=>{
-      if(mtOn()){
-        const g=MT_ORDER[i];
-        if(el.dataset.mg!==String(g)){ el.dataset.mg=String(g); el.textContent=MT_NAMES[g]; }
-        el.classList.toggle('on', g===car.mgear);
-      } else {
-        if(el.dataset.mg!==undefined){ delete el.dataset.mg; el.textContent=el.dataset.gear; }
-        el.classList.toggle('on', el.dataset.gear===car.sel);
-      }
-    });
+    document.querySelectorAll('#tgear span[data-gear]').forEach(el=>
+      el.classList.toggle('on', el.dataset.gear===car.sel));
     $('tgear').classList.toggle('deny', selBlockT>0);
     setText($('tviewlbl'), CAMNAME[opt.camMode] || '');
-    $('tclutch').classList.toggle('show', mtOn());
-    $('tclutch').classList.toggle('act', input.clutch);
-    /* стартер занимает место ручника: заглохшему он не нужен, а пятая кнопка в ряду
-       упёрлась бы в центральный ряд передач на телефоне 667×375 */
-    const needStart = mtOn() && car.stalled;
-    const hv = needStart ? 'none' : '', sv = needStart ? '' : 'none';
-    if($('thand').style.display!==hv) $('thand').style.display=hv;
-    if($('tstart').style.display!==sv){ $('tstart').style.display=sv;
-      $('tstart').parentNode.classList.toggle('stalled', needStart); }
     $('tview').classList.toggle('act', opt.camMode===CAM_FP);
   }
-  /* подсветка «нажми меня» адресная: на автомате это тормоз (из P выходят с ним),
-     на механике тормоз для трогания не нужен — нужно сцепление, а после заглоха стартер.
-     Без разделения кнопка ТОРМОЗ горела на механике всегда: car.sel там навсегда 'P' */
-  const live = MOB && !paused;
+  /* подсветка «нажми меня»: из P выходят с зажатым тормозом */
   document.body.classList.toggle('needbrake',
-    live && (selBlockT>0 || (!mtOn() && car.sel==='P' && !input.back)));
-  document.body.classList.toggle('needclutch',
-    live && mtOn() && !car.stalled && car.mgear===0 && !input.clutch);
-  document.body.classList.toggle('needstart', live && mtOn() && car.stalled);
+    MOB && !paused && (selBlockT>0 || (car.sel==='P' && !input.back)));
   /* DOM трогаем только на изменение: запись innerHTML/textContent каждый кадр — лишний пересчёт стилей */
   setText($('demoBtn'), demo ? '■ остановить показ' : '▶ демонстрация');
   const demoVis = DEMOS[game.li] ? '' : 'none';
@@ -8465,27 +8291,12 @@ function updateHUD(){
     const tt='Машин в городе: '+trafCount()+'. Нажми — поток станет «'+TRAF_NAMES[nx]+'»';
     if(tb.title!==tt) tb.title=tt; }
   $('gearVal').classList.toggle('deny', selBlockT>0);
-  const gearKey = mtOn() ? 'M'+car.mgear+(car.stalled?'s':'') : car.sel;
-  if(gearShown!==gearKey){
-    gearShown=gearKey;
-    if(mtOn()){
-      setText($('gearLbl'), 'механика · сменить на автомат');
-      $('gearVal').innerHTML = MT_ORDER.map(g=>
-        '<span data-mg="'+g+'" title="включить '+MT_NAMES[g]+'"'
-        +(g===car.mgear?' class="on '+(g===-1?'r':g>0?'d':'')+'"':'')+'>'
-        +MT_NAMES[g]+'</span>').join('')
-        +(car.stalled?' <span style="color:#f87171">заглох</span>':'');
-    } else {
-      setText($('gearLbl'), 'автомат · сменить на механику');
-      $('gearVal').innerHTML = SEL_ORDER.map(g=>
-        '<span data-gear="'+g+'" title="переключить в '+g+'"'
-        +(g===car.sel?' class="on '+g.toLowerCase()+'"':'')+'>'+g+'</span>').join('');
-    }
+  if(gearShown!==car.sel){
+    gearShown=car.sel;
+    $('gearVal').innerHTML = SEL_ORDER.map(g=>
+      '<span data-gear="'+g+'" title="переключить в '+g+'"'
+      +(g===car.sel?' class="on '+g.toLowerCase()+'"':'')+'>'+g+'</span>').join('');
   }
-  const rpmVis = mtOn() ? '' : 'none';
-  if($('rpmCell').style.display!==rpmVis) $('rpmCell').style.display=rpmVis;
-  if(mtOn()) setText($('rpmVal'), car.stalled ? 'заглох'
-    : (Math.round(car.rpm/100)*100)+' · '+Math.round(car.clu*100)+'%');
   setText($('spdVal'), (Math.abs(car.vel)*3.6).toFixed(0)+' км/ч');
   const turns=car.steer*CAR.steerRatio/TAU;
   setText($('steerVal'), Math.abs(turns)<0.03 ? 'прямо'
@@ -8545,18 +8356,12 @@ function updateHUD(){
        первая команда «тронься» приходит игроку, стоящему в P, и трогаться нечем.
        В настоящем режиме инспектор молчит — там это часть проверки */
     const gate = !examTrain() ? ''
-      : (mtOn() ? (car.stalled ? (MOB?'Заглох: СЦЕПЛЕНИЕ и ЗАВЕСТИ. ':'Заглох: сцепление (Shift) и Y. ')
-                 : car.mgear===0 ? (MOB?'N · держи СЦЕПЛЕНИЕ и тапни 1. ':'N · выжми сцепление (Shift) и нажми Enter — войдёт 1-я. ') : '')
-                : (car.sel==='P' ? (MOB ? 'P · держи ТОРМОЗ, тапни D. ' : 'P · зажми тормоз (пробел) и включи передачу (Enter). ')
-                 : car.sel==='N' ? 'N · нейтраль, газ не работает. ' : ''));
+      : car.sel==='P' ? (MOB ? 'P · держи ТОРМОЗ, тапни D. ' : 'P · зажми тормоз (пробел) и включи передачу (Enter). ')
+      : car.sel==='N' ? 'N · нейтраль, газ не работает. ' : '';
     coachCard('exam', nav.glyph, gate+nav.text+' · баллы: '+exam.score
       +(examTrain()&&nav.dist!==null&&nav.dist<75 ? ' · '+nav.dist.toFixed(0)+' м' : '')); }
   /* гайд троганья владеет карточкой целиком, пока не пройден: фазовые подсказки подождут */
-  /* заглох посреди гайда — сначала завестись: иначе шаг «дай газ» требует невозможного */
-  else if(tut && mtOn() && car.stalled)
-    coachCard('stop','⚠', MOB ? 'Заглох. Зажми СЦЕПЛЕНИЕ и нажми ЗАВЕСТИ'
-                              : 'Заглох. Выжми сцепление (Shift) и заведись — клавиша Y');
-  else if(tut && tutSteps()[tut.i]){ const st=tutSteps()[tut.i];
+  else if(tut && TUT[tut.i]){ const st=TUT[tut.i];
     coachCard(st.kind, st.icon, st.act(), null, {why:st.why}); }
   /* goalMiss почти на стоянке или при верной позе: на ходу посреди манёвра «доверни и
      подровняйся» перебивал фазу ровно в момент, когда 45° к оси — это цель, а не ошибка */
@@ -8565,18 +8370,11 @@ function updateHUD(){
        довернуть. К «вкатись глубже»/«остановись» не доклеиваем — фаза рядом может
        говорить противоположное («остановись»), и пара превращается в противоречие */
     if(gm) coachCard('almost','◎',gm+(/стоишь под/.test(gm)&&nextStep?' '+nextStep:''));
-    /* в МКПП car.sel мёртв — без этих веток карточка вечно показывала бы АКПП-гейт про P */
-    else if(mtOn()&&car.stalled) coachCard('stop','⚠',(MOB ? 'Заглох: зажми СЦЕПЛЕНИЕ и нажми ЗАВЕСТИ. '
-                              : 'Заглох: выжми сцепление (Shift) и заведись (Y). ')+nextStep);
-    /* клавиша названа Enter, а не «.»: на ЙЦУКЕН физическая точка подписана «Ю»,
-       и буквальный совет «нажми точку» не работал */
-    else if(mtOn()&&car.mgear===0) coachCard('gear','⏸',(MOB ? 'N · держи СЦЕПЛЕНИЕ и тапни 1. '
-                              : 'N · выжми сцепление (Shift) и нажми Enter — войдёт 1-я. ')+nextStep);
-    else if(!mtOn()&&car.sel==='P') coachCard('gear','⏸',(MOB ? 'P · держи ТОРМОЗ, тапни D или R. '
+    else if(car.sel==='P') coachCard('gear','⏸',(MOB ? 'P · держи ТОРМОЗ, тапни D или R. '
                               /* «.» из подсказок убрана: на ЙЦУКЕН физическая точка живёт на другой
                                  клавише (Slash), и совет «нажми точку» буквально не работал */
                               : 'P · зажми тормоз (пробел) и включи передачу (Enter). ')+nextStep);
-    else if(!mtOn()&&car.sel==='N') coachCard('gear','','N · нейтраль, газ не работает. '+nextStep);
+    else if(car.sel==='N') coachCard('gear','','N · нейтраль, газ не работает. '+nextStep);
     else if(curPhase) coachCard('act',curPhase.icon||'',curPhase.act||curPhase.hint,curPhase.goal||null,curPhase);
     /* у уровня с фазами нет coach: пробел в цепочке ронял бы HUD целиком */
     else if(level.def.coach) coachCard('act','',level.def.coach(curS));
@@ -8590,7 +8388,7 @@ function updateHUD(){
 /* статичный текст «как работает АКПП» новичка трогаться не учил — учит само действие:
    каждый шаг ждёт реального нажатия и только потом уступает карточку фазам уровня */
 let tut=null;
-const TUT_AT=[
+const TUT=[
   {kind:'gear', icon:'⏸',
    why:'Как в настоящем автомате: в P трансмиссия заблокирована, и выйти из P можно только с нажатым тормозом.',
    act:()=> MOB?'1/4 · Зажми кнопку ТОРМОЗ и держи':'1/4 · Зажми и держи ТОРМОЗ — S или пробел',
@@ -8608,45 +8406,19 @@ const TUT_AT=[
    act:()=> MOB?'4/4 · Газ — и прокатись':'4/4 · Газ — W. Разгонись и прокатись',
    done:()=> Math.abs(car.vel)*3.6>=5}
 ];
-/* на механике та же цепочка была неисполнима: её шаг 2 ждал car.sel==='D', а селектор
-   автомата на механике мёртв — карточка вечно требовала «нажми Enter, включится D»,
-   и новичок не мог тронуться вообще. Здесь каждый шаг ждёт своего состояния механики */
-const TUT_MT=[
-  {kind:'gear', icon:'⏸',
-   why:'На механике передача входит только с выжатым сцеплением — так же, как в настоящей машине. Сцепление здесь на левом Shift, на телефоне это кнопка СЦЕПЛЕНИЕ слева.',
-   act:()=> MOB?'1/4 · Зажми СЦЕПЛЕНИЕ слева и держи':'1/4 · Выжми сцепление — левый Shift, держи',
-   done:()=> car.clu>0.85},
-  {kind:'gear', icon:'⏸',
-   why:'Enter меняет направление: из нейтрали и с задней даёт первую, с первой — заднюю. Цифры R N 1 2 в панели и внизу экрана тоже нажимаются.',
-   act:()=> MOB?'2/4 · Держа СЦЕПЛЕНИЕ, тапни 1':'2/4 · Держи сцепление и нажми Enter — войдёт 1-я',
-   done:()=> car.mgear===1},
-  {kind:'act', icon:'⬆',
-   why:'Зона схватывания — 25–75 % хода педали, и отпускание там само замедляется, чтобы момент можно было поймать. Бросишь сцепление без газа — обороты упадут и машина заглохнет, как в жизни.',
-   act:()=> MOB?'3/4 · Дай ГАЗ и плавно отпускай СЦЕПЛЕНИЕ':'3/4 · Дай газ (W) и плавно отпускай сцепление',
-   done:()=> !car.stalled && car.clu<0.5 && Math.abs(car.vel)>0.4},
-  {kind:'act', icon:'⬆',
-   why:'Руль остаётся, где оставил (X или «0» — быстро в ноль). Заглох — выжми сцепление и заведись клавишей Y, на телефоне кнопкой ЗАВЕСТИ.',
-   act:()=> MOB?'4/4 · Газ — и прокатись':'4/4 · Газ — W. Разгонись и прокатись',
-   done:()=> Math.abs(car.vel)*3.6>=5}
-];
-/* цепочка выбирается на каждом обращении: коробку можно сменить прямо посреди гайда,
-   и захваченный в переменную массив после этого учил бы не той коробке */
-function tutSteps(){ return mtOn() ? TUT_MT : TUT_AT; }
-const tutKey=()=> mtOn() ? 'trainer_drive_mt' : 'trainer_drive';
 function maybeStartTut(){
-  let seen=true; try{ seen=localStorage.getItem(tutKey())==='1'; }catch(e){}
+  let seen=true; try{ seen=localStorage.getItem('trainer_drive')==='1'; }catch(e){}
   /* только с нетронутого старта: вернувшемуся в движении игроку «зажми тормоз» — шум */
-  const idle = mtOn() ? car.mgear===0 : car.sel==='P';
-  if(!seen && !demo && !tut && idle && !game.moved) tut={i:0};
+  if(!seen && !demo && !tut && car.sel==='P' && !game.moved) tut={i:0};
 }
 function tutTick(){
   if(!tut || demo || game.done) return;
-  const steps=tutSteps(), st=steps[tut.i];
+  const st=TUT[tut.i];
   if(st && st.done()){
     tut.i++;
-    if(tut.i>=steps.length){
+    if(tut.i>=TUT.length){
       tut=null;
-      try{ localStorage.setItem(tutKey(),'1'); }catch(e){}
+      try{ localStorage.setItem('trainer_drive','1'); }catch(e){}
       toast('Поехали! Дальше ведёт карточка-подсказка', 3);
     }
   }
@@ -8683,7 +8455,7 @@ function fbCtx(){
   const d=LEVELS[game.li]||{};
   let scr='';
   try{ scr=innerWidth+'x'+innerHeight; }catch(e){}
-  return { level:d.name||'', li:game.li, gearbox:opt.gearbox, cam:opt.camMode,
+  return { level:d.name||'', li:game.li, cam:opt.camMode,
     q:qLevel, gap:+frameGap.toFixed(1), js:+frameCost.toFixed(1),
     dpr:+(window.devicePixelRatio||1).toFixed(2), screen:scr, mob:!!MOB,
     runs:runsCnt, t:+game.t.toFixed(1), build:window.BUILD||'dev',
@@ -8860,9 +8632,6 @@ function doAct(a){
   if(a==='task'){ helpOpen=false; showTask(); return; }
   if(a==='demo'){ helpOpen=false; hideOv(); startDemo(); return; }
   if(a==='touch'){ setTouch(!MOB); showOv(helpOpen? helpHTML() : startHTML()); return; }
-  if(a.indexOf('gearbox')===0){
-    const to = a.indexOf(':')>0 ? a.split(':')[1] : (mtOn()?'AT':'MT');
-    setGearbox(to); showOv(helpOpen? helpHTML() : startHTML()); return; }
   if(a==='exammode'){ setExamMode(examTrain()?'real':'train');
     showOv(level.def.examRoute ? examBriefHTML() : (helpOpen? helpHTML() : startHTML())); return; }
   if(a==='brief'){ hideOv(); return; }
@@ -8904,10 +8673,6 @@ function ctrlHTML(){ return ''
   +'<li><span class="kbd">F</span> развернуть камеру за машину · <span class="kbd">[</span><span class="kbd">]</span> по 20°</li>'
   +'<li><span class="kbd">Q</span><span class="kbd">E</span> поворотники — включай перед каждым манёвром, как на экзамене</li>'
   +'<li><span class="kbd">J</span> ручник — держит на уклоне; трогание с затянутым душит разгон</li>'
-  +'<li><span class="kbd">`</span> сменить коробку: автомат ⇄ механика. То же — клик по подписи над буквами передач и меню ≡</li>'
-  +'<li><b>Механика:</b> левый <span class="kbd">Shift</span> — сцепление, <span class="kbd">Enter</span> — 1 ⇄ R, '
-  +'<span class="kbd">,</span><span class="kbd">.</span> — передачи по одной (на русской раскладке это клавиши Б и Ю), '
-  +'<span class="kbd">Y</span> — завестись после заглоха</li>'
   +'<li><span class="kbd">V</span> 3-е лицо ⇄ из салона · <span class="kbd">C</span> цикл камер</li>'
   +'<li><span class="kbd">Shift</span> (держать) — взгляд назад через плечо</li>'
   +'<li><span class="kbd">O</span> ориентиры манёвра · <span class="kbd">B</span> габариты (выкл → рамка → с метками)</li>'
@@ -8955,11 +8720,8 @@ function levelPickHTML(){
 function touchCtrlHTML(){ return ''
   +'<h2>Управление на экране</h2><ul>'
   +'<li><b>◀ ▶</b> слева — крутить руль, <b>0</b> — вернуть руль в ноль</li>'
-  +(mtOn()
-    ? '<li><b>ГАЗ</b> и <b>ТОРМОЗ</b> справа, <b>СЦЕПЛЕНИЕ</b> — слева над рулём: держи его левым пальцем, газ жми правым</li>'
-     +'<li><b>R N 1 2</b> внизу — тап по цифре с зажатым СЦЕПЛЕНИЕМ. Заглох — на месте РУЧН появится <b>ЗАВЕСТИ</b></li>'
-    : '<li><b>ГАЗ</b> и <b>ТОРМОЗ</b> справа; из P выходи, держа ТОРМОЗ</li>'
-     +'<li><b>P R N D</b> внизу — тап по букве, коробка как на автомате: в D и R машина ползёт без газа</li>')
+  +'<li><b>ГАЗ</b> и <b>ТОРМОЗ</b> справа; из P выходи, держа ТОРМОЗ</li>'
+  +'<li><b>P R N D</b> внизу — тап по букве, коробка как на автомате: в D и R машина ползёт без газа</li>'
   +'<li>Руль на месте идёт до упора ~'+LOCK_STILL_S+' с, в качении ~'+LOCK_ROLL_S+' с — крути его на ходу</li>'
   +'<li><b>≡</b> — камеры, зеркала, подсказки, выбор уровня</li>'
   +'<li>Провести пальцем по экрану — осмотреться, щипок двумя пальцами — приблизить</li>'
@@ -8970,7 +8732,6 @@ function startHTML(){
     +'<h1>По зеркалам</h1>'
     +'<p style="margin:-4px 0 10px;color:#93a7bd">тренажёр манёвров и подготовки к экзамену</p>'
     +'<button data-act="start">Поехали</button>'
-    + gearboxBtnHTML()
     +'<p>Держи телефон горизонтально. Карточка сверху ведёт манёвр: действие + до какого показания. '
     +'Оранжевые стойки показывают, где реально габариты машины. '
     +'Линии траекторий (дуги колёс, путь демо) — в меню, если захочется подсмотреть.</p>'
@@ -8985,16 +8746,12 @@ function startHTML(){
   +'<h1>По зеркалам</h1>'
   +'<p style="margin:-4px 0 10px;color:#93a7bd">тренажёр манёвров и подготовки к экзамену</p>'
   +'<button data-act="start">Поехали</button>'
-  + gearboxBtnHTML()
   +readinessHTML()
   +'<ul class="startlist" style="text-align:left">'
   +'<li><b>Едешь так:</b> <span class="kbd">W</span> газ, <span class="kbd">S</span>/пробел тормоз, '
   +'<span class="kbd">A</span>/<span class="kbd">D</span> руль (сам не возвращается, '
   +'<span class="kbd">X</span> — в ноль).</li>'
-  +(mtOn()
-    ? '<li><b>Механика:</b> держи левый <span class="kbd">Shift</span> — это сцепление, и жми <span class="kbd">Enter</span> — войдёт первая. '
-     +'Дальше газ и плавно отпускай сцепление. <span class="kbd">Y</span> — завестись, если заглох.</li>'
-    : '<li><b>Коробка-автомат:</b> <span class="kbd">Enter</span> — D ⇄ R, из P выходи с зажатым тормозом.</li>')
+  +'<li><b>Коробка-автомат:</b> <span class="kbd">Enter</span> — D ⇄ R, из P выходи с зажатым тормозом.</li>'
   +'<li><b>Карточка сверху ведёт манёвр:</b> действие + до какого показания. «?» объяснит почему.</li>'
   +'<li><b>Запутался:</b> <span class="kbd">H</span> — справка с физикой и всеми клавишами, '
   +'кнопка «демонстрация» покажет манёвр сама.</li>'
@@ -9009,7 +8766,7 @@ function helpHTML(){
     +'<p>Линии траекторий включаются в меню («Линии траекторий»): жёлтые дуги — путь <b>задних</b> колёс '
     +'(срезают внутрь поворота), красные — углы кузова, зелёно-оранжевая линия — как едет демонстрация. '
     +'Белый крестик — центр поворота, он всегда на линии задней оси.</p>'
-    + touchCtrlHTML() + gearboxBtnHTML()
+    + touchCtrlHTML()
     +'<button data-act="pick" class="ghost">Выбрать уровень</button>'
   +'<button data-act="touch" class="ghost">'+(MOB?'Выключить экранное управление':'Включить экранное управление')+'</button>'
     +'<button data-act="task" class="ghost">Как парковаться на этом уровне</button>'
@@ -9028,7 +8785,7 @@ function helpHTML(){
   +'на месте до упора ~'+LOCK_STILL_S+' с, в качении вдвое быстрее (~'+LOCK_ROLL_S+' с) — в тесноте крути руль на ходу. '
   +'Выше 8 км/ч кастор сам плавно возвращает руль к нулю. Камера следует за машиной, '
   +'но угол держит тот, что задал ты мышью.</p>'
-  + ctrlHTML() + gearboxBtnHTML()
+  + ctrlHTML()
   +'<button data-act="pick" class="ghost">Выбрать уровень (L)</button>'
   +'<button data-act="touch" class="ghost">'+(MOB?'Выключить экранное управление':'Включить экранное управление')+'</button>'
   +'<button data-act="task" class="ghost">Как парковаться на этом уровне</button>'
@@ -9145,20 +8902,16 @@ function pressKey(code){
     case 'KeyL': if(helpOpen) helpOpen=false; showLevelPick(); break;
     case 'KeyK': if(editor) closeEditor(); else openEditor(editorSource()); break;
     case 'Delete': case 'Backspace': if(editor) edAction({act:'del'}); break;
-    case 'Period': case 'NumpadDecimal': if(mtOn()) mtShift(1); else shiftSel(1); break;
-    case 'Comma':                        if(mtOn()) mtShift(-1); else shiftSel(-1); break;
+    case 'Period': case 'NumpadDecimal': shiftSel(1); break;
+    case 'Comma':                        shiftSel(-1); break;
     /* одно нажатие меняет направление — в манёвре это самое частое действие,
        правила АКПП те же: полная остановка и зажатый тормоз */
     case 'Enter': case 'NumpadEnter':
       if(paused) break;
-      if(mtOn()) mtToggleRev();
-      else selectGear(car.sel==='R' ? 'D' : (car.sel==='D' ? 'R' : 'D')); break;
+      selectGear(car.sel==='R' ? 'D' : (car.sel==='D' ? 'R' : 'D')); break;
     case 'KeyP': if(paused) break;
-      if(mtOn()){ mtWarn('В МКПП нет P: нейтраль (,/.) и ручник (J)'); break; }
       selectGear('P'); break;
-    case 'ShiftLeft': if(mtOn()) input.clutch=true; else input.lookBack=true; break;
-    case 'ShiftRight': input.lookBack=true; break;
-    case 'KeyY': if(mtOn()) mtStart(); break;
+    case 'ShiftLeft': case 'ShiftRight': input.lookBack=true; break;
     case 'KeyG': opt.guides=!opt.guides; break;
     case 'KeyT': opt.trails=!opt.trails; break;
     case 'KeyM': opt.sound=!opt.sound; break;
@@ -9167,8 +8920,6 @@ function pressKey(code){
       if(examActive() && !paused && !game.done){ showOv(examAbortHTML()); break; }
       toggleHelp(); break;
     case 'Slash': coachWhyToggle(); break;
-    /* букв в раскладке команд не осталось — коробке отдана клавиша под Escape */
-    case 'Backquote': if(!paused) setGearbox(mtOn()?'AT':'MT'); break;
     case 'KeyN': if(game.done){ loadLevel(game.li+1); hideOv(); } break;
     /* Q/E отданы поворотникам (ядро экзаменационного ритуала — прайм-клавиши у WASD);
        подворот камеры переехал на [ ] — до этого они были недокументированными дублями селектора */
@@ -9206,15 +8957,14 @@ window.addEventListener('keydown',e=>{
   if(demo && (a || e.code==='Period' || e.code==='Comma')) stopDemo();
   /* на паузе стрелки и пробел не перехватываем — ими листают длинный оверлей */
   if(a){ if(paused) return; input[a]=true; e.preventDefault(); return; }
-  const swallow = ['Period','Comma','BracketLeft','BracketRight','KeyH','Escape','Minus','Equal','Backquote'];
+  const swallow = ['Period','Comma','BracketLeft','BracketRight','KeyH','Escape','Minus','Equal'];
   if(swallow.indexOf(e.code)>=0) e.preventDefault();
   pressKey(e.code);
 });
 window.addEventListener('keyup',e=>{
   if(typingInField(e)) return;
   const a=KEYMAP[e.code]; if(a){ input[a]=false; e.preventDefault(); }
-  if(e.code==='ShiftLeft'){ input.clutch=false; input.lookBack=false; }
-  if(e.code==='ShiftRight') input.lookBack=false;
+  if(e.code==='ShiftLeft' || e.code==='ShiftRight') input.lookBack=false;
 });
 /* обзор мышью/тачпадом: тянуть — крутить камеру, колесо — приблизить */
 let dragging=false, lastX=0, lastY=0, dragId=null, pinchD=0;
@@ -9587,14 +9337,11 @@ const DEMOS = {
     {g:'P', time:0.9, say:'Приоритет читают по знакам и форме перекрёстка, а не по прямому углу'}
   ]}
 };
-let demo=null, demoBox=null;
+let demo=null;
 function demoActive(){ return !!demo; }
-function stopDemo(){ demo=null; for(const k in input) input[k]=false;
-  if(demoBox!==null){ opt.gearbox=demoBox; demoBox=null; } }
+function stopDemo(){ demo=null; for(const k in input) input[k]=false; }
 function startDemo(){
   const d=DEMOS[game.li]; if(!d) return;
-  /* демо водит АКПП-вводом и откалибровано под неё — на МКПП временно переключаем коробку */
-  if(mtOn()){ demoBox=opt.gearbox; opt.gearbox='AT'; }
   track('demo-start');
   restart(); hideOv();
   if(d.start) setBody(d.start.u, d.start.v, d.start.th);
@@ -9733,10 +9480,8 @@ function computeIdealPath(){
   const d=DEMOS[game.li]; if(!d) return null;
   const save={ru:car.ru, rv:car.rv, th:car.th, steer:car.steer, vel:car.vel, gear:car.gear, sel:car.sel,
               t:game.t, hits:game.hits, holdT:game.holdT, done:game.done, hitCd:game.hitCd, flash:game.flash,
-              snd:opt.sound, clear:lastClear, warn:selWarn, warnT:selWarnT, blockT:selBlockT,
-              box:opt.gearbox};
+              snd:opt.sound, clear:lastClear, warn:selWarn, warnT:selWarnT, blockT:selBlockT};
   opt.sound=false;
-  opt.gearbox='AT';   /* демо откалиброваны под АКПП — механика их сломала бы */
   setBody(level.start.u, level.start.v, level.start.th);
   car.steer=0; car.vel=0; car.gear=0; car.sel='P';
   if(d.start) setBody(d.start.u, d.start.v, d.start.th);
@@ -9763,7 +9508,7 @@ function computeIdealPath(){
   car.vel=save.vel; car.gear=save.gear; car.sel=save.sel;
   game.t=save.t; game.hits=save.hits; game.holdT=save.holdT; game.done=save.done;
   game.hitCd=save.hitCd; game.flash=save.flash;
-  opt.sound=save.snd; opt.gearbox=save.box; lastClear=save.clear;
+  opt.sound=save.snd; lastClear=save.clear;
   selWarn=save.warn; selWarnT=save.warnT; selBlockT=save.blockT;
   return pts.length>4 ? pts : null;
 }
@@ -10263,8 +10008,6 @@ function detectTouch(){
 let MOB = detectTouch();
 try{ const h=localStorage.getItem('trainer_hud'); if(h!==null) hudMode=+h||0; }catch(e){}
 try{ const m=localStorage.getItem('trainer_marks'); if(m!==null) opt.marks=m==='1'; }catch(e){}
-opt.gearbox='AT';
-try{ const g=localStorage.getItem('trainer_gearbox'); if(g==='MT') opt.gearbox='MT'; }catch(e){}
 syncHintLine();
 try{ const e=localStorage.getItem('trainer_exammode'); if(e==='real') opt.examMode='real'; }catch(e){}
 try{ const t=localStorage.getItem('trainer_traffic'); if(TRAF_SPACING[t]) opt.traffic=t; }catch(e){}
@@ -10296,12 +10039,6 @@ function bindHold(el, act){
   el.addEventListener('lostpointercapture',off);
 }
 document.querySelectorAll('#touchui [data-hold]').forEach(el=>bindHold(el, el.dataset.hold));
-/* стартер на телефоне: без него заглохнуть на механике значило потерять уровень —
-   mtStart() жил ровно на клавише Y, которой на экране нет */
-$('tstart').addEventListener('pointerdown',e=>{ e.preventDefault(); initAudio();
-  if(!paused) mtStart(); },{passive:false});
-/* подпись ячейки передач — самый видимый путь к смене коробки */
-$('gearLbl').addEventListener('click',()=>{ if(!paused) setGearbox(mtOn()?'AT':'MT'); });
 
 /* тап по букве ведёт рычаг по одной позиции, соблюдая те же запреты */
 function selectGear(target){
@@ -10319,7 +10056,7 @@ document.querySelectorAll('#tgear span').forEach(el=>{
   el.addEventListener('pointerdown',e=>{ e.preventDefault(); initAudio();
     if(el.dataset.blink){ if(!paused) setBlink(el.dataset.blink); return; }
     if(demo) stopDemo();
-    if(!paused){ if(mtOn()) mtSelect(+el.dataset.mg); else selectGear(el.dataset.gear); } },{passive:false});
+    if(!paused) selectGear(el.dataset.gear); },{passive:false});
 });
 
 function isFull(){ return !!(document.fullscreenElement || document.webkitFullscreenElement); }
@@ -10355,15 +10092,10 @@ function buildMenu(){
     b.textContent=label; if(isOn&&isOn()) b.classList.add('on');
     b.addEventListener('click',()=>{ fn(); if($('tmenu').classList.contains('open')) buildMenu(); });
     g.appendChild(b); };
-  /* коробка — вторым блоком, а не девятым пунктом «Прочего»: владелец не нашёл, чем
-     переключиться с механики на автомат, и это стоило ему всей поездки */
   if(examActive() && !game.done){
     h('Экзамен');
     add('Маршрут и команды', ()=>{ closeMenu(); showOv(examBriefHTML()); });
   }
-  h('Коробка передач');
-  add('Автомат', ()=>setGearbox('AT'), ()=>!mtOn());
-  add('Механика', ()=>setGearbox('MT'), ()=>mtOn());
   h('Экран');
   add(isFull()?'Выйти из полного экрана':'Во весь экран', ()=>{ toggleFull(); closeMenu(); }, ()=>isFull());
   add(['Скрыть панели, оставить зазоры','Скрыть все панели','Показать все панели'][hudMode], ()=>cycleHud(), ()=>hudMode>0);
@@ -10446,11 +10178,9 @@ function showTouchHelp(){
     d.style.top =Math.max(6,Math.min(innerHeight-h-6,y))+'px';
   };
   mark('.tsteer','◀ ▶ — крутить руль, 0 — вернуть его в ноль');
-  mark('.tdrive', mtOn() ? 'ГАЗ и ТОРМОЗ. Заглохнешь — здесь появится ЗАВЕСТИ' : 'ГАЗ и ТОРМОЗ');
-  if(mtOn()) mark('#tclutch','СЦЕПЛЕНИЕ — держи его, пока включаешь передачу');
+  mark('.tdrive','ГАЗ и ТОРМОЗ');
   mark('#tview','ВИД — переключить камеру: из салона, сверху, сзади');
-  mark('#tgear', mtOn() ? 'Передачи R N 1 2 — тапай их с зажатым СЦЕПЛЕНИЕМ'
-                        : 'Коробка: тапни D — поехали, R — задний ход');
+  mark('#tgear','Коробка: тапни D — поехали, R — задний ход');
   mark('#tmenubtn','Меню: во весь экран, задание, подсказки, уровни', true);
   mark('#trestart','⟲ — начать уровень заново', true);
   const fs=document.createElement('button'); fs.textContent='Во весь экран';
@@ -10471,9 +10201,7 @@ function onbSteps(){
     {sel:'#coach', text:'Карточка-подсказка: что делать прямо сейчас. Цвет кромки — тип: голубой «действие», красный «запрет», оранжевый «касание», жёлтый «почти у цели». «?» (или Slash) — почему именно так.'},
     {sel:'#angVal', text:'«Угол к цели» — насколько машина довёрнута к оси парковки. Когда карточка говорит «до 45°» — это вот это число.'},
     {sel:'#cf', text:'«Зазоры» — расстояние до препятствий с четырёх сторон, как парктроник. «0,3 м сзади» из карточки — смотри сюда. Тап по чипу цели в карточке подсветит нужную ячейку.'},
-    {sel:'#gearVal', text: mtOn()
-      ? 'Передачи механики R N 1 2. Сцепление — левый Shift, без него передача не войдёт. Enter даёт первую, с первой — заднюю. Цифры кликабельны, а подпись слева меняет коробку на автомат.'
-      : 'Селектор-автомат. Enter переключает D ⇄ R, из P выходят с зажатым тормозом (S или пробел). Буквы кликабельны, а подпись слева меняет коробку на механику.'},
+    {sel:'#gearVal', text:'Селектор-автомат. Enter переключает D ⇄ R, из P выходят с зажатым тормозом (S или пробел). Буквы кликабельны.'},
     {sel:MOB?'#trestart':'#demoBtn', text:MOB?'⟲ — начать уровень заново. Запутался — начни с чистого листа.':'Не получается — жми «демонстрация»: машина сама покажет манёвр и объяснит каждый шаг.'}
   ].filter(s=>{ const el=document.querySelector(s.sel);
     return el && el.getBoundingClientRect().width>0; });
@@ -10543,7 +10271,6 @@ $('topleft').addEventListener('click',()=>{ if(!paused) showTask(); });
 $('gearVal').addEventListener('click',e=>{
   const d=e.target.dataset||{};
   if(paused) return;
-  if(mtOn()){ if(d.mg===undefined) return; initAudio(); if(demo) stopDemo(); mtSelect(+d.mg); return; }
   if(!d.gear) return;
   initAudio(); if(demo) stopDemo(); selectGear(d.gear);
 });
@@ -10644,7 +10371,7 @@ function frame(ts){
   phaseTick(dt);
   tutTick();
   parkBeep(dt);
-  engineSound(mtOn() ? (car.rpm/MT.max)*7 : Math.abs(car.vel));
+  engineSound(Math.abs(car.vel));
   }catch(e){ crashHit('sim', e); }
   const t0=performance.now();
   facesFrame=0;

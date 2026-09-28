@@ -110,8 +110,7 @@ def compose(kind, text, contact, ctx):
     level = ctx.get('level')
     if level:
         li = ctx.get('li')
-        gearbox = 'МКПП' if ctx.get('gearbox') == 'MT' else 'АКПП'
-        head.append('Уровень %s · %s · %s' % (li + 1 if isinstance(li, int) else '?', level, gearbox))
+        head.append('Уровень %s · %s' % (li + 1 if isinstance(li, int) else '?', level))
     tech = []
     if ctx.get('build'):
         tech.append('сборка ' + str(ctx['build'])[:24])

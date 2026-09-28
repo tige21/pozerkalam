@@ -16,8 +16,7 @@
    стоп, и если касания повторяются, отползти в обратную сторону на полметра.
    «Смотрит по сторонам» только там, где текст велит пропустить: положение статистов —
    это взгляд в зеркало, а не подсказка.
-   Способности: газ/тормоз/руль, селектор АКПП (Enter/P), поворотники Q/E, ручник J,
-   МКПП (сцепление, первая передача, завод Y после заглоха). */
+   Способности: газ/тормоз/руль, селектор АКПП (Enter/P), поворотники Q/E, ручник J. */
 function learnerStart(){
   const press=(k,on)=>{ input[k]=on; };
   const tapKey=(code)=>pressKey(code);
@@ -116,7 +115,7 @@ function learnerStart(){
        Едем туда, где больше места; руль против знака угла вперёд, по знаку — назад */
     /* «доверни и подровняйся. Дальше: останови в зоне» — доворот важнее «останови»: стоя в центре зоны
        под 22° прицел в зону только щёлкал D/R, а угол правит доворот по панели */
-    if((alignRe.test(txt) || alignRe.test(pre)) && !c.wheel && !c.gear && !mtOn()){
+    if((alignRe.test(txt) || alignRe.test(pre)) && !c.wheel && !c.gear){
       const a=readAng();
       if(a!==null){
         dbg('align');
@@ -146,18 +145,6 @@ function learnerStart(){
     const wantWait=!wantStop && waitRe.test(txt);
     const wantGo=!wantStop && !wantWait && (goRe.test(txt) || c.gear==='D' || c.gear==='R');
 
-    /* МКПП-рефлексы — раньше всего: заглох лечится, передача включается.
-       Правило новичка: сцепление ВЫЖАТО всегда, кроме движения с включённой
-       передачей — стоянка на передаче с отпущенным глохнет каждые полсекунды */
-    if(mtOn()){
-      if(car.stalled){ press('clutch',true); if(tPhase>0.3) tapKey('KeyY'); return; }
-      if(wantGo && car.mgear===0){
-        press('clutch',true);
-        if(car.clu>0.9) mtShift(1);
-        return;
-      }
-      press('clutch', !(wantGo && car.mgear!==0));
-    }
 
     /* поворотники: включаем названный, если ещё не горит */
     if(/правый поворотник|поворотник \(E\)/i.test(c.full) && car.blink!=='R') tapKey('KeyE');
@@ -204,20 +191,18 @@ function learnerStart(){
     /* селектор АКПП: бейдж карточки — целевая передача; переключение только стоя и с тормозом,
        поэтому пока едем не туда — сначала тормозим. «Назад до угла 0°» без бейджа — тоже R:
        иначе «Дальше: … назад …» на карточке goalMiss читалось как «ехать» и включало D в кармане */
-    if(!mtOn()){
-      /* явные фразы про селектор ищем во всей карточке: P-заметка «включи передачу … Дальше: …»
-         после вырезания «Дальше» теряла собственную команду и ученик сидел в P */
-      const wantR = c.gear==='R' || (c.gear!=='D' && revWords.test(txt)) || /включи R|включи задний/i.test(c.full);
-      /* из P в D не лезем, если дальше велено стоять: «останови в зоне + P» → P → P-заметка
-         «включи передачу … Дальше: останови» → D → … — ученик щёлкал P/D по кругу */
-      /* toZone сам выбирает D/R по положению зоны; здесь только вывод из P */
-      const wantD = !wantR && (c.gear==='D' || (toZone && car.sel==='P')
-        || (!wantStop && (/включи передачу|включи D|тапни D/i.test(c.full) || (wantGo && !revWords.test(txt)))));
-      if(wantR && car.sel!=='R'){ dbg('shiftR'); brake(); if(tPhase>0.4 && stopped) tapKey('Enter'); return; }
-      if(wantD && car.sel!=='D'){ dbg('shiftD'); brake(); if(tPhase>0.4 && (car.sel==='P' || stopped)) tapKey('Enter'); return; }
-      const wantP=!toZone && (/включи P/i.test(txt) || (wantStop && /\+ ?P\b/.test(c.goalText)));
-      if(wantP && car.sel!=='P' && stopped){ dbg('shiftP'); brake(); if(tPhase>0.6) tapKey('KeyP'); return; }
-    }
+    /* явные фразы про селектор ищем во всей карточке: P-заметка «включи передачу … Дальше: …»
+       после вырезания «Дальше» теряла собственную команду и ученик сидел в P */
+    const wantR = c.gear==='R' || (c.gear!=='D' && revWords.test(txt)) || /включи R|включи задний/i.test(c.full);
+    /* из P в D не лезем, если дальше велено стоять: «останови в зоне + P» → P → P-заметка
+       «включи передачу … Дальше: останови» → D → … — ученик щёлкал P/D по кругу */
+    /* toZone сам выбирает D/R по положению зоны; здесь только вывод из P */
+    const wantD = !wantR && (c.gear==='D' || (toZone && car.sel==='P')
+      || (!wantStop && (/включи передачу|включи D|тапни D/i.test(c.full) || (wantGo && !revWords.test(txt)))));
+    if(wantR && car.sel!=='R'){ dbg('shiftR'); brake(); if(tPhase>0.4 && stopped) tapKey('Enter'); return; }
+    if(wantD && car.sel!=='D'){ dbg('shiftD'); brake(); if(tPhase>0.4 && (car.sel==='P' || stopped)) tapKey('Enter'); return; }
+    const wantP=!toZone && (/включи P/i.test(txt) || (wantStop && /\+ ?P\b/.test(c.goalText)));
+    if(wantP && car.sel!=='P' && stopped){ dbg('shiftP'); brake(); if(tPhase>0.6) tapKey('KeyP'); return; }
 
     /* продольное: стоп-слова сильнее газа; «пропусти» — стоим, пока статист рядом.
        Задний ход — только ползком, руль в упор/из упора докручиваем стоя; к стоп-линии и
