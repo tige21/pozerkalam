@@ -49,7 +49,7 @@ p{font-size:31px;line-height:1.3;margin-top:16px;color:#c2e3ff;font-weight:500}
   <img class="mark" src="${mark}">
   <h1>По зеркалам</h1>
   <p>Тренажёр манёвров и парковки<br>прямо в браузере</p>
-  <div class="facts">32 уровня · экзаменационный маршрут · АКПП и МКПП</div>
+  <div class="facts">32 уровня · экзаменационный маршрут</div>
 </div>
 <div class="url">pozerkalam.space</div>`;
 
