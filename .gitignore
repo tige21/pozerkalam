@@ -10,3 +10,6 @@ __pycache__/
 
 # промежуточные кадры landing-shots: на странице живут только webp
 landing/public/shots/*.png
+
+# исходники из ChatGPT в git — WebP q95 (tools/assets/src-webp.sh); PNG серии весили 41 МБ
+assets/src/*.png

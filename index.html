@@ -1784,6 +1784,14 @@ const WSHIELD=[[-0.74,1.36,0.29],[0.74,1.36,0.29],[0.74,1.00,0.86],[-0.74,1.00,0
    плита 0,30×0,10 стояла на y 1,21–1,31 — ниже глаза, прямо на дороге. Размеры — полуразмеры */
 /* 20×5 см, не 24×6: «небольшое и не перекрывает обзор» (владелец, 25.09) */
 const CMIR={lat:0, y:1.29, z:0.345, w:0.10, h:0.024, d:0.014};
+/* положение живых частей салона: эти же числа читает tools/blender/consts.mjs, и пререндер
+   салона строится вокруг них — иначе руль, щиток и рычаг разъехались бы с полостями в кубе.
+   Центр руля 0,90, не 1,01: верх обода на 1,195 стоял выше линии капота (−8,9° от глаза) и закрывал
+   дорогу перед машиной — «не вижу, куда ехать». Теперь обод на −12,7°, дорога над ним */
+const WHEEL={c:[-0.36,0.90,0.50], tilt:rad(24), r:0.185, rt:0.017, rg:0.022, hub:0.056};
+const CLUSTER={c:[-0.36,0.985,0.552], rd:0.056};
+const REPEATER={dx:0.086, y:1.038, z:0.552};
+const SELECTOR={lat:0, y:0.72, z0:0.02, step:0.075, hw:0.030, hh:0.055, hd:0.030};
 function emitDash(K){
   const {quad,panel,strip,box,P}=K, C=CAB;
   /* лобовое стекло: лёгкий холодный тон и тёмная солнцезащитная полоса сверху — без них проём
@@ -1824,7 +1832,7 @@ function emitDash(K){
   emitLit(()=>emitCluster(K));
   /* повторители поворотников на щитке — мигают в такт HUD-стрелкам */
   if(car.blink && Math.floor(performance.now()/380)%2===0){
-    const sg = car.blink==='L' ? -1 : 1, bx=-0.36+sg*0.086, by=1.038, bz=0.552;
+    const sg = car.blink==='L' ? -1 : 1, bx=CLUSTER.c[0]+sg*REPEATER.dx, by=REPEATER.y, bz=REPEATER.z;
     emitLit(()=>quad([bx-sg*0.006,by-0.011,bz],[bx+sg*0.014,by,bz],
                      [bx-sg*0.006,by+0.011,bz],[bx-sg*0.006,by+0.011,bz],[92,235,140],[0,0.4,0.9]));
   }
@@ -2035,7 +2043,7 @@ function switchCanvas(){
 /* щиток: циферблат — картинка на фасаде козырька, стрелка — светящийся брусок поверх него.
    Шкала там, куда водитель смотрит вниз, чтобы не отрывать взгляд от дороги на HUD у края экрана */
 function emitCluster(K){
-  const {P}=K, cx=-0.36, cy=0.985, cz=0.552, Rd=0.056;
+  const {P}=K, [cx,cy,cz]=CLUSTER.c, Rd=CLUSTER.rd;
   /* фон картинки прозрачный, подложка — грань цвета щитка в салонном освещении: сам циферблат
      не затеняется, а его квадрат не выделяется тёмной плитой на козырьке */
   const img = dialCanvas(car.sel);
@@ -2053,15 +2061,14 @@ function emitCluster(K){
 function emitSelector(K){
   const {box}=K;
   const cur = SEL_ORDER.indexOf(car.sel);
-  box(0, 0.72, 0.02-cur*0.075, 0.030,0.055,0.030, [150,156,166], 0, MO.satin);   /* рычаг на тоннеле */
+  const S=SELECTOR;
+  box(S.lat, S.y, S.z0-cur*S.step, S.hw,S.hh,S.hd, [150,156,166], 0, MO.satin);   /* рычаг на тоннеле */
 }
 function emitWheel(K){
   const {P,D}=K;
   /* руль: наклонён к водителю, крутится вместе с рулевым валом.
      Метка «12 часов» — по ней считаются обороты, без неё угол руля не прочитать */
-  /* центр 0,90, не 1,01: верх обода на 1,195 стоял выше линии капота (−8,9° от глаза) и закрывал
-     дорогу перед машиной — «не вижу, куда ехать». Теперь обод на −12,7°, дорога над ним */
-  const WC=[-0.36,0.90,0.50], tilt=rad(24), Rw=0.185, ang=car.steer*CAR.steerRatio;
+  const WC=WHEEL.c, tilt=WHEEL.tilt, Rw=WHEEL.r, ang=car.steer*CAR.steerRatio;
   const ax=[0,Math.sin(tilt),-Math.cos(tilt)];
   const b1=[1,0,0], b2=cross3(ax,b1);
   const add=(a,b,k)=>[a[0]+b[0]*k, a[1]+b[1]*k, a[2]+b[2]*k];
@@ -2076,7 +2083,7 @@ function emitWheel(K){
      трубки, грани — градиент между ними, и обод читается круглым с бликом кожи. Хваты на «10 и 2»
      — та же трубка толще, радиус задан по вершине кольца, чтобы переход был без щели.
      Раньше обод был 14 квадратных брусков и выглядел гайкой */
-  const NSEG=qDetail()?24:12, NT=qDetail()?6:4, RT=0.017, RG=0.022, RIM=[50,52,58];
+  const NSEG=qDetail()?24:12, NT=qDetail()?6:4, RT=WHEEL.rt, RG=WHEEL.rg, RIM=[50,52,58];
   const vr=(i)=>{ const rel=Math.abs(angNorm(i/NSEG*TAU-TOP)); return rel>rad(36)&&rel<rad(76) ? RG : RT; };
   const tubeN=(th,ph)=>{ const r=dirAt(th), c=Math.cos(ph), s=Math.sin(ph);
     return [r[0]*c+ax[0]*s, r[1]*c+ax[1]*s, r[2]*c+ax[2]*s]; };
@@ -2091,7 +2098,7 @@ function emitWheel(K){
   }
   /* спицы — плоские сужающиеся планки от ступицы к внутренней стороне обода; начинаются
      за краем ступицы и не доходят до трубки: painter's algorithm не рисует тела друг в друге */
-  const HUB=0.056, SPK=[128,134,144];
+  const HUB=WHEEL.hub, SPK=[128,134,144];
   const spoke=(a)=>{
     const r=dirAt(a), t=cross3(ax,r);
     const R0=HUB+0.002, R1=Rw-RG-0.003, H=0.007;
