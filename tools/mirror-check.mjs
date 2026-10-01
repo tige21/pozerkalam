@@ -103,7 +103,7 @@ check('колесо вне зеркала по-прежнему меняет о�
 
 /* меню предлагает размер */
 const menuItem = await page.evaluate(() => { buildMenu();
-  const t = [...document.querySelectorAll('#tmGrid *')].map(e => (e.textContent || '').trim()).find(x => /^Зеркала: \d+%$/.test(x));
+  const t = [...document.querySelectorAll('#tmGrid *')].map(e => (e.textContent || '').trim()).find(x => /^Зеркала крупнее: \d+%/.test(x));
   closeMenu();
   return t || null; });
 check('в меню есть строка размера зеркал', !!menuItem, menuItem || 'строки нет');
