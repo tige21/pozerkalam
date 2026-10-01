@@ -4,8 +4,10 @@
    руками, а вынимаются из самого index.html: объявления берутся по именам и исполняются в
    песочнице node:vm — весь скрипт игры без DOM не исполнить.
      node tools/blender/consts.mjs           → build/blender/consts.json + отпечаток в stdout
-     node tools/blender/consts.mjs --check   → код 1, если отпечаток не равен build/assets/bake-stamp.json
-   --check — это гейт @render-cabin-bake-fresh: правка EYE или WHEEL без перерендера куба валит его. */
+     node tools/blender/consts.mjs --check   → код 1, если отпечаток не равен data-fingerprint блока ассетов
+   --check — это гейт @render-cabin-bake-fresh: правка EYE или WHEEL без перерендера куба валит его.
+   Отпечаток рендера берётся из самого index.html (его вписывает tools/assets/embed.mjs), а не из
+   build/: папки build/ нет в git, а судить надо о той сборке, что уедет на прод. */
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -15,7 +17,6 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const SRC = path.join(ROOT, 'index.html');
 const OUT = path.join(ROOT, 'build', 'blender', 'consts.json');
-const STAMP = path.join(ROOT, 'build', 'assets', 'bake-stamp.json');
 
 /* порядок — порядок зависимостей: HALF_L читает CAR, CAR_HULL читает CAR_ST и hull2 */
 const STATEMENTS = ['PI', 'rad', 'CAR', 'HALF_L', 'C2R', 'EYE', 'CAR_ST', 'HOOD_Z', 'MIR_H', 'WSHIELD',
@@ -73,13 +74,13 @@ console.log(`hoodDeg   ${hoodDeg.toFixed(2)}° (линия капота из EYE
 console.log(`отпечаток ${fingerprint}`);
 
 if (process.argv.includes('--check')) {
-  if (!fs.existsSync(STAMP)) {
-    console.error(`ПРОВАЛ: нет ${path.relative(ROOT, STAMP)} — куб салона не отрендерен (tools/blender/bake-cabin.py)`);
+  const baked = (html.match(/<div id="assets"[^>]*data-fingerprint="([0-9a-f]{64})"/) || [])[1];
+  if (!baked) {
+    console.error('ПРОВАЛ: в index.html нет встроенного салона с отпечатком (tools/assets/embed.mjs)');
     process.exit(1);
   }
-  const stamp = JSON.parse(fs.readFileSync(STAMP, 'utf8'));
-  if (stamp.fingerprint !== fingerprint) {
-    console.error(`ПРОВАЛ: константы изменились после рендера куба — ${stamp.fingerprint.slice(0, 12)} в рендере, ${fingerprint.slice(0, 12)} в index.html; перерендерить салон`);
+  if (baked !== fingerprint) {
+    console.error(`ПРОВАЛ: константы изменились после рендера куба — ${baked.slice(0, 12)} в рендере, ${fingerprint.slice(0, 12)} в index.html; перерендерить салон`);
     process.exit(1);
   }
   console.log('ok: рендер салона сделан на текущих константах');

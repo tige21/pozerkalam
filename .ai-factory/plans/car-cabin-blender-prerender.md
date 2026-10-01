@@ -115,7 +115,7 @@ Rationale: заказ владельца на качество картинки;
   `assets/src/SOURCES.md`. (depends on 2)
 <!-- Commit checkpoint: tasks 1-3 -->
 
-- [ ] **Task 4: Сцена салона в Blender, серая (`tools/blender/car.py`).**
+- [x] **Task 4: Сцена салона в Blender, серая (`tools/blender/car.py`).**
   `brew install --cask blender`; запуск `blender -b -P tools/blender/car.py -- consts.json`.
   Салон по константам: торпедо с козырьком щитка (полость под `CLUSTER`), консоль и тоннель,
   карты дверей, обивка стоек A/B/C, потолок, пол, сиденья перед/зад, две педали, козырьки за
@@ -129,7 +129,7 @@ Rationale: заказ владельца на качество картинки;
   Логи: углы верхних точек от `EYE`, результат каждой проверки, число полигонов.
   Files: `tools/blender/car.py`. (depends on 1)
 
-- [ ] **Task 5: Пререндер куба (`tools/blender/bake-cabin.py`).**
+- [x] **Task 5: Пререндер куба (`tools/blender/bake-cabin.py`).**
   6 камер по 90° из `EYE` в кадре кузова, Cycles, прозрачная плёнка, стёкла прозрачны (с лёгким
   тоном и тёмной полосой сверху лобового, как сейчас). Свет: мягкое небо + свет от лобового
   (как `cabinLight`), без солнечных пятен. Выход: `build/assets/cabin-{pz,nz,px,nx,py,ny}.png`
@@ -137,7 +137,7 @@ Rationale: заказ владельца на качество картинки;
   Логи: время и размер каждой грани, итоговый отпечаток. Files: `tools/blender/bake-cabin.py`.
   (depends on 4)
 
-- [ ] **Task 6: Встраивание ассетов (`tools/assets/embed.mjs`).**
+- [x] **Task 6: Встраивание ассетов (`tools/assets/embed.mjs`).**
   `cwebp` (грани q 80 с альфой) → блок между `<!-- assets:begin -->`/`<!-- assets:end -->` в
   `<div id="assets" hidden>` перед основным `<script>`: по строке `<img data-asset="cabin-pz"
   src="data:image/webp;base64,…">` на картинку; JSON меша (фаза 3) — в `<template id="car-mesh">`.
