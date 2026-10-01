@@ -17,7 +17,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const HTML = path.join(ROOT, 'index.html');
 const SRC = path.join(ROOT, 'build', 'assets');
-const BUDGET = 2.2 * 1024 * 1024;
+/* EMBED_BUDGET_MB — другой бюджет: так tools/cabin-check.mjs доказывает, что --check краснеет */
+const BUDGET = (+process.env.EMBED_BUDGET_MB || 2.2) * 1024 * 1024;
 const BEGIN = '<!-- assets:begin — генерат tools/assets/embed.mjs, руками не править -->';
 const END = '<!-- assets:end -->';
 

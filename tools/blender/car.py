@@ -37,7 +37,6 @@ MATS = {
     'satin': ((0.30, 0.31, 0.33), 0.35), 'panel': ((0.012, 0.012, 0.014), 0.5),
 }
 BAKED = []
-GLASS = []
 
 
 def material(name):
@@ -134,12 +133,26 @@ def build_shell():
     кузов отсекается по нормали). Сегмент лобового пропущен: его закрывает фритта по WSHIELD."""
     st = [s for s in C['CAR_ST'] if -1.75 <= s['z'] <= 0.86]
     outer = [station_pts(s) for s in st]
+    # WSHIELD — прямоугольник ±0,74 до y 1,36, а у лофта на станции лобового край крыши на 1,33:
+    # верхние углы проёма уходили в потолок и стойку, обшивка закрывала их из глаза до +15°.
+    # Верх стоек на этой станции поднят выше угла WSHIELD и отодвинут наружу: при одном подъёме
+    # кромка стойки у верха всё равно заходила в проём на 0,5°. Только в салоне, кузов игры прежний
+    w_top = max(p[1] for p in C['WSHIELD']) + 0.01
+    w_lat = max(abs(p[0]) for p in C['WSHIELD']) + 0.04
+    for i, s_ in enumerate(st):
+        if s_['k'] == 'glass' and s_['z'] > 0.2:
+            for k in (4, 7):
+                x, y = outer[i][k]
+                outer[i][k] = (math.copysign(max(abs(x), w_lat), x), max(y, w_top))
     inner = [inset_pts(p, INSET) for p in outer]
     E = range(0, 11)
 
     def glass(i, e):
         k = st[i]['k']
-        return (k == 'glass' and e in (4, 5, 6)) or (k == 'cabin' and e in (3, 7))
+        # треугольник перед боковым окном (пояс → край крыши у лобового) — стекло двери, а не стойка:
+        # плитой во всю высоту он закрывал боковое зеркало, а сама стойка — узкая обшивка по WSHIELD
+        front = k == 'glass' and st[i]['z'] > 0.2 and e in (3, 7)
+        return front or (k == 'glass' and e in (4, 5, 6)) or (k == 'cabin' and e in (3, 7))
 
     def skip(i, e):
         k, z = st[i]['k'], st[i]['z']
@@ -216,55 +229,36 @@ def build_frit():
     nrm = (W[1] - W[0]).cross(W[3] - W[0]).normalized()
     if nrm.dot(EYE_V - cen) < 0:
         nrm = -nrm
-    off = nrm * 0.003
-    ring_in = [p + off for p in W]
-    ring_out = [p + (p - cen).normalized() * FRIT + off for p in W]
+    # к глазу — вдоль луча, а не по нормали стекла: сдвиг по нормали уводил кромку из глаза на
+    # 0,2° (≈3 px экрана) от WSHIELD, а по лучу проекция не меняется
+    ring_in = [p + (EYE_V - p).normalized() * 0.003 for p in W]
+    ring_out = [p + (p - cen).normalized() * FRIT + (EYE_V - p).normalized() * 0.003 for p in W]
     verts = ring_in + ring_out
     faces = [[i, (i + 1) % 4, 4 + (i + 1) % 4, 4 + i] for i in range(4)]
     make_obj('frit', verts, faces, 'frit')
     return W, nrm
 
 
-def srgb_to_linear(c):
-    c = c / 255
-    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
-
-
-def glass_material(name, rgb, alpha):
-    """Прозрачность в кадре = alpha: смесь прозрачного и самосвечения, как emitLit в игре —
-    тон не зависит от света сцены."""
-    m = bpy.data.materials.new(name)
-    if m.node_tree is None:
-        m.use_nodes = True
-    nt = m.node_tree
-    nt.nodes.clear()
-    out = nt.nodes.new('ShaderNodeOutputMaterial')
-    mix = nt.nodes.new('ShaderNodeMixShader')
-    tr = nt.nodes.new('ShaderNodeBsdfTransparent')
-    em = nt.nodes.new('ShaderNodeEmission')
-    em.inputs['Color'].default_value = (*(srgb_to_linear(c) for c in rgb), 1)
-    mix.inputs['Fac'].default_value = alpha
-    nt.links.new(tr.outputs[0], mix.inputs[1])
-    nt.links.new(em.outputs[0], mix.inputs[2])
-    nt.links.new(mix.outputs[0], out.inputs['Surface'])
-    return m
-
-
-def build_glass(nrm):
-    """Лобовое как в игре (emitDash): холодный тон 0,10 по всему WSHIELD и солнцезащитная
-    полоса 0,30 сверху. Стекло на 1 мм дальше фритты — фритта закрывает его кромку."""
-    W = [Gv(p) for p in C['WSHIELD']]
-    back = -nrm * 0.001
-    strip = [G(-0.74, 1.36, 0.29), G(0.74, 1.36, 0.29), G(0.74, 1.30, 0.35), G(-0.74, 1.30, 0.35)]
-    for name, pts, rgb, a, off in (('glass_tint', W, (150, 180, 215), 0.10, back),
-                                   ('glass_sunstrip', strip, (30, 45, 70), 0.30, back * 0.5)):
-        me = bpy.data.meshes.new(name)
-        me.from_pydata([tuple(p + off) for p in pts], [], [[0, 1, 2, 3]])
-        me.materials.append(glass_material(name, rgb, a))
-        ob = bpy.data.objects.new(name, me)
-        bpy.context.scene.collection.objects.link(ob)
-        GLASS.append(ob)
-    log('лобовое: тон 0,10 и полоса 0,30 — значения emitDash')
+def build_a_pillars(W, nrm):
+    """Стойка A — обшивка 8,5 см вдоль боковых кромок WSHIELD. Внутренний край — на кромке,
+    сдвинутой к глазу вдоль луча, наружный — дальше от проёма и ближе к салону: из глаза вся
+    обшивка лежит снаружи проёма, его край не сдвигается ни на пиксель."""
+    cen = sum(W, Vector()) / 4
+    for name, a, b in (('a_pillar_l', 3, 0), ('a_pillar_r', 1, 2)):
+        e = (W[b] - W[a]).normalized()
+        o = nrm.cross(e)
+        if o.dot(W[a] - cen) < 0:
+            o = -o
+        verts, faces = [], []
+        n = 12
+        for i in range(n + 1):
+            q = W[a].lerp(W[b], i / n)
+            r = (EYE_V - q).normalized()
+            # 1 мм наружу: край ровно на кромке округление относило бы то внутрь, то наружу
+            verts += [q + o * 0.001 + r * 0.006, q + o * 0.085 + r * 0.035]
+        for i in range(n):
+            faces.append([2 * i, 2 * i + 1, 2 * i + 3, 2 * i + 2])
+        make_obj(name, verts, faces, 'trim', 0, 40)
 
 
 def build_dash():
@@ -307,7 +301,7 @@ def build_column():
 
 def build_console():
     S = C['SELECTOR']
-    top = S['y'] + S['hh'] - 0.033
+    top = S['top']
     box('tunnel', (-0.14, 0.30, -0.44), (0.14, top, 0.24), 'trim', 0.012)
     zs = [S['z0'] - k * S['step'] for k in range(len(C['SEL_ORDER']))]
     box('gate_plate', (-0.05, top, min(zs) - 0.05), (0.05, top + 0.004, max(zs) + 0.05), 'panel', 0.002)
@@ -433,7 +427,40 @@ def check_sightlines(W, nrm):
         raise SystemExit('ПРОВАЛ обзор: в проёме лобового выше линии капота ' +
                          ', '.join(f'{n} до {e}° (lat, y, z = {at})' for n, (e, at) in sorted(worst.items())) +
                          f'; точек {len(bad)}')
-    log(f'обзор: в проёме WSHIELD выше линии капота ({HOOD_DEG:.2f}°) ничего нет')
+    # вершины ловят не всё: грань может зайти в проём, не заводя туда ни одной вершины, — поэтому
+    # ещё лучи из глаза в сетку точек проёма и вдоль кромок на 0,15° внутрь
+    sc = bpy.context.scene
+    dg = bpy.context.evaluated_depsgraph_get()
+    cen = sum(W, Vector()) / 4
+    pts = []
+    for i in range(1, 30):
+        for j in range(1, 30):
+            top = W[0].lerp(W[1], i / 30)
+            bot = W[3].lerp(W[2], i / 30)
+            pts.append(top.lerp(bot, j / 30))
+    for a, b in ((0, 1), (1, 2), (3, 0)):
+        for i in range(1, 60):
+            q = W[a].lerp(W[b], i / 60)
+            d = (q - EYE_V).normalized()
+            # внутрь — перпендикулярно кромке в поле зрения: к центру стекла у углов почти вдоль кромки
+            inward = d.cross(W[b] - W[a]).normalized()
+            if inward.dot(cen - q) < 0:
+                inward = -inward
+            pts.append(EYE_V + (d + inward * math.radians(0.15)).normalized() * (q - EYE_V).length)
+    hits = {}
+    for q in pts:
+        elev = math.degrees(math.atan2(q.z - EYE_V.z, q.y - EYE_V.y))
+        if elev <= HOOD_DEG + 0.3:
+            continue
+        d = q - EYE_V
+        ok, loc, _n, _i, ob, _m = sc.ray_cast(dg, EYE_V, d.normalized(), distance=d.length - 0.004)
+        if ok and ob.name != 'frit':
+            hits.setdefault(ob.name, []).append((round(elev, 1), (round(loc.x, 3), round(loc.z, 3), round(loc.y, 3))))
+    if hits:
+        raise SystemExit('ПРОВАЛ обзор (лучи): проём лобового выше линии капота закрывают ' +
+                         ', '.join(f'{n} ({len(e)} лучей, выс до {max(x[0] for x in e)}°, точки lat/y/z {[x[1] for x in e[:3]]})'
+                                   for n, e in sorted(hits.items())))
+    log(f'обзор: в проёме WSHIELD выше линии капота ({HOOD_DEG:.2f}°) ничего нет — {len(pts)} лучей')
 
 
 def live_samples(tunnel_top):
@@ -450,6 +477,9 @@ def live_samples(tunnel_top):
                     for k in range(len(C['SEL_ORDER'])) for dx in (-S['hw'], S['hw'])
                     for dz in (-S['hd'], S['hd']) for y in (tunnel_top + 0.006, S['y'] + S['hh'])]
     M = C['CMIR']
+    H = C['MIR_H']
+    pts['боковые зеркала'] = [G(sg * (H['lin'] + (H['lout'] - H['lin']) * fl), H['y0'] + (H['y1'] - H['y0']) * fy, H['zb'])
+                              for sg in (-1, 1) for fl in (0.25, 0.5, 0.75) for fy in (0.3, 0.5, 0.7)]
     pts['салонное зеркало'] = [G(M['lat'] + dx, M['y'] + dy, M['z'] - M['d']) for dx in (-M['w'], 0, M['w']) for dy in (-M['h'], M['h'])]
     Wh = C['WHEEL']
     tilt, wc = Wh['tilt'], Wh['c']
@@ -506,7 +536,7 @@ def main():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     build_shell()
     W, nrm = build_frit()
-    build_glass(nrm)
+    build_a_pillars(W, nrm)
     build_dash()
     build_column()
     tunnel_top = build_console()

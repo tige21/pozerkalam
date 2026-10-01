@@ -2,7 +2,8 @@
 
     Blender -b build/blender/car.blend -P tools/blender/bake-cabin.py -- [--quick] [--samples N]
 
-Окна прозрачны (плёнка Cycles прозрачная, стекло — смесь прозрачного и тона). Выход:
+Окна прозрачны полностью (плёнка Cycles прозрачная): тон лобового игра рисует до куба —
+полупрозрачное стекло в кубе на перехлёстах ячеек легло бы дважды и дало сетку. Выход:
 build/assets/cabin-<грань>.png и build/assets/bake-stamp.json с отпечатком констант, на которых
 собрана сцена: tools/blender/consts.mjs --check сверяет его с index.html (@render-cabin-bake-fresh).
 Разрешение граней: перёд 2048 — это ≈23 px на градус, 1:1 на экране 1280 px при DPR 2;

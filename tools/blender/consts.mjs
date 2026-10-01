@@ -15,7 +15,8 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const SRC = path.join(ROOT, 'index.html');
+/* CONSTS_SRC — другой файл вместо index.html: так tools/cabin-check.mjs доказывает, что --check краснеет */
+const SRC = process.env.CONSTS_SRC ? path.resolve(process.env.CONSTS_SRC) : path.join(ROOT, 'index.html');
 const OUT = path.join(ROOT, 'build', 'blender', 'consts.json');
 
 /* порядок — порядок зависимостей: HALF_L читает CAR, CAR_HULL читает CAR_ST и hull2 */

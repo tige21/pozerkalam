@@ -1801,15 +1801,48 @@ const CMIR={lat:0, y:1.29, z:0.345, w:0.10, h:0.024, d:0.014};
 const WHEEL={c:[-0.36,0.90,0.50], tilt:rad(24), r:0.185, rt:0.017, rg:0.022, hub:0.056};
 const CLUSTER={c:[-0.36,0.985,0.552], rd:0.056};
 const REPEATER={dx:0.086, y:1.038, z:0.552};
-const SELECTOR={lat:0, y:0.72, z0:0.02, step:0.075, hw:0.030, hh:0.055, hd:0.030};
-function emitDash(K){
-  const {quad,panel,strip,box,P}=K, C=CAB;
-  /* лобовое стекло: лёгкий холодный тон и тёмная солнцезащитная полоса сверху — без них проём
-     читался как дыра в кузове. bias отрицательный: стекло сортируется дальше руля и торпедо */
+/* top — крышка тоннеля в пререндере: поверх куба рычаг рисуется только выше неё */
+const SELECTOR={lat:0, y:0.72, z0:0.02, step:0.075, hw:0.030, hh:0.055, hd:0.030, top:0.742};
+/* лобовое стекло: лёгкий холодный тон и тёмная солнцезащитная полоса сверху — без них проём
+   читался как дыра в кузове. bias отрицательный: стекло сортируется дальше руля и торпедо */
+function emitWindshieldTint(K){
+  const {quad}=K;
   emitLit(()=>{
     quad(WSHIELD[0],WSHIELD[1],WSHIELD[2],WSHIELD[3],[150,180,215,0.10],[0,1.1,-1],-0.3);
     quad([-0.74,1.36,0.29],[0.74,1.36,0.29],[0.74,1.30,0.35],[-0.74,1.30,0.35],[30,45,70,0.30],[0,1.1,-1],-0.3);
   });
+}
+/* повторители поворотников на щитке — мигают в такт HUD-стрелкам */
+function emitRepeaters(K){
+  const {quad}=K;
+  if(car.blink && Math.floor(performance.now()/380)%2===0){
+    const sg = car.blink==='L' ? -1 : 1, bx=CLUSTER.c[0]+sg*REPEATER.dx, by=REPEATER.y, bz=REPEATER.z;
+    emitLit(()=>quad([bx-sg*0.006,by-0.011,bz],[bx+sg*0.014,by,bz],
+                     [bx-sg*0.006,by+0.011,bz],[bx-sg*0.006,by+0.011,bz],[92,235,140],[0,0.4,0.9]));
+  }
+}
+function emitMirrorPlank(K){
+  const {quad,box,P}=K;
+  box(0, CMIR.y+CMIR.h+0.004, CMIR.z-0.004, 0.012, 0.004, 0.008, [60,64,70], 0, MO.matte); /* ножка к стеклу */
+  { const adj=mirAdj('center'), yaw=adj.yaw*0.5, pitch=adj.pitch*0.5, py=CMIR.y+CMIR.h, pz=CMIR.z;
+    const Rm=(l,y,z)=>{ const r=mirRot(l, y-py, z-pz, yaw, pitch); return [r[0], py+r[1], pz+r[2]]; };
+    const w=CMIR.w, h=CMIR.h, d=0.008, y0=CMIR.y-h, y1=CMIR.y+h, z0=pz-d, z1=pz+d;
+    const cnr=[Rm(-w,y0,z0),Rm(w,y0,z0),Rm(w,y1,z0),Rm(-w,y1,z0),Rm(-w,y0,z1),Rm(w,y0,z1),Rm(w,y1,z1),Rm(-w,y1,z1)];
+    const hc=Rm(0,CMIR.y,pz), HC=[96,102,112];
+    quad(cnr[0],cnr[1],cnr[2],cnr[3], HC, hc, 0, MO.softtouch);   /* задняя (к водителю) */
+    quad(cnr[4],cnr[5],cnr[6],cnr[7], HC, hc, 0, MO.softtouch);   /* передняя */
+    quad(cnr[3],cnr[2],cnr[6],cnr[7], HC, hc, 0, MO.softtouch);   /* верх */
+    quad(cnr[0],cnr[1],cnr[5],cnr[4], HC, hc, 0, MO.softtouch);   /* низ */
+    quad(cnr[1],cnr[2],cnr[6],cnr[5], HC, hc, 0, MO.softtouch);   /* +lat торец */
+    quad(cnr[0],cnr[3],cnr[7],cnr[4], HC, hc, 0, MO.softtouch);   /* −lat торец */
+    const gz=z0-0.002, gw=w-0.006, gh=h-0.005;
+    const v0=Rm( gw,CMIR.y+gh,gz), v1=Rm(-gw,CMIR.y+gh,gz), v2=Rm(-gw,CMIR.y-gh,gz), v3=Rm( gw,CMIR.y-gh,gz);
+    mirGlassW.center=[P(v0[0],v0[1],v0[2]),P(v1[0],v1[1],v1[2]),P(v2[0],v2[1],v2[2]),P(v3[0],v3[1],v3[2])];
+    emitLit(()=>quad(v0,v1,v2,v3, [40,46,54], Rm(0,CMIR.y,pz+0.5), 0.01, MO.gloss)); }
+}
+function emitDash(K){
+  const {quad,panel,strip,box,P}=K, C=CAB;
+  emitWindshieldTint(K);
   /* REF — точка внутри тела торпедо: pushQuad разворачивает нормаль прочь от неё, и верх
      подушки смотрит вверх, а фасад — на водителя, одним правилом для всего профиля */
   const REF=[0,0.75,0.78];
@@ -1840,12 +1873,7 @@ function emitDash(K){
               [1.074,0.575,1,0],[1.072,0.545,0.9,-0.4],[1.060,0.532,0.2,-0.98]];
   sweep(HOOD, -0.485, -0.235, PAD, MO.softtouch, 1);
   emitLit(()=>emitCluster(K));
-  /* повторители поворотников на щитке — мигают в такт HUD-стрелкам */
-  if(car.blink && Math.floor(performance.now()/380)%2===0){
-    const sg = car.blink==='L' ? -1 : 1, bx=CLUSTER.c[0]+sg*REPEATER.dx, by=REPEATER.y, bz=REPEATER.z;
-    emitLit(()=>quad([bx-sg*0.006,by-0.011,bz],[bx+sg*0.014,by,bz],
-                     [bx-sg*0.006,by+0.011,bz],[bx-sg*0.006,by+0.011,bz],[92,235,140],[0,0.4,0.9]));
-  }
+  emitRepeaters(K);
   box(0,0.58,-0.10, 0.14,0.16,0.34, [96,100,108], 0, MO.softtouch);        /* тоннель */
   emitLit(()=>emitSelector(K));
   /* салонное зеркало — небольшая планка на стекле: статичное тёмное стекло, короткая ножка к стеклу,
@@ -1853,22 +1881,7 @@ function emitDash(K){
      с крупным корпусом — «ничего не показывать, минималистично»; планка, привязанная к голове (её
      вершины вращались вокруг EYE на headYaw/fpPitch), — «скачет по всему салону»: при повороте головы
      она уезжала по потолку и стойкам. Итог — на месте, как в машине, и меньше */
-  box(0, CMIR.y+CMIR.h+0.004, CMIR.z-0.004, 0.012, 0.004, 0.008, [60,64,70], 0, MO.matte); /* ножка к стеклу */
-  { const adj=mirAdj('center'), yaw=adj.yaw*0.5, pitch=adj.pitch*0.5, py=CMIR.y+CMIR.h, pz=CMIR.z;
-    const Rm=(l,y,z)=>{ const r=mirRot(l, y-py, z-pz, yaw, pitch); return [r[0], py+r[1], pz+r[2]]; };
-    const w=CMIR.w, h=CMIR.h, d=0.008, y0=CMIR.y-h, y1=CMIR.y+h, z0=pz-d, z1=pz+d;
-    const cnr=[Rm(-w,y0,z0),Rm(w,y0,z0),Rm(w,y1,z0),Rm(-w,y1,z0),Rm(-w,y0,z1),Rm(w,y0,z1),Rm(w,y1,z1),Rm(-w,y1,z1)];
-    const hc=Rm(0,CMIR.y,pz), HC=[96,102,112];
-    quad(cnr[0],cnr[1],cnr[2],cnr[3], HC, hc, 0, MO.softtouch);   /* задняя (к водителю) */
-    quad(cnr[4],cnr[5],cnr[6],cnr[7], HC, hc, 0, MO.softtouch);   /* передняя */
-    quad(cnr[3],cnr[2],cnr[6],cnr[7], HC, hc, 0, MO.softtouch);   /* верх */
-    quad(cnr[0],cnr[1],cnr[5],cnr[4], HC, hc, 0, MO.softtouch);   /* низ */
-    quad(cnr[1],cnr[2],cnr[6],cnr[5], HC, hc, 0, MO.softtouch);   /* +lat торец */
-    quad(cnr[0],cnr[3],cnr[7],cnr[4], HC, hc, 0, MO.softtouch);   /* −lat торец */
-    const gz=z0-0.002, gw=w-0.006, gh=h-0.005;
-    const v0=Rm( gw,CMIR.y+gh,gz), v1=Rm(-gw,CMIR.y+gh,gz), v2=Rm(-gw,CMIR.y-gh,gz), v3=Rm( gw,CMIR.y-gh,gz);
-    mirGlassW.center=[P(v0[0],v0[1],v0[2]),P(v1[0],v1[1],v1[2]),P(v2[0],v2[1],v2[2]),P(v3[0],v3[1],v3[2])];
-    emitLit(()=>quad(v0,v1,v2,v3, [40,46,54], Rm(0,CMIR.y,pz+0.5), 0.01, MO.gloss)); }
+  emitMirrorPlank(K);
   /* круглые дефлекторы: сатиновое кольцо, тёмная ниша и три ламели. Ниже линии взгляда
      на дорогу они деталь, а не индикатор — без подсветки */
   const vent=(lat,y,ro)=>{
@@ -2068,13 +2081,15 @@ function emitCluster(K){
 }
 /* передача дублируется на щитке (буквы в циферблате), а не только на рычаге: рычаг на тоннеле
    ниже поля зрения из салона, и без этого водитель не видит, что у него включено */
-function emitSelector(K){
-  const {box}=K;
+function emitSelector(K, live){
+  const {box}=K, S=SELECTOR;
   const cur = SEL_ORDER.indexOf(car.sel);
-  const S=SELECTOR;
-  box(S.lat, S.y, S.z0-cur*S.step, S.hw,S.hh,S.hd, [150,156,166], 0, MO.satin);   /* рычаг на тоннеле */
+  /* поверх куба — только часть над крышкой тоннеля: нижняя сидит внутри него, и нарисованная
+     поверх картинки легла бы на крышку */
+  const y0 = live ? S.top : S.y-S.hh, y1 = S.y+S.hh;
+  box(S.lat, (y0+y1)/2, S.z0-cur*S.step, S.hw,(y1-y0)/2,S.hd, [150,156,166], 0, MO.satin);   /* рычаг на тоннеле */
 }
-function emitWheel(K){
+function emitWheel(K, live){
   const {P,D}=K;
   /* руль: наклонён к водителю, крутится вместе с рулевым валом.
      Метка «12 часов» — по ней считаются обороты, без неё угол руля не прочитать */
@@ -2147,6 +2162,7 @@ function emitWheel(K){
     pushBar(P, at3(TOP,1.16), at3(TOP,1.30), 0.006, [236,244,255]);
   });
   /* кожух рулевой колонки: уходит от ступицы к торпедо вдоль оси вала */
+  if(live) return;   /* кожух неподвижен — он уже в пререндере */
   const SH=[WC[0]-ax[0]*0.16, WC[1]-ax[1]*0.16, WC[2]-ax[2]*0.16];
   pushBar(P, add(WC,ax,-0.012), SH, 0.052, [52,56,64], 1, 0, MO.round);
 }
@@ -2203,6 +2219,146 @@ function emitInterior(u,v,th){
   try{ emitCabinSkin(K); emitCabinShell(K); emitCabinRear(K); emitDash(K); emitWheel(K); }
   finally{ cabinLit=false; cabinFrame=null; }
 }
+/* ---------- салон: пререндер ---------- */
+/* Салон из глаза водителя — 6 граней куба, отрендеренных в Blender (tools/blender/bake-cabin.py)
+   и встроенных в блок #assets. Глаз в кузове неподвижен, голова только поворачивается: картинка
+   из точки EYE верна при любом повороте, FOV и на эстакаде (куб жёстко связан с кузовом, перекос
+   carLift входит в матрицу луча). Подвижное — щиток, повторители, рычаг, планка зеркала, руль —
+   рисуется поверх куба гранями. Порядок «куб, потом живые слои» точен потому, что из
+   неподвижного глаза закрытое закрыто всегда; tools/blender/car.py проверяет лучами, что ни один
+   живой слой не закрыт обшивкой. Куб рисует WebGL одним проходом: шейдер берёт для пикселя луч из
+   глаза и читает грань — перспектива точная. На Canvas 2D грань пришлось бы резать на аффинные
+   ячейки: у граней, видимых вскользь (потолок, стойки при повороте головы), это тысячи ячеек и
+   11 мс кадра, а с меньшим числом — зубцы по стыкам ячеек. Пока грани не распакованы, без WebGL,
+   при потере контекста и по ?cabin=old рисуется прежний салон emitInterior */
+const cabinBake={state:'off', faces:null};
+const CABIN_OLD=/[?&]cabin=old/.test(location.search);
+function cabinBakeLoad(){
+  const root=document.getElementById('assets');
+  if(!root || CABIN_OLD) return;
+  let cube;
+  try{ cube=JSON.parse(root.dataset.cube); }
+  catch(e){ cabinBake.state='failed'; console.warn('[assets] салон: описание куба не читается — рисуется прежний'); return; }
+  cabinBake.state='loading';
+  const keys=Object.keys(cube.faces);
+  Promise.all(keys.map(k=>{
+    const img=root.querySelector('img[data-asset="cabin-'+k+'"]');
+    if(!img) return Promise.reject(new Error('нет грани cabin-'+k));
+    return img.decode().then(()=>{
+      if(!img.naturalWidth || img.naturalWidth!==img.naturalHeight) throw new Error('грань cabin-'+k+' не квадрат');
+      return img;
+    });
+  })).then(imgs=>{
+    /* на телефоне грани вдвое меньше: шесть граней 2048/1536/1024 занимают ≈48 МБ памяти после
+       распаковки, вдвое меньшие — ≈12 */
+    cabinBake.faces=imgs.map((img,i)=>{
+      let src=img;
+      if(MOB){ const c=document.createElement('canvas'); c.width=c.height=img.naturalWidth>>1;
+        const g=c.getContext('2d'); g.imageSmoothingQuality='high'; g.drawImage(img,0,0,c.width,c.height); src=c; }
+      const [look,right,up]=cube.faces[keys[i]];
+      return {key:keys[i], img:src, size:src.width, look, right, up};
+    });
+    if(!cubeGLInit(cabinBake.faces)) throw new Error('WebGL недоступен');
+    if(MOB) root.remove();
+    cabinBake.state='ready';
+  }).catch(e=>{ cabinBake.state='failed'; console.warn('[assets] салон: '+e.message+' — рисуется прежний'); });
+}
+function cabinCubeOn(){ return cabinBake.state==='ready'; }
+const CUBE_VS='attribute vec2 aP; varying vec2 vP; void main(){ vP=aP; gl_Position=vec4(aP,0.0,1.0); }';
+/* uniform-массивы во фрагментном шейдере WebGL1 индексируются только счётчиком цикла — отсюда
+   второй цикл и цепочка if по семплерам */
+const CUBE_FS=`precision highp float;
+varying vec2 vP;
+uniform mat3 uRot; uniform vec2 uHalf;
+uniform vec3 uL[6]; uniform vec3 uR[6]; uniform vec3 uU[6];
+uniform sampler2D uT0; uniform sampler2D uT1; uniform sampler2D uT2;
+uniform sampler2D uT3; uniform sampler2D uT4; uniform sampler2D uT5;
+void main(){
+  vec3 d=uRot*vec3(vP.x*uHalf.x, vP.y*uHalf.y, 1.0);
+  int best=0; float bd=-1e9;
+  for(int i=0;i<6;i++){ float t=dot(d,uL[i]); if(t>bd){ bd=t; best=i; } }
+  vec3 L=uL[0], R=uR[0], U=uU[0];
+  for(int i=0;i<6;i++){ if(i==best){ L=uL[i]; R=uR[i]; U=uU[i]; } }
+  float k=1.0/dot(d,L);
+  vec2 tc=vec2(dot(d,R)*k*0.5+0.5, 0.5-dot(d,U)*k*0.5);
+  vec4 c;
+  if(best==0) c=texture2D(uT0,tc); else if(best==1) c=texture2D(uT1,tc); else if(best==2) c=texture2D(uT2,tc);
+  else if(best==3) c=texture2D(uT3,tc); else if(best==4) c=texture2D(uT4,tc); else c=texture2D(uT5,tc);
+  gl_FragColor=c;
+}`;
+const cubeGL={canvas:null, gl:null, loc:null};
+function cubeGLInit(faces){
+  const c=document.createElement('canvas');
+  const gl=c.getContext('webgl',{alpha:true, premultipliedAlpha:true, antialias:false, depth:false, stencil:false});
+  if(!gl) return false;
+  const sh=(type,src)=>{ const o=gl.createShader(type); gl.shaderSource(o,src); gl.compileShader(o);
+    if(!gl.getShaderParameter(o,gl.COMPILE_STATUS)) throw new Error('шейдер куба: '+gl.getShaderInfoLog(o)); return o; };
+  const pr=gl.createProgram();
+  gl.attachShader(pr,sh(gl.VERTEX_SHADER,CUBE_VS)); gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,CUBE_FS));
+  gl.linkProgram(pr);
+  if(!gl.getProgramParameter(pr,gl.LINK_STATUS)) throw new Error('шейдер куба: '+gl.getProgramInfoLog(pr));
+  gl.useProgram(pr);
+  const buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1, 3,-1, -1,3]),gl.STATIC_DRAW);
+  const aP=gl.getAttribLocation(pr,'aP'); gl.enableVertexAttribArray(aP); gl.vertexAttribPointer(aP,2,gl.FLOAT,false,0,0);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+  const L=[], R=[], U=[];
+  faces.forEach((f,i)=>{
+    gl.activeTexture(gl.TEXTURE0+i);
+    gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,f.img);
+    /* грани не степени двойки (1536): в WebGL1 без мипов и только с CLAMP_TO_EDGE */
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    gl.uniform1i(gl.getUniformLocation(pr,'uT'+i), i);
+    L.push(...f.look); R.push(...f.right); U.push(...f.up);
+  });
+  gl.uniform3fv(gl.getUniformLocation(pr,'uL'),L); gl.uniform3fv(gl.getUniformLocation(pr,'uR'),R); gl.uniform3fv(gl.getUniformLocation(pr,'uU'),U);
+  cubeGL.loc={rot:gl.getUniformLocation(pr,'uRot'), half:gl.getUniformLocation(pr,'uHalf')};
+  c.addEventListener('webglcontextlost', ()=>{ cabinBake.state='failed'; console.warn('[assets] салон: WebGL-контекст потерян — рисуется прежний'); });
+  cubeGL.canvas=c; cubeGL.gl=gl;
+  return true;
+}
+const CUBE_ROT=new Float32Array(9);
+/* луч камеры (вправо, вверх, вперёд) → направление в кадре кузова (lat, y, z): обратная к осям кузова
+   в мире, умноженная на оси камеры. На эстакаде оси кузова получают вертикальный сдвиг carLift —
+   тот же, что toCam даёт точкам машины, иначе куб и живые слои разъехались бы на подъёме */
+function drawCabinCube(u,v,th){
+  const gl=cubeGL.gl; if(!gl) return;
+  const R=rgt(th), F=fwd(th), c=(RAMP_ON && carRampUse) ? carRampF : null;
+  const lift=(x,z)=> c ? c.k*(-x*c.fu + z*c.fv) : 0;
+  const m=[R.x, R.y+lift(R.x,R.z), R.z,  0,1,0,  F.x, F.y+lift(F.x,F.z), F.z];   /* столбцы: lat, y, z */
+  const a=m[0],b=m[3],cc=m[6], d=m[1],e=m[4],f=m[7], g=m[2],h=m[5],i=m[8];
+  const det=a*(e*i-f*h)-b*(d*i-f*g)+cc*(d*h-e*g); if(Math.abs(det)<1e-9) return;
+  const inv=[(e*i-f*h)/det, (cc*h-b*i)/det, (b*f-cc*e)/det,
+             (f*g-d*i)/det, (a*i-cc*g)/det, (cc*d-a*f)/det,
+             (d*h-e*g)/det, (b*g-a*h)/det, (a*e-b*d)/det];                       /* по строкам */
+  const C=[cam.r, cam.u, cam.f];
+  for(let col=0; col<3; col++){ const v3=C[col];
+    for(let row=0; row<3; row++) CUBE_ROT[col*3+row]=inv[row*3]*v3.x+inv[row*3+1]*v3.y+inv[row*3+2]*v3.z; }
+  const gc=cubeGL.canvas, w=canvas.width, hh=canvas.height;
+  if(gc.width!==w || gc.height!==hh){ gc.width=w; gc.height=hh; }
+  gl.viewport(0,0,w,hh);
+  gl.uniformMatrix3fv(cubeGL.loc.rot,false,CUBE_ROT);
+  gl.uniform2f(cubeGL.loc.half, VP.w*0.5/cam.scale, VP.h*0.5/cam.scale);
+  gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  ctx.save(); ctx.setTransform(1,0,0,1,0,0); ctx.drawImage(gc,0,0); ctx.restore();
+}
+function emitInteriorLive(u,v,th){
+  const K=cabinCtx(u,v,th);
+  const F=fwd(th); cabinLight={x:F.x*0.93, y:0.37, z:F.z*0.93};
+  cabinLit=true;
+  cabinFrame={u, v, th, f:fuv(th), r:ruv(th)};
+  try{
+    emitLit(()=>emitCluster(K));
+    emitRepeaters(K);
+    emitLit(()=>emitSelector(K, true));
+    emitMirrorPlank(K);
+    emitWheel(K, true);
+  } finally{ cabinLit=false; cabinFrame=null; }
+}
+cabinBakeLoad();
 function emitCarMesh(u, v, th, col, st, lights){
   const f=fuv(th), r=ruv(th), a=ackermann(st||0), t=CAR.track/2;
   const at=(du,dz)=>({u:u+f.u*dz+r.u*du, v:v+f.v*dz+r.v*du});
@@ -7739,6 +7895,8 @@ function drawSceneInto(o){
   /* из салона мир и салон — два прохода: внутри кузова ничто снаружи не может быть ближе
      салонной обшивки, а один общий сорт по средней глубине пускал длинные стены поверх салона */
   const inside = !o.noSelf && camInsideCabin();
+  /* куб верен только из точки EYE: салонное зеркало смотрит из своей точки и рисует салон гранями */
+  const cube = inside && o.cube && cabinCubeOn();
   if(inside) flushFaces();
   if(!o.noSelf){
     const c=bodyPos();
@@ -7746,8 +7904,16 @@ function drawSceneInto(o){
     try{
       emitCarMesh(c.u,c.v,car.th,[206,214,226],car.steer,
                   {brake:input.back, rev:car.sel==='R', own:true});
-      if(inside) emitInterior(c.u,c.v,car.th);
-      if(opt.refs>=1) emitCornerPosts();
+      if(cube){
+        emitWindshieldTint(cabinCtx(c.u,c.v,car.th));
+        if(opt.refs>=1) emitCornerPosts();
+        flushFaces();
+        drawCabinCube(c.u,c.v,car.th);
+        emitInteriorLive(c.u,c.v,car.th);
+      } else {
+        if(inside) emitInterior(c.u,c.v,car.th);
+        if(opt.refs>=1) emitCornerPosts();
+      }
     } finally { carRampUse=false; }
   }
   flushFaces();
@@ -7910,7 +8076,7 @@ function render(dt){
     drawEditor();
     return;
   }
-  drawSceneInto({grid:true, trails:opt.trails, guides:opt.guides, maxD:QUALITY[qLevel].maxD, labels:true});
+  drawSceneInto({grid:true, trails:opt.trails, guides:opt.guides, maxD:QUALITY[qLevel].maxD, labels:true, cube:true});
   /* буферы зеркал обновляются и с выключенными HUD-виджетами, пока камера в салоне: стекло
      3D-корпусов живёт на них, а клавиша Z прячет только виджеты */
   if(opt.mirrors || opt.camMode===CAM_FP){ const r=mirrorRects(), slow=qLevel>=Q_SLOW_MIRRORS, t=mirTurn++;
