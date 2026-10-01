@@ -25,13 +25,18 @@ const END = '<!-- assets:end -->';
 /* q 80 для граней салона: на 2048 px разница с q 90 не видна, а вес меньше на треть */
 const ASSETS = [
   ...['pz', 'nz', 'px', 'nx', 'py', 'ny'].map((f) => ({ key: 'cabin-' + f, file: `cabin-${f}.png`, q: 80, required: true })),
+  /* куб салонного зеркала: из своей точки (у стекла зеркала), куб из глаза для него неверен */
+  ...['pz', 'nz', 'px', 'nx', 'py', 'ny'].map((f) => ({ key: 'cmir-' + f, file: `cmir-${f}.png`, q: 80, required: true })),
+  /* подушка руля на экране ≈100 px шириной: исходник 1194 px весил 219 КБ */
+  { key: 'wheel-pad', file: 'clean/dec-wheel-pad.png', q: 85, required: false, width: 320 },
 ];
 
 const log = (m) => console.log('[embed] ' + m);
 
-function webp(file, q) {
+function webp(file, q, width) {
   const tmp = path.join(os.tmpdir(), `embed-${process.pid}-${path.basename(file)}.webp`);
-  execFileSync('cwebp', ['-quiet', '-q', String(q), '-alpha_q', '100', '-m', '6', '-metadata', 'none', file, '-o', tmp]);
+  const resize = width ? ['-resize', String(width), '0'] : [];
+  execFileSync('cwebp', ['-quiet', '-q', String(q), '-alpha_q', '100', '-m', '6', '-metadata', 'none', ...resize, file, '-o', tmp]);
   const buf = fs.readFileSync(tmp);
   fs.unlinkSync(tmp);
   return buf;
@@ -68,7 +73,9 @@ function build() {
   if (!fs.existsSync(stampPath)) throw new Error('нет build/assets/bake-stamp.json — сначала bake-cabin.py');
   const stamp = JSON.parse(fs.readFileSync(stampPath, 'utf8'));
   if (stamp.quick) throw new Error('рендер куба быстрый (--quick) — в игру идёт только полный');
-  const cube = { eye: stamp.eye, faces: Object.fromEntries(Object.entries(stamp.faces).map(([k, v]) => [k, v.look_right_up])) };
+  if (!stamp.cmir) throw new Error('в рендере нет куба салонного зеркала — bake-cabin.py без --only');
+  const axes = (faces) => Object.fromEntries(Object.entries(faces).map(([k, v]) => [k, v.look_right_up]));
+  const cube = { eye: stamp.eye, faces: axes(stamp.faces), cmir: { eye: stamp.cmir.eye, faces: axes(stamp.cmir.faces) } };
   const lines = [];
   let total = 0;
   for (const a of ASSETS) {
@@ -78,7 +85,7 @@ function build() {
       log(`нет ${a.file} — пропущено`);
       continue;
     }
-    const buf = webp(file, a.q);
+    const buf = webp(file, a.q, a.width);
     total += buf.length;
     lines.push(`<img data-asset="${a.key}" alt="" src="data:image/webp;base64,${buf.toString('base64')}">`);
     log(`${a.key}: ${(fs.statSync(file).size / 1024).toFixed(0)} КБ PNG → ${(buf.length / 1024).toFixed(0)} КБ WebP q${a.q}`);

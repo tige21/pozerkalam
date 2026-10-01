@@ -7,9 +7,9 @@
    Проём меряется по самим граням куба, а не по кадрам: глаз в кузове неподвижен, и куб от
    поворота головы не зависит — пять поз головы проверяли бы одну и ту же картинку.
      PW_DIR=/tmp/pw node tools/cabin-check.mjs
-     FAULT=shift|eye|budget|normal|script — сломать нарочно и увидеть красный: сдвинуть грани на 4 px,
+     FAULT=shift|eye|budget|normal|script|marks|mirror — сломать нарочно и увидеть красный: сдвинуть грани на 4 px,
        поменять EYE после рендера, уронить бюджет до 0,5 МБ, проверить отказ на целой странице,
-       завернуть блок картинок в <script>
+       завернуть блок картинок в <script>, держать руль прямо при проверке меток, отключить куб зеркала
    Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена. */
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
@@ -62,7 +62,7 @@ async function openPage(file) {
   page.on('pageerror', (e) => { if (!/ServiceWorker/.test(e.message)) errors.push(e.message); });
   page.on('console', (m) => { if (m.type() === 'warning' && m.text().startsWith('[assets]')) warns.push(m.text()); });
   await page.goto(url + 'r');
-  await page.waitForFunction(() => typeof cabinBake !== 'undefined' && cabinBake.state !== 'loading', null, { timeout: 15000 });
+  await page.waitForFunction(() => typeof cabinBake !== 'undefined' && cabinBake.state !== 'loading' && mirBake.state !== 'loading', null, { timeout: 15000 });
   await page.evaluate(() => { loadLevel(0); doAct('start'); if (opt.camMode !== CAM_FP) pressKey('KeyV'); opt.fpYaw = 0; opt.fpPitch = 0; });
   await page.waitForTimeout(300);
   /* сколько раз за один кадр нарисован прежний салон и сколько раз — канвас куба */
@@ -71,9 +71,9 @@ async function openPage(file) {
   const frame = await page.evaluate(() => {
     let interior = 0, cube = 0, main = false;
     const origI = emitInterior, origS = drawSceneInto, origD = CanvasRenderingContext2D.prototype.drawImage;
-    window.drawSceneInto = (o) => { main = !!o.cube; try { return origS(o); } finally { main = false; } };
+    window.drawSceneInto = (o) => { main = o.cube === cabinBake; try { return origS(o); } finally { main = false; } };
     window.emitInterior = (...a) => { if (main) interior++; return origI(...a); };
-    CanvasRenderingContext2D.prototype.drawImage = function (src, ...a) { if (cubeGL.canvas && src === cubeGL.canvas) cube++; return origD.call(this, src, ...a); };
+    CanvasRenderingContext2D.prototype.drawImage = function (src, ...a) { if (main && cubeGL.canvas && src === cubeGL.canvas) cube++; return origD.call(this, src, ...a); };
     try { render(0); } finally { window.emitInterior = origI; window.drawSceneInto = origS; CanvasRenderingContext2D.prototype.drawImage = origD; }
     return { state: cabinBake.state, interior, cube };
   });
@@ -150,6 +150,51 @@ if (okPage.frame.state === 'ready') {
   const e = Object.values(geo.edges);
   check('проём лобового в кубе совпадает с WSHIELD: за кромкой кайма, внутри стекло; выше линии капота в проёме пусто (@render-cabin-bake-align)',
     e.every((x) => x.n >= 20 && !x.badOut && !x.badIn) && geo.inside >= 100 && !geo.insideBad, JSON.stringify(geo));
+}
+/* салонное зеркало: свой куб из точки камеры зеркала, прежний салон в его проходе не рисуется */
+if (okPage.frame.state === 'ready') {
+  const mir = await okPage.page.evaluate((fault) => {
+    if (fault === 'mirror') mirBake.state = 'failed';
+    let interior = 0, cube = 0, on = false;
+    const origI = emitInterior, origD = CanvasRenderingContext2D.prototype.drawImage;
+    window.emitInterior = (...a) => { if (on) interior++; return origI(...a); };
+    CanvasRenderingContext2D.prototype.drawImage = function (src, ...a) { if (on && src === cubeGL.canvas) cube++; return origD.call(this, src, ...a); };
+    const rect = mirrorRects().center, b = mirrorBuf(rect, 'center');
+    on = true;
+    try { renderMirrorInto(b, rect, 'center'); } finally { on = false; window.emitInterior = origI; CanvasRenderingContext2D.prototype.drawImage = origD; }
+    return { state: mirBake.state, interior, cube };
+  }, FAULT);
+  check('салонное зеркало рисует свой куб из точки камеры зеркала, прежний салон в его проходе не рисуется (@render-mirror-cube)',
+    mir.state === 'ready' && mir.cube === 1 && mir.interior === 0, JSON.stringify(mir));
+}
+/* метки оборотов на живом руле: проекция метки 12 часов на кадр и оттенок самого насыщенного
+   пикселя вокруг — жёлтый на первом обороте, оранжевый на втором, красный на упоре */
+if (okPage.frame.state === 'ready') {
+  const marks = await okPage.page.evaluate((fault) => {
+    const hue = (r, g, b) => { const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn; if (!d) return null;
+      let h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; h *= 60; return h < 0 ? h + 360 : h; };
+    const out = [];
+    for (const [name, turns, lo, hi] of [['0 оборотов', 0, 38, 62], ['1,2 оборота', 1.2, 17, 37], ['упор', null, -20, 16]]) {
+      car.steer = turns === null ? CAR.maxSteer : turns * TAU / CAR.steerRatio;
+      if (fault === 'marks') car.steer = 0;
+      opt.fpPitch = rad(-22); render(0);
+      const Wh = WHEEL, ax = [0, Math.sin(Wh.tilt), -Math.cos(Wh.tilt)], b2 = cross3(ax, [1, 0, 0]);
+      const a = car.steer * CAR.steerRatio - PI * 0.5;
+      const p = [0, 1, 2].map((i) => Wh.c[i] + ([1, 0, 0][i] * Math.cos(a) + b2[i] * Math.sin(a)) * Wh.r + ax[i] * (Wh.rt + 0.004));
+      const c = bodyPos(), K = cabinCtx(c.u, c.v, car.th), sp = viewProject(K.P(p[0], p[1], p[2]));
+      if (!sp) { out.push({ name, ok: false, why: 'метка за кадром' }); continue; }
+      const R = 5, px = ctx.getImageData(Math.round(sp.x * pxScale) - R, Math.round(sp.y * pxScale) - R, 2 * R + 1, 2 * R + 1).data;
+      let best = null, bs = -1;
+      for (let i = 0; i < px.length; i += 4) { const r = px[i], g = px[i + 1], b = px[i + 2], mx = Math.max(r, g, b), sat = mx ? (mx - Math.min(r, g, b)) / mx : 0;
+        if (sat > bs) { bs = sat; best = [r, g, b]; } }
+      let h = hue(...best); if (h !== null && h > 300) h -= 360;
+      out.push({ name, ok: bs > 0.45 && h !== null && h >= lo && h <= hi, hue: h === null ? null : +h.toFixed(0), sat: +bs.toFixed(2), at: [Math.round(sp.x), Math.round(sp.y)] });
+    }
+    car.steer = 0; opt.fpPitch = 0;
+    return out;
+  }, FAULT);
+  check('метка 12 часов на руле видна и окрашена по оборотам: жёлтая, оранжевая на втором, красная на упоре (@render-wheel-marks)',
+    marks.every((m) => m.ok), JSON.stringify(marks));
 }
 await okPage.context.close();
 

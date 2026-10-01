@@ -29,31 +29,137 @@ EYE_V = G(EYE['lat'], EYE['y'], EYE['z'])
 INSET = 0.05
 FRIT = 0.14
 
+CLEAN = ROOT / 'build' / 'assets' / 'clean'
+# материал → (картинка из tools/assets/clean.py или цвет, плитка в метрах, шероховатость, рельеф, металл).
+# Плитка ложится проекцией «коробкой» в координатах сцены (метры): развёртка не нужна, и узор идёт
+# непрерывно через соседние детали. Торпедо мельче (10 см) — зерно у картинки как у кожи сидений
 MATS = {
-    'door': ((0.055, 0.057, 0.062), 0.7), 'trim': ((0.040, 0.042, 0.046), 0.6),
-    'headliner': ((0.47, 0.45, 0.42), 0.9), 'dash': ((0.045, 0.047, 0.052), 0.65),
-    'seat': ((0.065, 0.067, 0.072), 0.85), 'carpet': ((0.020, 0.021, 0.023), 0.95),
-    'frit': ((0.004, 0.004, 0.005), 0.4), 'seal': ((0.010, 0.010, 0.011), 0.5),
-    'satin': ((0.30, 0.31, 0.33), 0.35), 'panel': ((0.012, 0.012, 0.014), 0.5),
+    'dash': ('mat-dash-soft', 0.10, 0.72, 0.30, 0.0), 'door': ('mat-dash-soft', 0.15, 0.72, 0.30, 0.0),
+    'door_low': ('mat-plastic-hard', 0.25, 0.80, 0.25, 0.0), 'trim': ('mat-plastic-hard', 0.25, 0.78, 0.25, 0.0),
+    'headliner': ('mat-headliner', 0.30, 0.95, 0.20, 0.0), 'seat': ('mat-seat-fabric', 0.12, 0.92, 0.45, 0.0),
+    'leather': ('mat-seat-leather', 0.20, 0.55, 0.35, 0.0), 'carpet': ('mat-carpet', 0.25, 1.00, 0.40, 0.0),
+    'satin': ('mat-trim-satin', 0.20, 0.35, 0.05, 0.4),
+    'frit': ((0.004, 0.004, 0.005), None, 0.40, 0.0, 0.0), 'seal': ((0.010, 0.010, 0.011), None, 0.50, 0.0, 0.0),
+    'panel': ((0.012, 0.012, 0.014), None, 0.30, 0.0, 0.0), 'lens': ((0.58, 0.58, 0.56), None, 0.60, 0.0, 0.0),
 }
+# ровная подсветка в долях цвета материала — как окружающий свет 0,48 в прежнем салоне игры:
+# по физике потолок смотрит вниз, на тёмный салон, и получал в 10 раз меньше света, чем сиденья
+# (светлый потолок выходил серее тёмной ткани); подсветка сохраняет разницу цвета материалов,
+# прямой свет из окон оставлен слабым — он даёт объём, а не яркость
+AMBIENT = 0.35
 BAKED = []
+
+
+def clean_image(stem):
+    path = CLEAN / f'{stem}.png'
+    if not path.exists():
+        raise SystemExit(f'нет {path.relative_to(ROOT)} — сначала python3 tools/assets/clean.py')
+    return bpy.data.images.load(str(path), check_existing=True)
 
 
 def material(name):
     m = bpy.data.materials.get(name)
     if m:
         return m
-    rgb, rough = MATS[name]
+    src, tile, rough, bump, metal = MATS[name]
     m = bpy.data.materials.new(name)
     if m.node_tree is None:
         m.use_nodes = True
-    bsdf = m.node_tree.nodes.get('Principled BSDF')
-    bsdf.inputs['Base Color'].default_value = (*rgb, 1)
+    nt = m.node_tree
+    bsdf = nt.nodes.get('Principled BSDF')
     bsdf.inputs['Roughness'].default_value = rough
+    bsdf.inputs['Metallic'].default_value = metal
+    # матовые обивки почти не бликуют: со стандартным отражением тёмный верх панели ловил небо
+    # под скользящим углом и выходил светло-серым (184 из 255 при цвете #34363A)
+    bsdf.inputs['Specular IOR Level'].default_value = 0.5 if rough < 0.5 else 0.15
+    bsdf.inputs['Emission Strength'].default_value = AMBIENT
+    if tile is None:
+        bsdf.inputs['Base Color'].default_value = (*src, 1)
+        bsdf.inputs['Emission Color'].default_value = (*src, 1)
+        return m
+    tc = nt.nodes.new('ShaderNodeTexCoord')
+    mp = nt.nodes.new('ShaderNodeMapping')
+    mp.inputs['Scale'].default_value = (1 / tile, 1 / tile, 1 / tile)
+    tx = nt.nodes.new('ShaderNodeTexImage')
+    tx.image = clean_image(src)
+    tx.projection = 'BOX'
+    tx.projection_blend = 0.3
+    nt.links.new(tc.outputs['Object'], mp.inputs['Vector'])
+    nt.links.new(mp.outputs['Vector'], tx.inputs['Vector'])
+    nt.links.new(tx.outputs['Color'], bsdf.inputs['Base Color'])
+    nt.links.new(tx.outputs['Color'], bsdf.inputs['Emission Color'])
+    if bump:
+        bw = nt.nodes.new('ShaderNodeRGBToBW')
+        bp = nt.nodes.new('ShaderNodeBump')
+        bp.inputs['Strength'].default_value = bump
+        bp.inputs['Distance'].default_value = 0.0015
+        nt.links.new(tx.outputs['Color'], bw.inputs['Color'])
+        nt.links.new(bw.outputs['Val'], bp.inputs['Height'])
+        nt.links.new(bp.outputs['Normal'], bsdf.inputs['Normal'])
     return m
 
 
-def make_obj(name, verts, faces, mats, bevel=0.0, smooth_angle=None):
+def decal_material(stem, mirror):
+    name = f'dec:{stem}{":m" if mirror else ""}'
+    m = bpy.data.materials.get(name)
+    if m:
+        return m
+    m = bpy.data.materials.new(name)
+    if m.node_tree is None:
+        m.use_nodes = True
+    nt = m.node_tree
+    bsdf = nt.nodes.get('Principled BSDF')
+    bsdf.inputs['Roughness'].default_value = 0.45
+    tx = nt.nodes.new('ShaderNodeTexImage')
+    tx.image = clean_image(stem)
+    tx.extension = 'CLIP'
+    nt.links.new(tx.outputs['Color'], bsdf.inputs['Base Color'])
+    nt.links.new(tx.outputs['Color'], bsdf.inputs['Emission Color'])
+    bsdf.inputs['Emission Strength'].default_value = AMBIENT
+    nt.links.new(tx.outputs['Alpha'], bsdf.inputs['Alpha'])
+    return m
+
+
+def panel_quad(name, center, normal, up, w, h, mat=None, stem=None, mirror=False, lift=0.002):
+    """Плоская панель в кадре кузова: центр, нормаль к салону, «вверх». Либо материал плиткой,
+    либо деталь из картинки (stem) с альфой; mirror — картинка зеркально (правая дверь)."""
+    c, n = Gv(center), Gv(normal).normalized()
+    u = Gv(up)
+    u = (u - n * u.dot(n)).normalized()
+    r = u.cross(n)
+    c = c + n * lift
+    verts = [c - r * w / 2 - u * h / 2, c + r * w / 2 - u * h / 2, c + r * w / 2 + u * h / 2, c - r * w / 2 + u * h / 2]
+    me = bpy.data.meshes.new(name)
+    me.from_pydata([tuple(v) for v in verts], [], [[0, 1, 2, 3]])
+    uvl = me.uv_layers.new(name='UV')
+    uvs = [(0, 0), (1, 0), (1, 1), (0, 1)]
+    if mirror:
+        uvs = [(1 - a, b) for a, b in uvs]
+    for loop, uv in zip(me.loops, uvs):
+        uvl.data[loop.index].uv = uv
+    me.materials.append(decal_material(stem, mirror) if stem else material(mat))
+    ob = bpy.data.objects.new(name, me)
+    bpy.context.scene.collection.objects.link(ob)
+    BAKED.append(ob)
+    return ob
+
+
+def on_profile(prof, k, t=0.5):
+    """Отрезок k профиля (z, y): точка на доле t, нормаль к водителю (−z) и «вверх» вдоль отрезка
+    — в кадре кузова (lat, y, z); последнее — длина отрезка."""
+    (z0, y0), (z1, y1) = prof[k], prof[k + 1]
+    dz, dy = z1 - z0, y1 - y0
+    L = math.hypot(dz, dy)
+    tz, ty = dz / L, dy / L
+    if ty < 0:
+        tz, ty = -tz, -ty
+    nz, ny = -ty, tz
+    if nz > 0:
+        nz, ny = -nz, -ny
+    return (z0 + dz * t, y0 + dy * t), (0, ny, nz), (0, ty, tz), L
+
+
+def make_obj(name, verts, faces, mats, bevel=0.0, smooth_angle=None, segments=3):
     me = bpy.data.meshes.new(name)
     me.from_pydata([tuple(v) for v in verts], [], faces)
     me.validate()
@@ -71,26 +177,26 @@ def make_obj(name, verts, faces, mats, bevel=0.0, smooth_angle=None):
     if bevel:
         md = ob.modifiers.new('bevel', 'BEVEL')
         md.width = bevel
-        md.segments = 3
+        md.segments = segments
         md.limit_method = 'ANGLE'
     BAKED.append(ob)
     return ob
 
 
-def prism(name, prof_zy, lat0, lat1, mat, bevel=0.004, smooth_angle=40):
+def prism(name, prof_zy, lat0, lat1, mat, bevel=0.004, smooth_angle=40, segments=3):
     """Профиль (z, y), вытянутый поперёк кузова от lat0 до lat1."""
     n = len(prof_zy)
     verts = [G(lat0, y, z) for z, y in prof_zy] + [G(lat1, y, z) for z, y in prof_zy]
     faces = [[i, (i + 1) % n, n + (i + 1) % n, n + i] for i in range(n)]
     faces += [list(range(n))[::-1], list(range(n, 2 * n))]
-    return make_obj(name, verts, faces, mat, bevel, smooth_angle)
+    return make_obj(name, verts, faces, mat, bevel, smooth_angle, segments)
 
 
-def box(name, lo, hi, mat, bevel=0.006):
+def box(name, lo, hi, mat, bevel=0.006, segments=3):
     (a0, b0, c0), (a1, b1, c1) = lo, hi
     v = [G(a, b, c) for a in (a0, a1) for b in (b0, b1) for c in (c0, c1)]
     f = [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]]
-    return make_obj(name, v, f, mat, bevel, 30)
+    return make_obj(name, v, f, mat, bevel, 30, segments)
 
 
 def cylinder(name, p0, p1, r, mat, seg=16):
@@ -165,8 +271,10 @@ def build_shell():
     def mat(i, e):
         if e in (0, 10):
             return 'trim'
-        if e in (1, 2, 8, 9):
+        if e in (2, 8):
             return 'door'
+        if e in (1, 9):
+            return 'door_low'
         if e in (3, 7):
             return 'trim'
         return 'headliner'
@@ -261,18 +369,42 @@ def build_a_pillars(W, nrm):
         make_obj(name, verts, faces, 'trim', 0, 40)
 
 
+# профили панели (z, y) по полосам: перед водителем лицевая часть отодвинута до z 0,60 —
+# циферблат (z 0,552) и обод руля (низ на 0,425, бока на 0,50) стоят перед ней, а не в ней
+DASH_DRV = [(0.92, 0.985), (0.78, 1.000), (0.66, 1.012), (0.61, 1.008), (0.60, 0.990), (0.60, 0.700),
+            (0.58, 0.620), (0.62, 0.520), (0.72, 0.480), (0.92, 0.480)]
+DASH_CTR = [(0.92, 0.985), (0.78, 1.000), (0.64, 1.012), (0.56, 1.008), (0.52, 0.988), (0.50, 0.952),
+            (0.47, 0.860), (0.38, 0.790), (0.28, 0.752), (0.24, 0.745), (0.24, 0.600), (0.40, 0.520),
+            (0.72, 0.480), (0.92, 0.480)]
+DASH_PAS = [(0.92, 0.985), (0.78, 1.000), (0.64, 1.012), (0.56, 1.008), (0.52, 0.988), (0.50, 0.952),
+            (0.47, 0.860), (0.45, 0.740), (0.47, 0.620), (0.55, 0.520), (0.70, 0.480), (0.92, 0.480)]
+CTR_HW = 0.17
+
+
 def build_dash():
     cx, cy, cz = C['CLUSTER']['c']
     rd = C['CLUSTER']['rd']
-    # перед водителем лицевая панель отодвинута до z 0,60: циферблат (z 0,552) и обод руля
-    # (низ на z 0,425, бока на 0,50) стоят перед ней, а не внутри неё — иначе живые слои
-    # оказались бы «за» обшивкой и рисовать их поверх куба было бы неверно
-    drv = [(0.92, 0.985), (0.78, 1.000), (0.66, 1.012), (0.61, 1.008), (0.60, 0.990), (0.60, 0.700),
-           (0.58, 0.620), (0.62, 0.520), (0.72, 0.480), (0.92, 0.480)]
-    pas = [(0.92, 0.985), (0.78, 1.000), (0.64, 1.012), (0.56, 1.008), (0.52, 0.988), (0.50, 0.952),
-           (0.47, 0.860), (0.45, 0.740), (0.47, 0.620), (0.55, 0.520), (0.70, 0.480), (0.92, 0.480)]
-    prism('dash_driver', drv, -0.90, -0.12, 'dash', 0.006, 35)
-    prism('dash_main', pas, -0.12, 0.90, 'dash', 0.006, 35)
+    prism('dash_driver', DASH_DRV, -0.90, -CTR_HW, 'dash', 0.006, 35)
+    prism('dash_center', DASH_CTR, -CTR_HW, CTR_HW, 'dash', 0.006, 35)
+    prism('dash_passenger', DASH_PAS, CTR_HW, 0.90, 'dash', 0.006, 35)
+    # центральная консоль: пара дефлекторов, ниже экран, ниже климат; аварийка над дефлекторами
+    (z, y), n, up, L = on_profile(DASH_CTR, 5)
+    for lat in (-0.085, 0.085):
+        panel_quad(f'vent_c{lat:+.2f}', (lat, y, z), n, up, 0.150, 0.062, stem='dec-vent')
+    (z, y), n, up, L = on_profile(DASH_CTR, 4)
+    panel_quad('hazard', (0, y, z), n, up, 0.040, 0.025, stem='dec-hazard')
+    (z, y), n, up, L = on_profile(DASH_CTR, 6)
+    panel_quad('screen', (0, y, z), n, up, 0.180, 0.107, stem='dec-screen-off')
+    (z, y), n, up, L = on_profile(DASH_CTR, 7)
+    panel_quad('climate', (0, y, z), n, up, 0.240, 0.0996, stem='dec-climate')
+    # боковые дефлекторы у краёв панели: слева на отодвинутой полосе водителя, справа на пассажирской
+    (z, y), n, up, L = on_profile(DASH_DRV, 4, 0.35)
+    panel_quad('vent_l', (-0.72, 0.90, 0.60), (0, 0, -1), (0, 1, 0), 0.150, 0.062, stem='dec-vent')
+    (z, y), n, up, L = on_profile(DASH_PAS, 5)
+    panel_quad('vent_r', (0.70, y, z), n, up, 0.150, 0.062, stem='dec-vent')
+    # сатиновая полоса через пассажирскую часть — на стыке верхней и нижней граней лица
+    (z, y), n, up, L = on_profile(DASH_PAS, 5, 0.02)
+    panel_quad('satin_strip', ((CTR_HW + 0.90) / 2, y, z), n, up, 0.90 - CTR_HW - 0.02, 0.014, mat='satin')
     # козырёк щитка — тонкая полукруглая скоба: внутренняя кромка выше луча из глаза на верх
     # циферблата, наружная ниже луча на верх обода руля (обод проходит над козырьком)
     seg, r0, r1, yc = 16, rd + 0.006, rd + 0.013, cy + 0.006
@@ -305,31 +437,55 @@ def build_console():
     box('tunnel', (-0.14, 0.30, -0.44), (0.14, top, 0.24), 'trim', 0.012)
     zs = [S['z0'] - k * S['step'] for k in range(len(C['SEL_ORDER']))]
     box('gate_plate', (-0.05, top, min(zs) - 0.05), (0.05, top + 0.004, max(zs) + 0.05), 'panel', 0.002)
-    prism('center_stack', [(0.47, 0.86), (0.48, 0.70), (0.24, 0.66), (0.24, top), (0.40, 0.80)], -0.15, 0.15, 'dash')
+    for z in (0.12, 0.19):
+        cylinder(f'cupholder_{z:.2f}', (0, top - 0.004, z), (0, top + 0.002, z), 0.034, 'panel', 24)
+    # подлокотник за рычагом: позади глаза по z, между глазом и рычагом его нет
+    box('armrest_center', (-0.10, top, -0.66), (0.10, top + 0.11, -0.30), 'leather', 0.03, 4)
     return top
 
 
+def seat(name, lat, z_front, z_back, y_cush, back_top, w, head_top):
+    """Сиденье: подушка и спинка — вставка из ткани между боковинами из экокожи, скругления фаской."""
+    cw, bw = w * 0.66, (w - w * 0.66) / 2
+    box(name + '_cushion', (lat - cw / 2, y_cush - 0.10, z_back), (lat + cw / 2, y_cush, z_front), 'seat', 0.03, 4)
+    for sg in (-1, 1):
+        x0 = lat + sg * cw / 2
+        box(f'{name}_bolster{sg:+d}', (min(x0, x0 + sg * bw), y_cush - 0.10, z_back), (max(x0, x0 + sg * bw), y_cush + 0.035, z_front),
+            'leather', 0.025, 4)
+    zb, zt = z_back + 0.02, z_back - 0.14
+    back = [(zb, y_cush), (zt, back_top), (zt - 0.10, back_top), (zb - 0.12, y_cush)]
+    prism(name + '_back', back, lat - cw / 2, lat + cw / 2, 'seat', 0.03, 35, 4)
+    side = [(zb + 0.03, y_cush + 0.02), (zt + 0.03, back_top - 0.03), (zt - 0.10, back_top - 0.03), (zb - 0.12, y_cush + 0.02)]
+    for sg in (-1, 1):
+        x0 = lat + sg * cw / 2
+        prism(f'{name}_backside{sg:+d}', side, min(x0, x0 + sg * bw), max(x0, x0 + sg * bw), 'leather', 0.025, 35, 4)
+    hz = zt - 0.02
+    box(name + '_headrest', (lat - 0.13, head_top - 0.12, hz - 0.08), (lat + 0.13, head_top, hz), 'leather', 0.035, 5)
+
+
 def build_seats():
-    def seat(lat, name):
-        box(name + '_cushion', (lat - 0.25, 0.42, -0.52), (lat + 0.25, 0.58, 0.02), 'seat', 0.035)
-        verts, faces = [], []
-        for (zb, zt, yb, yt) in [(-0.50, -0.64, 0.56, 1.06)]:
-            for dl in (-0.26, 0.26):
-                verts += [G(lat + dl, yb, zb), G(lat + dl, yt, zt), G(lat + dl, yt, zt - 0.11), G(lat + dl, yb, zb - 0.13)]
-        faces = [[0, 1, 2, 3], [4, 7, 6, 5], [0, 4, 5, 1], [1, 5, 6, 2], [2, 6, 7, 3], [3, 7, 4, 0]]
-        o = make_obj(name + '_back', verts, faces, 'seat', 0.04, 30)
-        box(name + '_headrest', (lat - 0.13, 1.08, -0.70), (lat + 0.13, 1.19, -0.62), 'seat', 0.03)
-        return o
-    seat(EYE['lat'], 'seat_l')
-    seat(-EYE['lat'], 'seat_r')
-    box('bench_cushion', (-0.72, 0.42, -1.30), (0.72, 0.60, -0.84), 'seat', 0.04)
-    verts = []
-    for dl in (-0.74, 0.74):
-        verts += [G(dl, 0.58, -1.28), G(dl, 1.00, -1.40), G(dl, 1.00, -1.52), G(dl, 0.58, -1.42)]
-    faces = [[0, 1, 2, 3], [4, 7, 6, 5], [0, 4, 5, 1], [1, 5, 6, 2], [2, 6, 7, 3], [3, 7, 4, 0]]
-    make_obj('bench_back', verts, faces, 'seat', 0.04, 30)
+    seat('seat_l', EYE['lat'], 0.02, -0.52, 0.58, 1.06, 0.52, 1.19)
+    seat('seat_r', -EYE['lat'], 0.02, -0.52, 0.58, 1.06, 0.52, 1.19)
+    box('bench_cushion', (-0.72, 0.42, -1.30), (0.72, 0.60, -0.84), 'seat', 0.04, 4)
+    prism('bench_back', [(-1.28, 0.58), (-1.40, 1.00), (-1.52, 1.00), (-1.42, 0.58)], -0.74, 0.74, 'seat', 0.04, 35, 4)
     for lat in (-0.48, 0.0, 0.48):
-        box(f'rear_headrest_{lat:+.2f}', (lat - 0.12, 1.03, -1.48), (lat + 0.12, 1.14, -1.41), 'seat', 0.03)
+        box(f'rear_headrest_{lat:+.2f}', (lat - 0.12, 1.03, -1.48), (lat + 0.12, 1.14, -1.41), 'leather', 0.03, 5)
+
+
+def build_doors():
+    """Двери изнутри: вставка из ткани, подлокотник, ручка, карман. Плоскость двери — по лофту:
+    между плечом (y 0,75) и поясом (y 0,99) обшивка наклонена внутрь кверху."""
+    for sg in (-1, 1):
+        for name, z0, z1, handle in (('front', -0.24, 0.42, True), ('rear', -1.02, -0.46, False)):
+            zc, zw = (z0 + z1) / 2, z1 - z0
+            lat_ins = sg * 0.830
+            n = (-sg * 0.97, 0.24, 0)
+            panel_quad(f'door_{name}{sg:+d}_insert', (lat_ins, 0.83, zc), n, (sg * 0.24, 0.97, 0), zw - 0.10, 0.10, mat='seat', lift=0.004)
+            box(f'armrest_{name}{sg:+d}', (min(sg * 0.79, sg * 0.85), 0.70, z0 + 0.04), (max(sg * 0.79, sg * 0.85), 0.75, z1 - 0.04), 'leather', 0.015, 4)
+            box(f'pocket_{name}{sg:+d}', (min(sg * 0.80, sg * 0.86), 0.42, z0 + 0.06), (max(sg * 0.80, sg * 0.86), 0.50, z1 - 0.10), 'door_low', 0.01, 3)
+            if handle:
+                panel_quad(f'handle{sg:+d}', (sg * 0.836, 0.905, z1 - 0.12), n, (sg * 0.24, 0.97, 0), 0.15, 0.069,
+                           stem='dec-door-handle', mirror=sg > 0, lift=0.005)
 
 
 def build_cabin_rest():
@@ -342,29 +498,54 @@ def build_cabin_rest():
     for lat, h in ((EYE['lat'] - 0.06, 0.07), (EYE['lat'] + 0.14, 0.11)):
         box(f'pedal_{lat:+.2f}', (lat - 0.04, 0.36, 0.62), (lat + 0.04, 0.36 + h, 0.64), 'panel', 0.004)
     for sg in (-1, 1):
-        box(f'visor_{sg:+d}', (sg * 0.14 if sg > 0 else -0.62, 1.355, 0.08), (0.62 if sg > 0 else -0.14, 1.372, 0.22), 'headliner', 0.006)
-        for z0, z1 in ((-0.20, 0.42), (-1.02, -0.46)):
-            lat = sg * 0.80
-            box(f'armrest_{sg:+d}_{z0:+.2f}', (min(lat, lat - sg * 0.05), 0.70, z0), (max(lat, lat - sg * 0.05), 0.745, z1), 'door', 0.012)
+        box(f'visor_{sg:+d}', (0.20 if sg > 0 else -0.58, 1.352, 0.05), (0.58 if sg > 0 else -0.20, 1.372, 0.22), 'headliner', 0.008, 4)
     box('header', (-0.74, 1.362, 0.20), (0.74, 1.40, 0.255), 'headliner', 0.008)
+    box('dome', (-0.10, 1.355, -0.06), (0.10, 1.372, 0.06), 'trim', 0.006, 3)
+    # рассеиватель матовый: с гладким светлым стеклом плафон бликовал белым пятном в салонном зеркале
+    box('dome_lens', (-0.06, 1.350, -0.035), (0.06, 1.356, 0.035), 'lens', 0.003)
+    build_doors()
+
+
+def area_light(name, size, size_y, energy, at, target):
+    li = bpy.data.lights.new(name, 'AREA')
+    li.shape = 'RECTANGLE'
+    li.size, li.size_y = size, size_y
+    li.energy = energy
+    ob = bpy.data.objects.new(name, li)
+    bpy.context.scene.collection.objects.link(ob)
+    ob.location = Gv(at)
+    ob.rotation_euler = (Gv(target) - ob.location).to_track_quat('-Z', 'Y').to_euler()
 
 
 def build_lights():
+    """Дневной свет без солнца: солнце дало бы тени, которые не двигаются с курсом машины (в игре
+    свет салона идёт от лобового, cabinLight). Окружение — небо сверху и тёмная земля снизу, свет
+    через окна почти горизонтальный, на уровне головы: при ровном небе со всех сторон сиденья
+    получали в 10 раз больше света, чем потолок, и светлый потолок выходил серее тёмной ткани."""
     world = bpy.context.scene.world or bpy.data.worlds.new('World')
     bpy.context.scene.world = world
     if world.node_tree is None:
         world.use_nodes = True
-    bg = world.node_tree.nodes.get('Background')
-    bg.inputs['Color'].default_value = (0.70, 0.78, 0.92, 1)
+    nt = world.node_tree
+    bg = nt.nodes.get('Background')
+    tc = nt.nodes.new('ShaderNodeTexCoord')
+    sep = nt.nodes.new('ShaderNodeSeparateXYZ')
+    mr = nt.nodes.new('ShaderNodeMapRange')
+    mr.inputs['From Min'].default_value = -0.15
+    mr.inputs['From Max'].default_value = 0.25
+    mix = nt.nodes.new('ShaderNodeMix')
+    mix.data_type = 'RGBA'
+    mix.inputs['A'].default_value = (0.20, 0.19, 0.17, 1)
+    mix.inputs['B'].default_value = (0.74, 0.82, 0.96, 1)
+    nt.links.new(tc.outputs['Generated'], sep.inputs['Vector'])
+    nt.links.new(sep.outputs['Z'], mr.inputs['Value'])
+    nt.links.new(mr.outputs['Result'], mix.inputs['Factor'])
+    nt.links.new(mix.outputs['Result'], bg.inputs['Color'])
     bg.inputs['Strength'].default_value = 1.0
-    li = bpy.data.lights.new('windshield_sky', 'AREA')
-    li.shape = 'RECTANGLE'
-    li.size, li.size_y = 2.2, 1.2
-    li.energy = 260
-    ob = bpy.data.objects.new('windshield_sky', li)
-    bpy.context.scene.collection.objects.link(ob)
-    ob.location = G(0, 2.4, 1.9)
-    ob.rotation_euler = (G(0, 0.9, -0.3) - ob.location).to_track_quat('-Z', 'Y').to_euler()
+    area_light('windshield_sky', 2.4, 1.0, 40, (0, 1.45, 1.9), (0, 1.25, -0.6))
+    for sg in (-1, 1):
+        area_light(f'side_sky{sg:+d}', 2.2, 0.7, 80, (sg * 1.9, 1.35, -0.3), (0, 1.25, -0.3))
+    area_light('rear_sky', 1.4, 0.7, 50, (0, 1.40, -2.6), (0, 1.2, -1.0))
 
 
 def evaluated_bvh():
