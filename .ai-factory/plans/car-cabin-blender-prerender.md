@@ -10,8 +10,8 @@ Created: 2026-10-02
 ## Settings
 - Testing: yes — существующие гейты остаются зелёными: `cockpit-shots` (skyGap ≤ 60, демо 0 warn,
   sortAudit), `look-check` (`@render-*`), `light-check` (`@city-light-lens-cabin`), `mirror-check`,
-  `hull-check`, `level-audit`, `traffic-check`, `unit-check`, `gherkin-run`, `yandex-check`,
-  `sw-check`, `touch-check`, `perf-bench`; новые `@ui`-требования с кодами в `specs/features/`
+  `hull-check`, `level-audit`, `traffic-check`, `unit-check`, `gherkin-run`,
+  `sw-check`, `touch-check`, `perf-bench` (`yandex-check` — вне плана, см. задачу 18); новые `@ui`-требования с кодами в `specs/features/`
   (скилл `pozerkalam-gherkin`), каждое сначала показать красным на сломанной сборке.
 - Logging: standard — в игре один `console.warn('[assets] …')` на каждый вид сбоя загрузки или
   распаковки, в кадре ничего; скрипты Blender и обработки печатают подробный ход в stdout
@@ -142,8 +142,8 @@ Rationale: заказ владельца на качество картинки;
   `<div id="assets" hidden>` перед основным `<script>`: по строке `<img data-asset="cabin-pz"
   src="data:image/webp;base64,…">` на картинку; JSON меша (фаза 3) — в `<template id="car-mesh">`.
   `--check`: блок совпадает со сборкой (хэш), `index.html` ≤ 2,2 МБ — иначе exit 1.
-  Проверить: `mirror-script.sh --check` и `mutate.mjs` не видят блок; `deploy-pozerkalam.sh` и
-  `build-yandex.sh` минифицируют страницу без ошибок.
+  Проверить: `mirror-script.sh --check` и `mutate.mjs` не видят блок; `deploy-pozerkalam.sh`
+  минифицирует страницу без ошибок (`build-yandex.sh` — вне плана).
   Логи: размер каждой картинки, итог против бюджета. Files: `tools/assets/embed.mjs`, `index.html`.
   (depends on 5)
 <!-- Commit checkpoint: tasks 4-6 -->
@@ -309,12 +309,22 @@ Rationale: заказ владельца на качество картинки;
 
 ### Phase 4: Телефон, документация, выкатка (≈1–2 дня, доска: #213)
 
-- [ ] **Task 18: Сборки и телефон.**
-  `yandex-check`, `sw-check`, `touch-check`, `crash-check`; `deploy-pozerkalam.sh` локально до
-  заливки (минификация, CSP-хэши, размер); `@dist-asset-budget` зелёный.
+- [x] **Task 18: Сборки и телефон.**
+  > 02.10: `sw-check` 11/11, `touch-check` 3/3, `crash-check` 6/6, `@dist-asset-budget` зелёный.
+  > Минификация деплоя (`html-minifier-terser` теми же флагами) — без ошибок, 1,30 МБ; в собранной
+  > странице куб салона, куб зеркала, модель кузова (293 грани) и все 17 картинок живы, инлайн-скрипт
+  > один — CSP-хэшей не прибавилось.
+  `sw-check`, `touch-check`, `crash-check`; `deploy-pozerkalam.sh` локально до заливки
+  (минификация, CSP-хэши, размер); `@dist-asset-budget` зелёный.
+  > Сборка Яндекс Игр (`build-yandex.sh`, `yandex-check`) убрана из плана по решению владельца
+  > 02.10 — отложена отдельной задачей на доске; веб-выкатка от неё не зависит.
   Логи: размер собранной страницы. Files: — (проверка). (depends on 13, 17)
 
-- [ ] **Task 19: Документация.**
+- [x] **Task 19: Документация.**
+  > Новый раздел «Ассеты: салон и кузов из Blender» (конвейер командами и правила), в архитектуре —
+  > «Cabin from the prerender», свет куба в «Cabin lighting», «Car body — near cars are a model»,
+  > куб салонного зеркала и `@render-mirror-handle` в «Mirror content», `cabin-check` в «Look gate»,
+  > в «Distribution builds» — размер страницы и что сборка Яндекса с блоком не проверялась.
   CLAUDE.md: «Cabin» (куб из `EYE`, порядок слоёв, правило видимости живых слоёв), «Cabin
   lighting» (свет запечён), «Car body» (модель из Blender, `CAR_ST` — источник следа), «Mirror
   content» (куб салонного зеркала), «Look gate» (`cabin-check`), «Distribution builds» (блок
@@ -322,7 +332,8 @@ Rationale: заказ владельца на качество картинки;
   `clean.py` → Blender → `embed.mjs`). Логи: не требуются (документация). Files: `CLAUDE.md`.
   (depends on 18)
 
-- [ ] **Task 20: Выкатка.**
+- [x] **Task 20: Выкатка.**
+  > 02.10: владелец подтвердил выкатку; пуш, `./deploy-pozerkalam.sh`, смоук прода и зеркала.
   Коммит, пуш, `./deploy-pozerkalam.sh`, смоук прода и зеркала; задачи фаз на доске закрыть
   полным payload. Логи: смоук деплоя печатает статус каждого шага, сбой — exit 1. Files: — .
   (depends on 19)
