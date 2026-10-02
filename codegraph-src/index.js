@@ -601,6 +601,23 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -9104,7 +9121,7 @@ const AUTH_ON=AUTH_PROVIDERS.length>0;
 const AUTH_NAMES={vk:'VK ID', yandex:'Яндекс ID'};
 const AUTH_KEY='pz_auth';
 let acct=null, acctRefresh='', acctAccess='', acctAccessExp=0, acctNote='', acctBack='';
-let authWait=null, authRefreshing=null;
+let authWait=null, authRefreshing=null, authStarting=false;
 function authRead(){
   try{ const a=JSON.parse(localStorage.getItem(AUTH_KEY)||'null');
     if(a && typeof a.refresh==='string' && a.acct && typeof a.acct.id==='string') return a; }catch(e){}
@@ -9186,7 +9203,12 @@ function authDrop(msg){
    и nonce после возврата не нашёлся бы. Там вход идёт во вкладке, игра опрашивает сервер */
 function authMode(){ return (anFramed() || anPlatform()==='pwa') ? 'poll' : 'redirect'; }
 async function authStart(provider){
-  if(!AUTH_ON || AUTH_PROVIDERS.indexOf(provider)<0 || authWait) return;
+  if(!AUTH_ON || AUTH_PROVIDERS.indexOf(provider)<0 || authWait || authStarting) return;
+  /* между нажатием и уходом на страницу провайдера идёт запрос к сервису: без блокировки второе
+     нажатие начинало второй вход, а игрок не видел, что первое сработало */
+  authStarting=true;
+  ovCard.querySelectorAll('button.oauth').forEach(b=>{ b.disabled=true;
+    if(b.dataset.act==='auth:'+provider) b.classList.add('busy'); });
   const nonce=b64url(crypto.getRandomValues(new Uint8Array(32)));
   const mode=authMode();
   const back=ovCard.innerHTML, backOpen=ovEl.style.display!=='none';
@@ -9201,6 +9223,7 @@ async function authStart(provider){
   let r;
   try{ r=await apiRaw('/auth/start','POST',{provider:provider, mode:mode, nonce:nonce}); }
   catch(e){ r={status:0, json:{}}; }
+  authStarting=false;
   if(r.status!==200 || !r.json.authUrl){
     if(win) try{ win.close(); }catch(e){}
     authFail(provider, r.status===429 ? 'rate' : r.status===0 ? 'net' : 'start');
@@ -9356,9 +9379,17 @@ function syncFail(why, reason){
   if(!syncWarned){ syncWarned=true; track('sync_fail', {reason:reason}); }
 }
 
+/* фирменные кнопки, как в spark (oauth-buttons): VK ID — синяя #0077ff с белым логотипом, Яндекс ID —
+   чёрная с красным кругом. Логотипы — SVG прямо в разметке: виджеты @vkid/sdk тянут чужой скрипт,
+   а CSP страницы пускает только свои */
+const AUTH_LOGO={
+  vk:'<svg viewBox="72 108 306 306" aria-hidden="true"><path fill="#fff" d="M75.6 168.267H126.747C128.427 253.76 166.133 289.973 196 297.44V168.267H244.16V242C273.653 238.827 304.64 205.227 315.093 168.267H363.253C359.313 187.435 351.46 205.583 340.186 221.579C328.913 237.574 314.461 251.071 297.733 261.227C316.41 270.499 332.907 283.63 346.132 299.751C359.357 315.873 369.01 334.618 374.453 354.747H321.44C316.555 337.262 306.614 321.61 292.865 309.754C279.117 297.899 262.173 290.368 244.16 288.107V354.747H238.373C136.267 354.747 78.0267 284.747 75.6 168.267Z"/></svg>',
+  yandex:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="#fc3f1d"/>'
+    +'<path fill="#fff" fill-rule="evenodd" transform="translate(.75 0)" d="M15.5 5H11.5C8.7 5 7 6.7 7 9C7 10.9 8 12.2 9.7 12.8L7 19H9.4L11.9 13.2H13.3V19H15.5V5ZM13.3 6.9V11.4H11.7C10.3 11.4 9.3 10.6 9.3 9.15C9.3 7.7 10.3 6.9 11.7 6.9H13.3Z"/></svg>' };
 function acctBtnsHTML(lead){
   return '<div class="acct"><p class="acctlead">'+lead+'</p><div class="acctbtns">'
-    +AUTH_PROVIDERS.map(p=>'<button data-act="auth:'+p+'" class="ghost">Войти через '+AUTH_NAMES[p]+'</button>').join('')
+    +AUTH_PROVIDERS.map(p=>'<button data-act="auth:'+p+'" class="oauth oauth-'+p+'">'+AUTH_LOGO[p]
+      +'<span>Войти через '+AUTH_NAMES[p]+'</span></button>').join('')
     +'</div><p class="legal">Входя, ты принимаешь '
     +'<a href="/privacy/" target="_blank" rel="noopener">политику конфиденциальности</a>.</p></div>';
 }

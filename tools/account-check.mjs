@@ -190,7 +190,33 @@ const ovText = (page) => page.evaluate(() => document.getElementById('overlay').
   check('кнопки входа на стартовом экране: VK ID → Яндекс ID, ссылка на политику (@acct-buttons-order)',
     JSON.stringify(r.b) === JSON.stringify(['Войти через VK ID', 'Войти через Яндекс ID']) && r.href === '/privacy/' && r.start,
     JSON.stringify(r));
+  const brand = await page.evaluate(() => [...document.querySelectorAll('#overlay .acctbtns button')].map(b => {
+    const cs = getComputedStyle(b), r = b.getBoundingClientRect();
+    return { cls: b.className, bg: cs.backgroundColor, color: cs.color, h: Math.round(r.height), logo: !!b.querySelector('svg path') };
+  }));
+  check('кнопки входа фирменные, как в spark: VK ID синяя с логотипом, Яндекс ID чёрная с логотипом, высота 48 (@acct-buttons-brand)',
+    brand.length === 2 && brand[0].cls === 'oauth oauth-vk' && brand[0].bg === 'rgb(0, 119, 255)' && brand[1].cls === 'oauth oauth-yandex'
+      && brand[1].bg === 'rgb(0, 0, 0)' && brand.every(x => x.logo && x.color === 'rgb(255, 255, 255)' && x.h === 48), JSON.stringify(brand));
   check('консоль чиста на стартовом экране со входом', realErrors(errors).length === 0, realErrors(errors).slice(0, 2).join(' | '));
+  await ctx.close();
+}
+
+{
+  /* сервис отвечает не сразу: второе нажатие в это время не должно начинать второй вход */
+  const st = {};
+  const slow = async (c) => { if (c.path === '/auth/start') await new Promise(r => setTimeout(r, 600)); return mockApi(st)(c); };
+  const { ctx, page, apiCalls } = await openGame({ auth: ['vk', 'yandex'], api: slow });
+  await page.evaluate(() => { window.__nav = []; });
+  await page.route('https://id.vk.ru/**', r => r.fulfill({ status: 200, contentType: 'text/html', body: 'vk' }));
+  const r = await page.evaluate(() => {
+    const vk = document.querySelector('#overlay [data-act="auth:vk"]'), ya = document.querySelector('#overlay [data-act="auth:yandex"]');
+    vk.click(); vk.click(); ya.click();
+    return { busy: vk.classList.contains('busy'), vkDis: vk.disabled, yaDis: ya.disabled, spinner: getComputedStyle(vk, '::before').content !== 'none' };
+  });
+  await page.waitForTimeout(1200);
+  const starts = apiCalls.filter(c => c.path === '/auth/start');
+  check('пока сервис отвечает, кнопки заблокированы, на нажатой — индикатор, вход начат один раз (@acct-start-once)',
+    r.busy && r.vkDis && r.yaDis && r.spinner && starts.length === 1 && starts[0].body.provider === 'vk', JSON.stringify({ ...r, starts: starts.length }));
   await ctx.close();
 }
 
