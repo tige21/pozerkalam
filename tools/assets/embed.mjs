@@ -71,7 +71,7 @@ function check() {
   if (!/data-fingerprint="[0-9a-f]{64}"/.test(block)) fails.push('у блока нет data-fingerprint');
   const tpl = block.match(/<template id="car-mesh">([^<]*)<\/template>/);
   if (!tpl) fails.push('нет модели кузова <template id="car-mesh">');
-  else { try { const d = JSON.parse(tpl[1]); if (!d.v || !d.f || !d.f.length) fails.push('модель кузова пустая'); } catch { fails.push('модель кузова — не JSON'); } }
+  else { try { const d = JSON.parse(tpl[1]); if (!d.bodies || !['sedan', 'hatch', 'cross'].every((k) => d.bodies[k] && d.bodies[k].f.length)) fails.push('в модели кузова нет седана, хэтчбека или кроссовера'); } catch { fails.push('модель кузова — не JSON'); } }
   log(`index.html ${(size / 1048576).toFixed(2)} МБ, бюджет ${(BUDGET / 1048576).toFixed(1)} МБ, блок ${(block.length / 1048576).toFixed(2)} МБ`);
   if (size > BUDGET) fails.push(`страница ${(size / 1048576).toFixed(2)} МБ больше бюджета`);
   for (const f of fails) console.error('ПРОВАЛ: ' + f);
@@ -105,7 +105,8 @@ function build() {
   const mesh = JSON.parse(fs.readFileSync(CAR_MESH, 'utf8'));
   if (mesh.fingerprint !== stamp.fingerprint) throw new Error('модель кузова собрана на других константах — export-exterior.py заново');
   lines.push(`<template id="car-mesh">${JSON.stringify(mesh)}</template>`);
-  log(`car-mesh: ${mesh.f.length} граней, ${(JSON.stringify(mesh).length / 1024).toFixed(0)} КБ`);
+  if (!mesh.bodies || !mesh.bodies.sedan) throw new Error('в car-mesh.json нет кузова sedan — export-exterior.py заново');
+  log(`car-mesh: ${Object.entries(mesh.bodies).map(([k, b]) => `${k} ${b.f.length}`).join(', ')} граней, ${(JSON.stringify(mesh).length / 1024).toFixed(0)} КБ`);
   const block = [BEGIN,
     `<div id="assets" hidden data-fingerprint="${stamp.fingerprint}" data-baked="${stamp.baked}" data-cube='${JSON.stringify(cube)}'>`,
     ...lines, '</div>', END].join('\n');

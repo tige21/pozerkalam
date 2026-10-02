@@ -519,23 +519,26 @@ def area_light(name, size, size_y, energy, at, target):
 
 
 def build_exterior():
-    """Кузов снаружи — в сцене только посмотреть: из рендера куба он исключён (hide_render), иначе
-    капот и крыша изнутри закрыли бы окна. В игру его выгружает export-exterior.py из того же
-    exterior.py, и та же проверка следа и линий взгляда стоит там."""
-    m, sts, hull = exterior.build(C)
-    fails, summ = exterior.check(m, hull, C)
-    if fails:
-        raise SystemExit('ПРОВАЛ кузов: ' + '; '.join(fails))
-    me = bpy.data.meshes.new('exterior')
-    me.from_pydata([Gv(v) for v in m.v], [], [f['i'] for f in m.f])
-    me.validate()
-    ob = bpy.data.objects.new('exterior', me)
+    """Кузова снаружи — в сцене только посмотреть: из рендера куба они исключены (hide_render),
+    иначе капот и крыша изнутри закрыли бы окна. В игру их выгружает export-exterior.py из того же
+    exterior.py, и та же проверка следа (у седана — и линий взгляда) стоит там."""
     coll = bpy.data.collections.new('exterior')
     bpy.context.scene.collection.children.link(coll)
-    coll.objects.link(ob)
-    ob.hide_render = True
-    log(f"кузов: сечений {len(sts)}, граней {summ['faces']}, след ±{summ['dev_cm']} см от CAR_HULL, "
-        f"над линией взгляда перёд {summ['over_front']}°, зад {summ['over_rear']}° (из рендера исключён)")
+    for i, body in enumerate(exterior.BODIES):
+        m, sts, hull = exterior.build(C, body)
+        fails, summ = exterior.check(m, hull, C, sightlines=body == 'sedan')
+        if fails:
+            raise SystemExit(f'ПРОВАЛ кузов {body}: ' + '; '.join(fails))
+        me = bpy.data.meshes.new('exterior-' + body)
+        me.from_pydata([Gv(v) for v in m.v], [], [f['i'] for f in m.f])
+        me.validate()
+        ob = bpy.data.objects.new('exterior-' + body, me)
+        ob.location.x = i * 2.4  # рядом, а не друг в друге: в сцене их смотрят глазами
+        coll.objects.link(ob)
+        ob.hide_render = True
+        log(f"кузов {body}: сечений {len(sts)}, граней {summ['faces']}, след ±{summ['dev_cm']} см от CAR_HULL"
+            + (f", над линией взгляда перёд {summ['over_front']}°, зад {summ['over_rear']}°" if body == 'sedan' else '')
+            + ' (из рендера исключён)')
 
 
 def build_lights():

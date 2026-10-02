@@ -264,9 +264,6 @@ function unitCheck() {
   /* след модели кузова на земле обязан быть тем, по которому считается касание (CAR_HULL): модель
      уже следа рисовала бы касание до металла, шире — металл входил бы в стену без касания */
   if (carModel.state === 'ready') {
-    const V = carModel.V, pts = [];
-    for (let i = 0; i < V.length; i += 3) pts.push({ u: V[i], v: V[i + 2] });
-    const mh = hull2(pts).map((q) => [q.u, q.v]), ch = CAR_HULL.map((h) => [h.lat, h.z]);
     const toPoly = (p, poly) => {
       let best = Infinity;
       for (let i = 0; i < poly.length; i++) {
@@ -276,8 +273,18 @@ function unitCheck() {
       }
       return best;
     };
-    const dev = Math.max(...mh.map((p) => toPoly(p, ch)), ...ch.map((p) => toPoly(p, mh)));
-    ok('след модели кузова совпадает с CAR_HULL в пределах 1 см (@render-car-footprint)', dev <= 0.01);
+    const ch = CAR_HULL.map((h) => [h.lat, h.z]);
+    /* все три кузова: седан своей машины, хэтчбек и кроссовер чужих — касание машина-машина
+       считается по одному следу для всех */
+    for (const name of ['sedan', 'hatch', 'cross']) {
+      const B = carModel.bodies[name];
+      if (!B) { fails.push('кузов снаружи · нет кузова ' + name + ' (@render-car-footprint)'); continue; }
+      const V = B.V, pts = [];
+      for (let i = 0; i < V.length; i += 3) pts.push({ u: V[i], v: V[i + 2] });
+      const mh = hull2(pts).map((q) => [q.u, q.v]);
+      const dev = Math.max(...mh.map((p) => toPoly(p, ch)), ...ch.map((p) => toPoly(p, mh)));
+      ok('след кузова ' + name + ' совпадает с CAR_HULL в пределах 1 см (@render-car-footprint)', dev <= 0.01);
+    }
   } else fails.push('кузов снаружи · модель не загружена (@render-car-footprint)');
 
   g('пейволл и покупки');

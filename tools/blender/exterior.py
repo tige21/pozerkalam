@@ -35,6 +35,24 @@ EXT = {
 }
 # вставные сечения: z → подъём верха. Заднее и лобовое стёкла чуть выпуклые, капот — в два шага
 EXTRA = {-1.235: 0.030, 0.575: 0.020, 1.125: 0.0, 1.69: 0.0}
+# корма хэтчбека: багажника нет — крыша до z −1,94, пятая дверь со стеклом почти вертикально. Станции
+# −2,21 и −2,06 обязаны остаться: это вершины CAR_HULL, без них след срезал бы угол на 1,5 см.
+# Вид сегмента — то, что идёт от станции вперёд: 'roof' — всё окрашено (глухая стойка D)
+HATCH_REAR = [
+    (-2.21, 'bump', dict(yb=0.40, ys=0.62, be=0.84, wg=0.72, wr=0.60, yt=0.92)),
+    (-2.06, 'glass', dict(yb=0.32, ys=0.70, be=0.92, wg=0.80, wr=0.66, yt=1.02)),
+    (-1.94, 'roof', dict(yb=0.32, ys=0.74, be=0.98, wg=0.77, wr=0.66, yt=1.36)),
+    (-1.70, 'cabin', dict(yb=0.32, ys=0.76, be=1.00, wg=0.76, wr=0.66, yt=1.39)),
+    (-1.42, 'cabin', dict(yb=0.32, ys=0.76, be=1.00, wg=0.75, wr=0.66, yt=1.40)),
+]
+# кузова чужих машин: у своей — только седан (под него запечён салон и сверены линии взгляда), у
+# чужих держать нужно одно — след CAR_HULL, по нему считается касание машина-машина. dy — подъём
+# кузова кроссовера, на него же игра поднимает ручки, швы, зеркала и дворники
+BODIES = {
+    'sedan': dict(rear=None, dy=0.0, arch=ARCH_R, tail=(0.705, 0.805), rplate=(0.56, 0.68), clad=False),
+    'hatch': dict(rear=HATCH_REAR, dy=0.0, arch=ARCH_R, tail=(0.74, 0.84), rplate=(0.50, 0.62), clad=False),
+    'cross': dict(rear=HATCH_REAR, dy=0.10, arch=0.45, tail=(0.74, 0.84), rplate=(0.50, 0.62), clad=True),
+}
 
 
 def hull2(pts):
@@ -89,7 +107,7 @@ class Mesh:
         self.v, self.key, self.f = [], {}, []
 
     def vid(self, p):
-        k = tuple(round(x, 4) for x in p)
+        k = tuple(round(x, 3) for x in p)
         if k not in self.key:
             self.key[k] = len(self.v)
             self.v.append(k)
@@ -103,26 +121,37 @@ class Mesh:
             ref, sgn = (away, 1) if away is not None else (toward, -1)
             if sum((c[i] - ref[i]) * n[i] for i in range(3)) * sgn < 0:
                 n = tuple(-x for x in n)
-        self.f.append(dict(i=[self.vid(p) for p in pts], m=m, n=[round(x, 4) for x in n], **extra))
+        self.f.append(dict(i=[self.vid(p) for p in pts], m=m, n=[round(x, 3) for x in n], **extra))
 
 
-def stations(C):
-    """Сечения кузова: станции CAR_ST с поправками носа/кормы, полуширина плеча — по следу."""
+def stations(C, body='sedan'):
+    """Сечения кузова: станции CAR_ST с поправками носа/кормы, полуширина плеча — по следу.
+    У хэтчбека и кроссовера корма заменена (HATCH_REAR), у кроссовера всё выше на dy."""
+    cfg = BODIES[body]
     hull = hull2([(s * st['w'], st['z']) for st in C['CAR_ST'] for s in (-1, 1)])
     hood_z, hood_y = C['HOOD_Z'], C['HOOD_Y']
+    src = [dict(st) for st in C['CAR_ST']]
+    if cfg['rear']:
+        z_cut = cfg['rear'][-1][0] + 1e-6
+        src = [dict(z=z, k=k, **p) for z, k, p in cfg['rear']] + [st for st in src if st['z'] > z_cut]
     out = []
-    for st in C['CAR_ST']:
+    for st in src:
         s = dict(st)
-        s.update(EXT.get(round(st['z'], 2), {}))
+        if not cfg['rear'] or st['z'] > cfg['rear'][-1][0] + 1e-6:
+            s.update(EXT.get(round(st['z'], 2), {}))
         if abs(st['z'] - hood_z) < 1e-6:
             s['yt'] = hood_y
         if -1.75 < st['z'] < 1.75:
             s['ys'] = max(s['ys'], SHOULDER_MIN)
+        for k in ('yb', 'ys', 'be', 'yt'):
+            s[k] += cfg['dy']
         s['w'] = half_width(hull, st['z'])
-        s['green'] = -1.42 - 1e-6 <= st['z'] <= 0.30 + 1e-6
+        s['green'] = (-1.94 if cfg['rear'] else -1.42) - 1e-6 <= st['z'] <= 0.30 + 1e-6
         s['sec'] = section(s)
         out.append(s)
     for z, lift in sorted(EXTRA.items()):
+        if cfg['rear'] and z < cfg['rear'][-1][0]:
+            continue  # у хэтчбека на месте заднего стекла — крыша
         i = max(k for k, s in enumerate(out) if s['z'] < z)
         a, b = out[i], out[i + 1]
         t = (z - a['z']) / (b['z'] - a['z'])
@@ -189,8 +218,10 @@ def avg(a, b):
     return norm(tuple(x + y for x, y in zip(a, b)))
 
 
-def build(C):
-    sts, hull = stations(C)
+def build(C, body='sedan'):
+    cfg = BODIES[body]
+    sts, hull = stations(C, body)
+    arch_r = cfg['arch']
     m = Mesh()
     car = C['CAR']
     c2r = C['C2R']
@@ -227,13 +258,13 @@ def build(C):
                 m.face([(p[0], p[1], s['z']) for p in part], 'paint', n=(0.0, 0.0, float(sgn)))
 
     # --- борт p1→p2 с вырезами арок и порог p0→p1 вне арок ---
-    cols = sorted({s['z'] for s in sts} | {zc + ARCH_R * math.cos(math.pi * k / 8) for zc in axles for k in range(9)})
+    cols = sorted({s['z'] for s in sts} | {zc + arch_r * math.cos(math.pi * k / 8) for zc in axles for k in range(9)})
 
     def arch_y(z):
         for zc in axles:
             dz = z - zc
-            if abs(dz) < ARCH_R:
-                return wheel_r + math.sqrt(ARCH_R * ARCH_R - dz * dz)
+            if abs(dz) < arch_r:
+                return wheel_r + math.sqrt(arch_r * arch_r - dz * dz)
         return -1.0
     for side in (-1, 1):
         prev = None
@@ -261,8 +292,8 @@ def build(C):
             ring = []
             for k in range(9):
                 a_ = math.pi * k / 8
-                z = zc + ARCH_R * math.cos(a_)
-                y = wheel_r + ARCH_R * math.sin(a_)
+                z = zc + arch_r * math.cos(a_)
+                y = wheel_r + arch_r * math.sin(a_)
                 sec = sec_at(sts, z)
                 outer = flank_at(sec, max(y, sec[1][1])) if y > sec[1][1] else sec[1]
                 ring.append((z, y, outer[0]))
@@ -272,9 +303,41 @@ def build(C):
             wall = [(side * LINER_LAT, y, z) for z, y, _ in ring]
             m.face(wall, 'liner', n=(float(side), 0.0, 0.0))
 
-    decals(m, sts, C)
+    if cfg['clad']:
+        cladding(m, sts, axles, wheel_r, arch_r, arch_y)
+    decals(m, sts, cfg)
     smooth(m)
     return m, sts, hull
+
+
+def cladding(m, sts, axles, wheel_r, arch_r, arch_y):
+    """Чёрные накладки кроссовера: кольцо 6 см вокруг арки и полоса 10 см над порогом вне арок —
+    накладки на борт (bias): по ним кроссовер и узнаётся рядом с седаном."""
+    out = 0.006
+    for side in (-1, 1):
+        for zc in axles:
+            pts = []
+            for k in range(9):
+                a_ = math.pi * k / 8
+                pts.append((zc + arch_r * math.cos(a_), wheel_r + arch_r * math.sin(a_),
+                            zc + (arch_r + 0.06) * math.cos(a_), wheel_r + (arch_r + 0.06) * math.sin(a_)))
+            for (z0, y0, Z0, Y0), (z1, y1, Z1, Y1) in zip(pts, pts[1:]):
+                q = []
+                for z, y in ((z0, y0), (z1, y1), (Z1, Y1), (Z0, Y0)):
+                    sec = sec_at(sts, z)
+                    yy = max(y, sec[1][1])
+                    q.append((side * (flank_at(sec, yy)[0] + out), yy, z))
+                m.face(q, 'trim', n=(float(side), 0.0, 0.0), b=0.05)
+        zs = sorted({s['z'] for s in sts if sts[0]['z'] + 0.15 < s['z'] < sts[-1]['z'] - 0.15})
+        for z0, z1 in zip(zs, zs[1:]):
+            if arch_y(z0) > 0 or arch_y(z1) > 0 or arch_y((z0 + z1) / 2) > 0:
+                continue
+            q = []
+            for z, top in ((z0, False), (z1, False), (z1, True), (z0, True)):
+                sec = sec_at(sts, z)
+                y = sec[1][1] + (0.10 if top else 0.0)
+                q.append((side * (flank_at(sec, y)[0] + out), y, z))
+            m.face(q, 'trim', n=(float(side), 0.0, 0.0), b=0.05)
 
 
 SMOOTH_DEG = 50          # сглаживаются соседние окрашенные грани, если угол между ними меньше
@@ -303,7 +366,7 @@ def smooth(m):
                 if sum(a * b for a, b in zip(n, n0)) >= cos_t:
                     acc = [a + b for a, b in zip(acc, n)]
             corner.append(norm(acc))
-        f['s'] = [[round(x, 4) for x in avg(corner[0], corner[3])], [round(x, 4) for x in avg(corner[1], corner[2])]]
+        f['s'] = [[round(x, 3) for x in avg(corner[0], corner[3])], [round(x, 3) for x in avg(corner[1], corner[2])]]
 
 
 def clip_lat(poly, lo, hi):
@@ -369,30 +432,35 @@ def lamp(m, sts, end, y0, y1, lat_in, img, kind, inner_first):
             m.face(inner_r, 'lamp', n=(0.0, 0.0, float(end)), b=CAP_BIAS, img=img, uv=[round(split, 4), 0, 1, 1], lamp=lamp_id)
 
 
-def plate_rect(m, z, end, lat, y0, y1, mat, bias, **extra):
+def plate_rect_raw(m, z, end, lat, y0, y1, mat, bias, **extra):
     pts = [(-lat * end, y1, z), (lat * end, y1, z), (lat * end, y0, z), (-lat * end, y0, z)]
     m.face(pts, mat, n=(0.0, 0.0, float(end)), b=bias, **extra)
 
 
-def decals(m, sts, C):
+def decals(m, sts, cfg):
     zf, zr = sts[-1]['z'] + DECAL, sts[0]['z'] - DECAL
+    dy = cfg['dy']
+
+    def plate_rect(m, z, end, lat, y0, y1, mat, bias, **extra):
+        plate_rect_raw(m, z, end, lat, y0 + dy, y1 + dy, mat, bias, **extra)
     # перёд: решётка в проёме между фарами (картинка сжата по высоте 1,85 — проём ниже исходника),
     # воздухозаборник и номер под ней, фары в верхних углах с заходом на скос
     plate_rect(m, zf, 1, CAP_SPLIT, 0.565, 0.685, 'grille', CAP_BIAS, img='grille', uv=[0, 0, 1, 1])
     # воздухозаборник шире полосы решётки — тремя кусками, каждый на своей полосе торца
     plate_rect(m, zf, 1, CAP_SPLIT, 0.405, 0.515, 'trim', CAP_BIAS)
     for sg in (-1, 1):
-        y0, y1 = 0.405, 0.515
+        y0, y1 = 0.405 + dy, 0.515 + dy
         m.face([(sg * CAP_SPLIT, y1, zf), (sg * 0.46, y1, zf), (sg * 0.46, y0, zf), (sg * CAP_SPLIT, y0, zf)], 'trim', n=(0.0, 0.0, 1.0), b=CAP_BIAS)
     plate_rect(m, zf + 0.002, 1, 0.26, 0.42, 0.53, 'plate', CAP_BIAS + 0.02, img='plate', uv=[0, 0, 1, 1])
-    lamp(m, sts, 1, 0.615, 0.735, 0.33, 'headlight', 'head', True)
-    # корма: фонари под крышкой багажника, номер по центру, тёмный диффузор внизу
-    plate_rect(m, zr, -1, 0.26, 0.56, 0.68, 'plate', CAP_BIAS, img='plate', uv=[0, 0, 1, 1])
+    lamp(m, sts, 1, 0.615 + dy, 0.735 + dy, 0.33, 'headlight', 'head', True)
+    # корма: фонари под крышкой багажника (у хэтчбека — под стеклом пятой двери), номер по центру,
+    # тёмный диффузор внизу
+    plate_rect(m, zr, -1, 0.26, cfg['rplate'][0], cfg['rplate'][1], 'plate', CAP_BIAS, img='plate', uv=[0, 0, 1, 1])
     plate_rect(m, zr, -1, CAP_SPLIT, 0.42, 0.48, 'trim', CAP_BIAS)
-    lamp(m, sts, -1, 0.705, 0.805, 0.40, 'taillight', 'tail', False)
+    lamp(m, sts, -1, cfg['tail'][0] + dy, cfg['tail'][1] + dy, 0.40, 'taillight', 'tail', False)
 
 
-def check(m, hull, C, tol=0.01):
+def check(m, hull, C, tol=0.01, sightlines=True):
     """Провалы формы: след шире/уже CAR_HULL больше tol, точка над линией взгляда на капот или
     на кромку заднего стекла. Возвращает (список провалов, сводка)."""
     fails = []
@@ -427,7 +495,7 @@ def check(m, hull, C, tol=0.01):
         over = math.degrees(math.atan2(y - ey, math.hypot(dlat, dz)) - math.atan2(edge_y - ey, d_edge))
         worst[key] = max(worst[key], over)
     for key, over in worst.items():
-        if over > 0.05:
+        if sightlines and over > 0.05:
             fails.append(f'{key}: точка кузова на {over:.2f}° выше линии взгляда на край (blindZone)')
     return fails, dict(dev_cm=round(dev * 100, 2), over_front=round(worst['перёд'], 2), over_rear=round(worst['зад'], 2),
                        verts=len(m.v), faces=len(m.f))

@@ -76,7 +76,11 @@ Rationale: качество картинки по заказу владельц�
 
 ### Phase 1: Кузова (≈4–5 ч, доска: #237)
 
-- [ ] **Task 1: Три кузова в `exterior.py`.**
+- [x] **Task 1: Три кузова в `exterior.py`.**
+  > `BODIES` (sedan/hatch/cross): у хэтчбека корма `HATCH_REAR` (станции −2,21 и −2,06 оставлены — это
+  > вершины CAR_HULL), у кроссовера та же корма и подъём `dy` 0,10, арка 0,45, накладки `cladding`.
+  > Граней: 293 / 306 / 346, след ±0,6 см у всех. Точность вершин — мм, нормалей — тысячные: три
+  > кузова в странице.
   `build(C, body)` с телами `sedan | hatch | cross`: седан — нынешний; хэтчбек — сечения кормы
   заменены (крыша продолжается до z ≈ −1,75, пятая дверь со стеклом почти вертикально, бампер);
   кроссовер — порог, плечо, пояс и крыша выше на 0,10–0,12, накладки `trim` вокруг арок (+3 см) и по
@@ -84,7 +88,9 @@ Rationale: качество картинки по заказу владельц�
   `check` для всех трёх — след против `CAR_HULL` ≤ 1 см; линии взгляда — только у седана.
   Логи: по кузову — сечения, грани, отклонение следа. Files: `tools/blender/exterior.py`.
 
-- [ ] **Task 2: Кузова в `car.blend` и выгрузка.**
+- [x] **Task 2: Кузова в `car.blend` и выгрузка.**
+  > `car-mesh.json` 99 КБ (`bodies` + `zones` по стилям a–e). Зоны B–E найдутся после `clean.py`
+  > (задача 4), пока — зоны A. Снимки: `build/shots/bodies-phase1.png`.
   `car.py` кладёт три объекта `exterior-<кузов>` (hide_render, после проверок обзора);
   `export-exterior.py` пишет `car-mesh.json` с `bodies: {sedan, hatch, cross}` и `zones` по стилям
   A–E, размеченными по `build/assets/clean/dec-taillight-*.png`/`dec-headlight-*.png` (поиск белых и
@@ -92,7 +98,9 @@ Rationale: качество картинки по заказу владельц�
   Логи: грани и размер JSON по кузовам; зоны каждого стиля или «общие A».
   Files: `tools/blender/car.py`, `tools/blender/export-exterior.py`. (depends on 1)
 
-- [ ] **Task 3: Кузова в игре.**
+- [x] **Task 3: Кузова в игре.**
+  > `carModel.bodies`, `carBody(name)` (нет кузова — седан и одно `[assets]`), `emitCarMesh(…, look)`;
+  > подъём `dy` передаётся ручкам, швам, зеркалам, дворникам. `@render-car-footprint` — по трём кузовам.
   `carModel.bodies` (разбор один раз), `emitCarModel(…, body)`; без нужного кузова — седан и одно
   `[assets]`; `@render-car-footprint` в `tools/units.js` — по всем трём кузовам.
   Логи: warn при отсутствии кузова. Files: `index.html`, `tools/units.js`. (depends on 2)
