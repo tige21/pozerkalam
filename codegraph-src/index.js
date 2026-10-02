@@ -2499,12 +2499,13 @@ function emitInteriorLive(u,v,th){
 }
 cabinBakeLoad();
 /* ---------- кузов снаружи: модель ---------- */
-/* Кузов из tools/blender/exterior.py (≈300 граней, <template id="car-mesh">): своя машина всегда,
+/* Кузов — готовая модель из tools/blender/models.py (200–320 граней, <template id="car-mesh">): своя машина всегда,
    соседи и поток ближе CAR_MODEL_D; дальше — прежний лофт emitCarBody, за trafLod у потока —
    emitCarLow. CAR_MODEL_D — 45 м, а не 20: при 20 м из-за машины на уровне 1 моделью рисовались 2
-   машины из 7, остальные — прежним лофтом, и владелец новых машин не увидел («все равно старый вид»). След модели на земле — CAR_HULL (exterior.py проверяет ≤ 1 см, unit-check —
+   машины из 7, остальные — прежним лофтом, и владелец новых машин не увидел («все равно старый вид»). След касаний
+   берётся из самой модели (hull кузова → CAR_HULL своей машины и след соседа в obsShape, unit-check —
    @render-car-footprint), так что касание считается по тому же, что нарисовано. Модель читается один
-   раз при загрузке; без шаблона или с битым шаблоном — прежний лофт и одно предупреждение [assets] */
+   раз при загрузке; без шаблона или с битым шаблоном — прежний лофт и его след, одно предупреждение [assets] */
 const CAR_MODEL_D=45;
 const carModel={state:'off', bodies:{}, zones:null, img:{}, imgDone:false, cut:new Map(), scratch:null, warned:{}};
 /* цвета материалов модели: краска приходит от машины, остальное — постоянное */
@@ -2542,7 +2543,8 @@ function carModelLoad(){
         F.push({i:f.i, m:f.m, n:f.n, s:f.s||null, b:f.b||0, img:f.img||null, uv:f.uv||null, lamp:f.lamp||null, c:f.c||null});
       }
       carModel.bodies[name]={V:Float32Array.from(v), F, W:Array.from({length:nv},()=>({x:0,y:0,z:0})), dy:b.dy||0,
-                             wiper:b.wiper||null, doors:b.doors||null};
+                             wiper:b.wiper||null, doors:b.doors||null, axles:b.axles||null, cabinK:b.cabinK||1,
+                             hull:b.hull && b.hull.length>2 ? b.hull.map(q=>({lat:q[0], z:q[1]})) : null};
     }
     carModel.zones=d.zones||{};
     /* заготовка на грань по числу вершин: склеенные грани моделей — многоугольники до 48 вершин
@@ -2593,10 +2595,16 @@ function carBody(name){
   if(!carModel.warned[name]){ carModel.warned[name]=1; console.warn('[assets] кузов '+name+': нет в модели — рисуется седан'); }
   return carModel.bodies.sedan;
 }
+/* модель набора выше настоящего седана (1,61 м, капот на 1,01), и из глаза EYE её капот закрыл бы
+   дорогу на 10 м вместо 5,4 из blindZone и подсказок. Из салона виден только капот — остальное
+   закрывает куб салона, — поэтому изнутри своя машина рисуется ниже одним множителем высоты (cabinK
+   из models.py: наибольший, при котором капот не выше линии взгляда), а снаружи и в боковых
+   зеркалах она как в референсе */
+function carCabinK(B, lit){ return lit.own && B.cabinK<1 && camInsideCabin() ? B.cabinK : 1; }
 function emitCarModel(u,v,th,col,lit,body,style){
-  const M=carModel, B=body||M.bodies.sedan, V=B.V, WB=B.W, F=fwd(th), R=rgt(th), cx=-u, cz=v;
+  const M=carModel, B=body||M.bodies.sedan, V=B.V, WB=B.W, F=fwd(th), R=rgt(th), cx=-u, cz=v, ky=carCabinK(B, lit);
   for(let i=0,k=0;i<WB.length;i++,k+=3){ const lat=V[k], z=V[k+2], w=WB[i];
-    w.x=cx+R.x*lat+F.x*z; w.y=V[k+1]; w.z=cz+R.z*lat+F.z*z; }
+    w.x=cx+R.x*lat+F.x*z; w.y=V[k+1]*ky; w.z=cz+R.z*lat+F.z*z; }
   const dx=-cam.pos.x-u, dz=cam.pos.z-v, d2=dx*dx+dz*dz, Q=QUALITY[qLevel];
   /* градиент борта — вблизи (как у лофта: дальше 16 м его не видно), блик и отражение — до 40 м:
      pow на каждую грань виден в JS-времени кадра */
@@ -2673,12 +2681,16 @@ function emitCarMesh(u, v, th, col, st, lights, look){
   const style = look && look.style || 'a';
   if(model) emitCarModel(u,v,th,col,lit,body,style); else emitCarBody(u,v,th,col);
   emitCarDoors(u,v,th,!model,dy,body&&body.doors);
-  const zr=-C2R, zf=-C2R+CAR.wheelbase, wimg = model ? carModel.img[carStyleImg('wheel', style)] : null;
+  /* колёса — на осях модели: модель масштабируется целиком и её арки стоят там, где их поставил
+     автор (у седана задняя на 9 см дальше оси CAR). Это только рисунок — физика считает по CAR */
+  const ax = body && body.axles, zr = ax ? ax[1] : -C2R, zf = ax ? ax[0] : -C2R+CAR.wheelbase;
+  const wimg = model ? carModel.img[carStyleImg('wheel', style)] : null;
   const w1=at(-t,zr), w2=at(t,zr), w3=at(-t,zf), w4=at(t,zf);
   pushWheelCyl(w1.u,w1.v,th,-1,wimg); pushWheelCyl(w2.u,w2.v,th,1,wimg);
   pushWheelCyl(w3.u,w3.v,th+a.l,-1,wimg); pushWheelCyl(w4.u,w4.v,th+a.r,1,wimg);
   if(!model) emitCarLamps(P,F,lit);
-  emitCarMirrorsEtc(dy ? (lat,y,z)=>P(lat,y+dy,z) : P,F,R,at,th,col,lights,dy, body && body.wiper);
+  const wiper = body && body.wiper, ky = body ? carCabinK(body, lit) : 1;
+  emitCarMirrorsEtc(dy ? (lat,y,z)=>P(lat,y+dy,z) : P,F,R,at,th,col,lights,dy, wiper && ky<1 ? [wiper[0], wiper[1]*ky] : wiper);
 }
 /* огни, решётка и номера прежнего лофта: у модели они — её же грани с картинками */
 function emitCarLamps(P,F,lit){
@@ -6454,29 +6466,42 @@ function satMTV(A,B){
 function carOBB(){ const c=bodyPos(); return {u:c.u, v:c.v, hw:HALF_W, hl:HALF_L, yaw:car.th}; }
 
 /* ---------- след кузова на земле ----------
-   OBB — прямоугольник 4,42 × 1,80, а кузов спереди и сзади сужается: нос на z=2,21 шириной
-   1,48 м, корма на z=−2,21 — 1,56 м. Углы прямоугольника висели вне металла, и касание
-   засчитывалось, когда по текстурам до стены оставалось до 9 см (замер: 1,7 см при курсе 6°,
-   5,5 см при 20°, 9,2 см при 35°; машина в машину — 6,8 см при 25°). Что нарисовано, то и
-   считается: выпуклая оболочка сечений лофта.
+   OBB — прямоугольник 4,42 × 1,80, а кузов спереди и сзади сужается. Углы прямоугольника висели
+   вне металла, и касание засчитывалось, когда по текстурам до стены оставалось до 9 см (замер:
+   1,7 см при курсе 6°, 5,5 см при 20°, 9,2 см при 35°; машина в машину — 6,8 см при 25°). Что
+   нарисовано, то и считается: выпуклая оболочка следа модели кузова (hull из models.py; у седана
+   нос скруглён — на z=2,21 ширина 0,87 м), без модели — оболочка сечений лофта. Модель вписана в
+   прямоугольник ровно, поэтому грубая проверка по нему ничего не пропускает.
    clearances() СПЕЦИАЛЬНО остаётся на OBB — по её показаниям откалиброваны пороги всех демо */
-const CAR_HULL=(()=>{
+const CAR_HULL_LOFT=(()=>{
   const p=[];
   for(const st of CAR_ST){ p.push({u:st.w, v:st.z}); p.push({u:-st.w, v:st.z}); }
   return hull2(p).map(q=>({lat:q.u, z:q.v}));
 })();
+const CAR_HULL = carModel.state==='ready' && carModel.bodies.sedan.hull || CAR_HULL_LOFT;
+/* след соседа — по его кузову: у кроссовера корма квадратная, у седана скруглена */
+function carHullOf(o){
+  if(carModel.state!=='ready') return CAR_HULL_LOFT;
+  const b=carModel.bodies[o.body] || carModel.bodies.sedan;
+  return b.hull || CAR_HULL_LOFT;
+}
 const _hullBuf=CAR_HULL.map(()=>({u:0,v:0}));
-function carHullPts(u,v,th,out){
-  const f=fuv(th), r=ruv(th), o=out||_hullBuf;
-  for(let i=0;i<CAR_HULL.length;i++){ const h=CAR_HULL[i];
+function hullPts(H,u,v,th,o){
+  const f=fuv(th), r=ruv(th);
+  for(let i=0;i<H.length;i++){ const h=H[i];
     o[i].u=u+f.u*h.z+r.u*h.lat; o[i].v=v+f.v*h.z+r.v*h.lat; }
   return o;
 }
+function carHullPts(u,v,th,out){ return hullPts(CAR_HULL,u,v,th,out||_hullBuf); }
 /* рамка и угловые столбики рисуются по ТОМУ ЖЕ следу, по которому считается удар — иначе
    они снова разойдутся с ним: прежняя прямоугольная рамка обещала габарит на 16 см шире носа.
    Цепочки и угловые точки считаются один раз, в кадре только перенос в мировые координаты */
 const REF_CHAINS=(()=>{
-  const kind=(a,b)=>{ const z=(a.z+b.z)/2; return z>=1.40?'f' : z<=-1.70?'r' : 's'; };
+  /* перёд и зад — рёбра, развёрнутые поперёк машины больше чем на 30°, а не всё, что дальше порога
+     по z: у модели вершины редкие, и ребро вдоль крыла с z 0,99 до 1,94 по порогу 1,40 красилось
+     жёлтым передним краем на весь метр */
+  const kind=(a,b)=>{ const dl=b.lat-a.lat, dz=b.z-a.z, L=Math.sqrt(dl*dl+dz*dz)||1;
+    return Math.abs(dl)/L>0.5 ? (a.z+b.z>0?'f':'r') : 's'; };
   const out=[], nH=CAR_HULL.length; let cur=null;
   for(let i=0;i<nH;i++){
     const a=CAR_HULL[i], b=CAR_HULL[(i+1)%nH], k=kind(a,b);
@@ -6499,12 +6524,13 @@ for(const sf of [1,-1]) for(const sr of [1,-1]){
   CORNER_PT[sf+','+sr]=best;
 }
 const _obsBuf=[{u:0,v:0},{u:0,v:0},{u:0,v:0},{u:0,v:0}];
-const _obsHullBuf=CAR_HULL.map(()=>({u:0,v:0}));
+const _obsHullBuf=Array.from({length:Math.max(CAR_HULL_LOFT.length, ...Object.values(carModel.bodies).map(b=>b.hull ? b.hull.length : 0))},
+                             ()=>({u:0,v:0}));
 const OBS_SIGN=[[-1,1],[1,1],[1,-1],[-1,-1]];
-/* соседняя машина нарисована тем же лофтом, что и своя, поэтому и считается по нему:
-   иначе касание её прямоугольника наступало бы за 16 см до её металла */
+/* соседняя машина считается по следу своего кузова: иначе касание её прямоугольника наступало бы
+   за 16 см до её металла */
 function obsShape(o){
-  if(o.kind==='car'){ carHullPts(o.u, o.v, o.yaw, _obsHullBuf); return CAR_HULL.length; }
+  if(o.kind==='car'){ const H=carHullOf(o); hullPts(H, o.u, o.v, o.yaw, _obsHullBuf); return H.length; }
   const f=fuv(o.yaw), r=ruv(o.yaw);
   for(let i=0;i<4;i++){ const sr=OBS_SIGN[i][0], sf=OBS_SIGN[i][1];
     _obsBuf[i].u=o.u+f.u*o.hl*sf+r.u*o.hw*sr; _obsBuf[i].v=o.v+f.v*o.hl*sf+r.v*o.hw*sr; }

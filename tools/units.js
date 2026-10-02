@@ -48,12 +48,13 @@ function unitCheck() {
   near('совпавшие расходятся по ширине', satMTV(A, { ...A, v: 0 }).depth, CAR.width, 1e-6);
   const mtv = satMTV(A, { ...A, v: CAR.length - 0.2 });
   ok('касание по длине замечено', mtv && mtv.depth > 0.19 && mtv.depth < 0.21);
-  /* оболочка кузова уже прямоугольника: нос сужается, и углы прямоугольника висят вне металла */
+  /* оболочка кузова уже прямоугольника: нос седана скруглён, его дальний угол — (0,87; 1,94), и под
+     35° след короче прямоугольника на 24 см (у прежнего лофта было 5–14) */
   /* carHullPts пишет в готовый буфер — свой массив создаём заполненным */
   const hull = carHullPts(0, 0, rad(35), CAR_HULL.map(() => ({ u: 0, v: 0 })));
   let maxV = -9; for (const p of hull) maxV = Math.max(maxV, p.v);
   const rectV = HALF_L * Math.cos(rad(35)) + HALF_W * Math.sin(rad(35));
-  ok('под 35° оболочка короче прямоугольника', rectV - maxV > 0.05 && rectV - maxV < 0.14);
+  ok('под 35° оболочка короче прямоугольника', rectV - maxV > 0.18 && rectV - maxV < 0.30);
 
   g('зазоры');
   loadLevel(LEVELS.findIndex((d) => d.name === '14 · Габарит: нос к стене')); hideOv(); paused = true;
@@ -273,17 +274,21 @@ function unitCheck() {
       }
       return best;
     };
-    const ch = CAR_HULL.map((h) => [h.lat, h.z]);
-    /* все три кузова: седан своей машины, хэтчбек и кроссовер чужих — касание машина-машина
-       считается по одному следу для всех */
+    /* все три кузова: седан своей машины (его след — CAR_HULL), хэтчбек и кроссовер чужих — касание
+       машина-машина считается по следу кузова соседа (carHullOf) */
+    ok('след своей машины — след седана (@render-car-footprint)', CAR_HULL === carModel.bodies.sedan.hull);
     for (const name of ['sedan', 'hatch', 'cross']) {
       const B = carModel.bodies[name];
       if (!B) { fails.push('кузов снаружи · нет кузова ' + name + ' (@render-car-footprint)'); continue; }
+      const ch = carHullOf({ kind: 'car', body: name }).map((h) => [h.lat, h.z]);
       const V = B.V, pts = [];
       for (let i = 0; i < V.length; i += 3) pts.push({ u: V[i], v: V[i + 2] });
       const mh = hull2(pts).map((q) => [q.u, q.v]);
       const dev = Math.max(...mh.map((p) => toPoly(p, ch)), ...ch.map((p) => toPoly(p, mh)));
-      ok('след кузова ' + name + ' совпадает с CAR_HULL в пределах 1 см (@render-car-footprint)', dev <= 0.01);
+      ok('след кузова ' + name + ' совпадает со следом касаний в пределах 1 см (@render-car-footprint)', dev <= 0.01);
+      /* грубая проверка — прямоугольник 4,42 × 1,80: след, вышедший за него, пропускал бы касания */
+      ok('след кузова ' + name + ' не выходит за прямоугольник (@render-car-footprint)',
+        ch.every(([lat, z]) => Math.abs(lat) <= HALF_W + 1e-3 && Math.abs(z) <= HALF_L + 1e-3));
     }
   } else fails.push('кузов снаружи · модель не загружена (@render-car-footprint)');
 

@@ -1,8 +1,8 @@
 """Помощники формы кузова: след на земле и линии взгляда своей машины.
 
 Кузова в игре — готовые модели (tools/blender/models.py); здесь — то, чем их проверяют:
-- след на земле — ровно CAR_HULL (выпуклая оболочка станций CAR_ST): по нему игра считает касание
-  (hull-check, @render-car-footprint, ≤ 1 см);
+- след на земле — выпуклая оболочка модели; игра считает по ней касание (CAR_HULL своей машины, след
+  соседа в obsShape; hull-check, @render-car-footprint, ≤ 1 см);
 - из глаза EYE ничто перед краем капота (HOOD_Z, HOOD_Y) и позади кромки заднего стекла (REAR_SILL) не
   поднимается над линией взгляда на них: по этим двум точкам blindZone считает «не видно перед / за»,
   а цифры слепых зон стоят в подсказках уровней;
@@ -10,7 +10,6 @@
 """
 import math
 
-LENGTH_HALF = 2.21       # полудлина кузова — CAR.length / 2, по ней же идёт след
 REAR_SILL = (-1.62, 1.05)  # кромка заднего стекла (z, y) — та же точка, что в blindZone
 
 
@@ -29,17 +28,6 @@ def hull2(pts):
             hi.pop()
         hi.append(p)
     return lo[:-1] + hi[:-1]
-
-
-def half_width(hull, z):
-    """Полуширина выпуклого следа (lat, z) на продольной координате z."""
-    best = 0.0
-    n = len(hull)
-    for i in range(n):
-        (a_lat, a_z), (b_lat, b_z) = hull[i], hull[(i + 1) % n]
-        if (a_z - z) * (b_z - z) <= 0 and a_z != b_z:
-            best = max(best, abs(a_lat + (b_lat - a_lat) * (z - a_z) / (b_z - a_z)))
-    return best
 
 
 def norm(v):
@@ -93,7 +81,7 @@ class Mesh:
 
 
 def check(m, hull, C, tol=0.01, sightlines=True, glass_front=0.85):
-    """Провалы формы: след шире/уже CAR_HULL больше tol, точка над линией взгляда на капот или
+    """Провалы формы: след шире/уже hull больше tol, точка над линией взгляда на капот или
     на кромку заднего стекла. Возвращает (список провалов, сводка)."""
     fails = []
     pts2 = [(v[0], v[2]) for v in m.v]
@@ -110,7 +98,7 @@ def check(m, hull, C, tol=0.01, sightlines=True, glass_front=0.85):
         return best
     dev = max(max(dist_to_poly(p, hull) for p in mh), max(dist_to_poly(p, mh) for p in hull))
     if dev > tol:
-        fails.append(f'след модели отходит от CAR_HULL на {dev * 100:.1f} см (порог {tol * 100:.0f})')
+        fails.append(f'след модели отходит от следа касаний на {dev * 100:.1f} см (порог {tol * 100:.0f})')
     eye = C['EYE']
     ex, ey, ez = eye['lat'], eye['y'], eye['z']
     worst = {'перёд': -1e9, 'зад': -1e9}

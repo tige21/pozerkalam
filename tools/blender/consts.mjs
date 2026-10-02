@@ -19,11 +19,13 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const SRC = process.env.CONSTS_SRC ? path.resolve(process.env.CONSTS_SRC) : path.join(ROOT, 'index.html');
 const OUT = path.join(ROOT, 'build', 'blender', 'consts.json');
 
-/* порядок — порядок зависимостей: HALF_L читает CAR, CAR_HULL читает CAR_ST и hull2 */
+/* порядок — порядок зависимостей: HALF_L читает CAR, CAR_HULL_LOFT читает CAR_ST и hull2. В игре
+   CAR_HULL — след модели кузова (из car-mesh.json, который сам строится по этим константам), сюда
+   идёт след лофта под прежним именем: отпечаток рендера салона от модели кузова не зависит */
 const STATEMENTS = ['PI', 'rad', 'CAR', 'HALF_L', 'C2R', 'EYE', 'CAR_ST', 'HOOD_Z', 'MIR_H', 'WSHIELD',
   'CMIR', 'WHEEL', 'CLUSTER', 'REPEATER', 'SELECTOR', 'SEL_ORDER'];
 const FUNCTIONS = ['hull2'];
-const TAIL = ['CAR_HULL'];
+const TAIL = ['CAR_HULL_LOFT'];
 const EXPORT = ['CAR', 'C2R', 'EYE', 'CAR_ST', 'HOOD_Z', 'HOOD_Y', 'MIR_H', 'WSHIELD', 'CMIR', 'WHEEL',
   'CLUSTER', 'REPEATER', 'SELECTOR', 'SEL_ORDER', 'CAR_HULL'];
 
@@ -59,7 +61,7 @@ const parts = [
   ...FUNCTIONS.map((n) => extract(html, n, 'function')),
   ...TAIL.map((n) => extract(html, n, 'const')),
 ];
-const code = parts.join('\n') + `\n;({${EXPORT.join(',')}})`;
+const code = parts.join('\n') + `\nconst CAR_HULL = CAR_HULL_LOFT;\n;({${EXPORT.join(',')}})`;
 const consts = vm.runInNewContext(code, { Math });
 
 const hoodDeg = Math.atan2(consts.HOOD_Y - consts.EYE.y, consts.HOOD_Z - consts.EYE.z) * 180 / Math.PI;

@@ -35,9 +35,10 @@ await page.waitForFunction(() => typeof LEVELS !== 'undefined' && LEVELS.length 
 
 const report = await page.evaluate((GAP_MAX) => {
   const rows = [];
-  const hullPts = (u, v, th) => {
+  /* след соседа — его кузова (carHullOf): у кроссовера корма квадратная, у седана скруглена */
+  const hullPts = (u, v, th, H = CAR_HULL) => {
     const f = fuv(th), r = ruv(th);
-    return CAR_HULL.map(h => ({ u: u + f.u * h.z + r.u * h.lat, v: v + f.v * h.z + r.v * h.lat }));
+    return H.map(h => ({ u: u + f.u * h.z + r.u * h.lat, v: v + f.v * h.z + r.v * h.lat }));
   };
   const segDist = (a, b, c, d) => {
     const pd = (p, q, r) => {
@@ -68,7 +69,7 @@ const report = await page.evaluate((GAP_MAX) => {
       const mid = (lo + hi) / 2;
       if (hit(O.u, O.v + mid, th, O)) hi = mid; else lo = mid;
     }
-    const shape = O.kind === 'car' ? hullPts(O.u, O.v, O.yaw) : rectPts(O.u, O.v, O.w, O.l, O.yaw);
+    const shape = O.kind === 'car' ? hullPts(O.u, O.v, O.yaw, carHullOf(O)) : rectPts(O.u, O.v, O.w, O.l, O.yaw);
     const gap = polyDist(hullPts(O.u, O.v + hi, th), shape);
     rows.push({ tag, th: thDeg, gap: +gap.toFixed(4), ok: gap <= GAP_MAX });
   };
@@ -79,7 +80,8 @@ const report = await page.evaluate((GAP_MAX) => {
   const nb = { kind: 'car', u: 0, v: 0, w: CAR.width, l: CAR.length, h: CAR.height,
                hw: HALF_W, hl: HALF_L, yaw: 0, solid: true, col: [90, 90, 90] };
   for (const a of [0, 4, 8, 12, 20, 30, 45, 60, 90, 120, 160, 180, 200, 250, 300]) probe('стена', a, wall);
-  for (const a of [0, 10, 25, 45, 90, 180, 200, 270]) probe('машина', a, nb);
+  for (const body of ['sedan', 'hatch', 'cross'])
+    for (const a of [0, 10, 25, 45, 90, 180, 200, 270]) probe('машина ' + body, a, { ...nb, body });
 
   /* сквозь стену проехать по-прежнему нельзя */
   const through = [];
