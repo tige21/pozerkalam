@@ -41,6 +41,7 @@ LH = 2.21                     # полудлина — CAR.length / 2
 MIRROR_X = 1.16               # у моделей набора кузов не шире 1,141; всё, что шире, — зеркала
 PAINT = ('body grey', 'body dark yellow', 'body dark purple')
 DECAL_B = 0.02                # bias фар, фонарей и номеров: они лежат на грани кузова
+MAX_POLY = 48                 # вершин в грани не больше: игра держит заготовки массивов на грань (carModel.scratch)
 
 
 def log(m):
@@ -138,6 +139,12 @@ def build(C, body):
     fname, height = BODIES[body]
     bm, mats, wh = load(fname)
     dropped = drop_mirrors(bm)
+    # грани одной плоскости и одного материала склеиваются: у модели панели порезаны на квады, и без
+    # склейки граней было 380–470 на кузов — на телефоне +1,2–1,7 мс JS на кадр уровня 1. Вид тот же:
+    # рендер заливает грань одним цветом, а многоугольник (и вогнутый) он рисует как есть
+    n0 = len(bm.faces)
+    bmesh.ops.dissolve_limit(bm, angle_limit=math.radians(0.5), verts=bm.verts[:], edges=bm.edges[:], delimit={'MATERIAL'})
+    merged = n0 - len(bm.faces)
     hull = exterior.hull2([(s * st['w'], st['z']) for st in C['CAR_ST'] for s in (-1, 1)])
     car = C['CAR']
     zr_g = -C['C2R']
@@ -238,7 +245,10 @@ def build(C, body):
     lamp_ids = sorted({f['lamp'] for f in m.f if f.get('lamp')})
     plates = sum(1 for f in m.f if f.get('img') == 'plate')
     log(f"{body}: фары и фонари {lamp_ids}, номеров с картинкой {plates}")
-    log(f"{body} ({fname}): граней {summ['faces']}, вершин {summ['verts']}, зеркал убрано граней {dropped}, разрезов {cuts}; "
+    max_n = max(len(f['i']) for f in m.f)
+    if max_n > MAX_POLY:
+        fails.append(f'грань из {max_n} вершин — у игры заготовки до {MAX_POLY}')
+    log(f"{body} ({fname}): граней {summ['faces']} (склеено {merged}, до {max_n} вершин), вершин {summ['verts']}, зеркал убрано граней {dropped}, разрезов {cuts}; "
         f"след ±{summ['dev_cm']} см; низ окна {belt:.2f} → dy {dy:+.3f}; лобовое от z {glass_front:.2f}"
         + (f"; над линией взгляда: перёд {summ['over_front']}°, зад {summ['over_rear']}°" if own else ''))
     for f in fails:

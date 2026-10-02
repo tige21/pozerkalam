@@ -1,13 +1,16 @@
 #!/usr/bin/env node
-/* Гейт мира из картинок (коды render-car-styles, render-car-style-fallback, render-tram-texture,
-   render-tram-fallback, render-sky-pano; сценарии — specs/features/render/car.feature и world.feature):
-   у чужих машин разные стили и кузова, а без картинки стиля — деталь стиля A; трамвай нарисован
+/* Гейт мира из картинок (коды render-car-styles, render-car-style-fallback, render-car-models,
+   render-car-lights, render-tram-texture, render-tram-fallback, render-sky-pano; сценарии —
+   specs/features/render/car.feature и world.feature): у чужих машин разные стили и кузова, а без
+   картинки стиля — деталь стиля A; кузова — модели набора RgsDev с фарами, фонарями и номерами, стоп
+   и поворотник горят на фонарях; трамвай нарисован
    картинками, а без них — прежними коробками; небо — панорама, низ которой стоит на линии горизонта,
    шов копий не виден, а на нижних уровнях качества — градиент.
      PW_DIR=/tmp/pw node tools/world-check.mjs
-     FAULT=styles|stylefallback|tram|tramfallback|sky — сломать нарочно и увидеть красный: один стиль у
-       всех машин, картинка стиля на месте при проверке отказа, нет картинок трамвая, картинки трамвая
-       на месте при проверке отказа, нет картинки неба
+     FAULT=styles|stylefallback|models|lights|tram|tramfallback|sky — сломать нарочно и увидеть красный: один стиль у
+       всех машин, картинка стиля на месте при проверке отказа, у хэтчбека нет левой фары, у фонарей
+       своей машины нет меток стороны, нет картинок трамвая, картинки трамвая на месте при проверке
+       отказа, нет картинки неба
    Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена. */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -60,7 +63,7 @@ const styles = await page.evaluate((fault) => {
   const cars = level.obs.filter((o) => o.kind === 'car');
   if (fault === 'styles') for (const o of cars) { o.style = 'b'; o.body = 'sedan'; }
   const adjacent = cars.slice(1).filter((o, i) => o.style === cars[i].style).length;
-  const imgs = ['b', 'c', 'd', 'e'].flatMap((s) => ['headlight', 'taillight', 'grille', 'wheel'].map((d) => d + '-' + s)).filter((k) => !carModel.img[k]);
+  const imgs = ['b', 'c', 'd', 'e'].map((s) => 'wheel-' + s).filter((k) => !carModel.img[k]);
   /* кузова, которыми рисуются машины рядом: своя машина ставится вплотную к ряду припаркованных */
   const bodies = new Set(), orig = emitCarModel;
   window.emitCarModel = (u, v, th, col, lit, body, style) => { for (const [k, b] of Object.entries(carModel.bodies)) if (b === body) bodies.add(k + ':' + style); return orig(u, v, th, col, lit, body, style); };
@@ -70,23 +73,62 @@ const styles = await page.evaluate((fault) => {
   const kinds = new Set([...bodies].map((s) => s.split(':')[0]));
   return { cars: cars.length, styles: cars.map((o) => o.style).join(''), adjacent, missingImgs: imgs, drawn: [...bodies].sort() , kinds: [...kinds].sort() };
 }, FAULT);
-check('у чужих машин разные стили: соседи по ряду не совпадают, картинки всех стилей распакованы, рисуются все три кузова (@render-car-styles)',
+check('у чужих машин разные стили: соседи по ряду не совпадают, диски всех стилей распакованы, рисуются все три кузова (@render-car-styles)',
   styles.cars >= 4 && styles.adjacent === 0 && !styles.missingImgs.length && ['cross', 'hatch', 'sedan'].every((k) => styles.kinds.includes(k)),
   JSON.stringify(styles));
 
 /* ---- отказ стиля: без картинки — деталь стиля A и одно предупреждение ---- */
 const fb = await page.evaluate((fault) => {
-  const saved = carModel.img['headlight-c'];
-  if (fault !== 'stylefallback') delete carModel.img['headlight-c'];
-  delete carModel.warned['headlight-c'];
-  const got = carStyleImg('headlight', 'c'), again = carStyleImg('headlight', 'c');
-  carModel.img['headlight-c'] = saved;
+  const saved = carModel.img['wheel-c'];
+  if (fault !== 'stylefallback') delete carModel.img['wheel-c'];
+  delete carModel.warned['wheel-c'];
+  const got = carStyleImg('wheel', 'c'), again = carStyleImg('wheel', 'c');
+  carModel.img['wheel-c'] = saved;
   return { got, again };
 }, FAULT);
 await page.waitForTimeout(50);
-const fbWarns = warns.filter((w) => w.includes('headlight-c'));
+const fbWarns = warns.filter((w) => w.includes('wheel-c'));
 check('без картинки стиля деталь берётся у стиля A, предупреждение [assets] одно (@render-car-style-fallback)',
-  fb.got === 'headlight' && fb.again === 'headlight' && fbWarns.length === 1, JSON.stringify({ ...fb, warns: fbWarns }));
+  fb.got === 'wheel' && fb.again === 'wheel' && fbWarns.length === 1, JSON.stringify({ ...fb, warns: fbWarns }));
+
+/* ---- кузова — модели набора RgsDev: фары, фонари, номера; стоп и поворотник на фонарях ---- */
+const mdl = await page.evaluate((fault) => {
+  const out = {};
+  for (const [name, B] of Object.entries(carModel.bodies)) {
+    const F = fault === 'models' && name === 'hatch' ? B.F.filter((f) => f.lamp !== 'head-L') : B.F;
+    out[name] = { faces: F.length, lamps: [...new Set(F.filter((f) => f.lamp).map((f) => f.lamp))].sort().join(','),
+      plates: F.filter((f) => f.img === 'plate').length };
+  }
+  return out;
+}, FAULT);
+check('кузова — модели набора: у каждого фары и фонари слева и справа, номер спереди и сзади, граней не больше 600 (@render-car-models)',
+  ['sedan', 'hatch', 'cross'].every((k) => mdl[k] && mdl[k].lamps === 'head-L,head-R,tail-L,tail-R' && mdl[k].plates === 2 && mdl[k].faces <= 600),
+  JSON.stringify(mdl));
+
+/* стоп и поворотник своей машины: накладки считаются по стороне их центра в кадре кузова */
+const lights = await page.evaluate((fault) => {
+  loadLevel(0); doAct('start'); paused = true; opt.camMode = CAM_CHASE;
+  const B = carModel.bodies.sedan, saved = B.F.map((f) => f.lamp);
+  if (fault === 'lights') for (const f of B.F) if (f.lamp && f.lamp.startsWith('tail')) f.lamp = null;
+  const c = bodyPos(), R = ruv(car.th);
+  let red = 0, amberL = 0, amberR = 0, own = false;
+  const oF = pushFace, oM = emitCarModel;
+  window.pushFace = (v, n, col, b, o) => {
+    if (own && col && col.length === 4) {
+      let u = 0, w = 0; for (const q of v) { u -= q.x; w += q.z; }
+      const lat = (u / v.length - c.u) * R.u + (w / v.length - c.v) * R.v;
+      if (col[1] === 40) red++; else if (col[1] === 170) { if (lat < 0) amberL++; else amberR++; }
+    }
+    return oF(v, n, col, b, o);
+  };
+  window.emitCarModel = (u, v, th, col, lit, ...rest) => { own = !!(lit && lit.own); try { return oM(u, v, th, col, lit, ...rest); } finally { own = false; } };
+  const back0 = input.back, blink0 = car.blink, t0 = game.t;
+  try { input.back = true; car.blink = 'L'; game.t = 0.1; render(0); }
+  finally { window.pushFace = oF; window.emitCarModel = oM; input.back = back0; car.blink = blink0; game.t = t0; B.F.forEach((f, i) => { f.lamp = saved[i]; }); }
+  return { red, amberL, amberR };
+}, FAULT);
+check('стоп горит на фонарях своей машины, поворотник — только на своей стороне (@render-car-lights)',
+  lights.red >= 2 && lights.amberL >= 2 && lights.amberR === 0, JSON.stringify(lights));
 
 /* ---- трамвай: картинками, а без картинок — коробками ---- */
 const tramRun = (drop) => page.evaluate((drop) => {

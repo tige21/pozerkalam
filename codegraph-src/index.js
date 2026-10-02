@@ -2545,7 +2545,9 @@ function carModelLoad(){
                              wiper:b.wiper||null, doors:b.doors||null};
     }
     carModel.zones=d.zones||{};
-    carModel.scratch=[[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]];
+    /* заготовка на грань по числу вершин: склеенные грани моделей — многоугольники до 48 вершин
+       (tools/blender/models.py, MAX_POLY) */
+    carModel.scratch=Array.from({length:49},()=>[]);
     carModel.state='ready';
   }catch(e){ carModel.state='failed'; console.warn('[assets] кузов: модель не читается ('+e.message+') — рисуется прежний'); return; }
   const jobs=[];
