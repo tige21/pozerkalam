@@ -161,7 +161,11 @@ Rationale: качество картинки по заказу владельц�
 
 ### Phase 4: Проверки, документация, выкатка (≈2 ч, доска: #240)
 
-- [ ] **Task 9: Новые проверки.**
+- [x] **Task 9: Новые проверки.**
+  > Новый `tools/world-check.mjs`: `@render-car-styles`, `@render-car-style-fallback`,
+  > `@render-tram-texture`, `@render-tram-fallback`, `@render-sky-pano` (низ панорамы на горизонте
+  > 257,8 = 257,8 px, шов 2,2/255); каждая краснеет на своём `FAULT=`. Сценарии — `car.feature` и новый
+  > `world.feature`; чек-лист 108 сценариев.
   `@render-car-styles` (соседние припаркованные машины разного стиля, картинки всех стилей
   распакованы, все три кузова рисуются), `@render-tram-texture` (борта и торцы трамвая — картинками;
   отказ — коробки), `@render-sky-pano` (небо — картинка, город на линии горизонта ± 2 px, шов краёв не
@@ -170,12 +174,19 @@ Rationale: качество картинки по заказу владельц�
   (`FAULT=…`). Логи: измеренное и порог. Files: `tools/cabin-check.mjs` или новый
   `tools/world-check.mjs`, `tools/units.js`, `specs/features/render/*.feature`. (depends on 6, 7, 8)
 
-- [ ] **Task 10: Гейты и замер.**
+- [x] **Task 10: Гейты и замер.**
+  > 02.10, все зелёные: `hull-check`, `level-audit` (без касаний), `traffic-check`, `gherkin-run` 30/30,
+  > `cockpit-shots` (салон 0, мир 4, демо 0, skyGap 7), `look-check`, `light-check`, `mirror-check`,
+  > `cabin-check` 9/9, `world-check` 6/6, `unit-check` 139/139, `sw`/`touch`/`crash-check`. Замер —
+  > против `5a53756` (до всего плана, строже `HEAD`): телефон CPU×4, q0 — L30 chase JS 7,9 → 7,8 мс,
+  > p95 11,3; L29 салон 7,7 → 8,0 (+3,9 %), p95 11,4.
   Все гейты из Settings; `perf-bench` `MOBILE=1 CPU=4` против `HEAD`: `LEVEL=30 CAM=chase
   TRAFFIC=dense` и `LEVEL=29 CAM=fp` (трамвай) — JS не хуже чем на 5 %, p95 ≤ 13,2, q0; снимки
   машин, трамвая и неба — владельцу. Логи: таблица до/после. Files: —. (depends on 9)
 
-- [ ] **Task 11: Документация.**
+- [x] **Task 11: Документация.**
+  > CLAUDE.md: «Car body — three bodies and five styles», «Sky», трамвай из картинок в «City clarity»,
+  > `world-check` в командах, серия 2 в «Ассеты».
   CLAUDE.md: «Car body» (три кузова, стиль по номеру, зоны по стилю, основа фар — цвет кузова),
   трамвай из картинок, небо панорамой, раздел «Ассеты» (серия 2, бриф `world-assets.md`).
   Логи: не требуются. Files: `CLAUDE.md`. (depends on 10)
