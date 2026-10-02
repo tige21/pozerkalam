@@ -3,13 +3,15 @@
    specs/features/render/cabin.feature и specs/features/dist/assets.feature):
    куб салона распакован и рисуется, его проём лобового совпадает с WSHIELD и в нём выше линии
    капота нет ничего, рендер сделан на текущих константах, при битой картинке рисуется прежний
-   салон, страница в бюджете, блок картинок вне <script>.
+   салон, страница в бюджете, блок картинок вне <script>; без модели кузова (render-car-fallback,
+   specs/features/render/car.feature) машины рисуются прежним лофтом.
    Проём меряется по самим граням куба, а не по кадрам: глаз в кузове неподвижен, и куб от
    поворота головы не зависит — пять поз головы проверяли бы одну и ту же картинку.
      PW_DIR=/tmp/pw node tools/cabin-check.mjs
-     FAULT=shift|eye|budget|normal|script|marks|mirror — сломать нарочно и увидеть красный: сдвинуть грани на 4 px,
+     FAULT=shift|eye|budget|normal|script|marks|mirror|car — сломать нарочно и увидеть красный: сдвинуть грани на 4 px,
        поменять EYE после рендера, уронить бюджет до 0,5 МБ, проверить отказ на целой странице,
-       завернуть блок картинок в <script>, держать руль прямо при проверке меток, отключить куб зеркала
+       завернуть блок картинок в <script>, держать руль прямо при проверке меток, отключить куб зеркала,
+       оставить модель кузова на месте в проверке отказа
    Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена. */
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
@@ -215,6 +217,32 @@ check('битая грань куба: рисуется прежний сало�
   bad.frame.state === 'failed' && bad.frame.interior === 1 && bad.frame.cube === 0 && bad.warns.length === 1 && !bad.errors.length,
   JSON.stringify({ ...bad.frame, warns: bad.warns, errors: bad.errors }));
 await bad.context.close();
+
+/* ---- кузов: без модели — прежний лофт и одно предупреждение ---- */
+const carBrokenPath = path.join(BUILD, 'car-fallback.html');
+fs.writeFileSync(carBrokenPath, FAULT === 'car' ? html : html.replace(/<template id="car-mesh">[^<]*<\/template>/, ''));
+{
+  const ctx2 = await browser.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
+  const pg = await ctx2.newPage();
+  const errors = [], warns = [];
+  pg.on('pageerror', (e) => { if (!/ServiceWorker/.test(e.message)) errors.push(e.message); });
+  pg.on('console', (m) => { if (m.type() === 'warning' && m.text().startsWith('[assets] кузов')) warns.push(m.text()); });
+  await pg.goto('file://' + carBrokenPath + '?nocache=' + Date.now());
+  await pg.waitForFunction(() => typeof carModel !== 'undefined' && carModel.state !== 'off', null, { timeout: 15000 });
+  const r = await pg.evaluate(() => {
+    loadLevel(0); doAct('start'); opt.camMode = CAM_CHASE;
+    let model = 0, loft = 0; const oM = emitCarModel, oB = emitCarBody;
+    window.emitCarModel = (...a) => { model++; return oM(...a); };
+    window.emitCarBody = (...a) => { loft++; return oB(...a); };
+    try { render(0); } finally { window.emitCarModel = oM; window.emitCarBody = oB; }
+    return { state: carModel.state, model, loft };
+  });
+  check('без модели кузова машины рисуются прежним лофтом, предупреждение [assets] одно, исключений нет (@render-car-fallback)',
+    r.state === 'failed' && r.model === 0 && r.loft > 0 && warns.length === 1 && !errors.length,
+    JSON.stringify({ ...r, warns, errors }));
+  await ctx2.close();
+}
+
 await browser.close();
 
 /* ---- сборка ---- */
@@ -234,6 +262,7 @@ check('картинки встроены вне <script>: в скриптах с
   `скриптов ${scripts.length}, зеркало ${(mirror.length / 1024).toFixed(0)} КБ`);
 
 fs.rmSync(brokenPath, { force: true });
+fs.rmSync(carBrokenPath, { force: true });
 fs.rmSync(path.join(BUILD, 'cabin-fault-eye.html'), { force: true });
 const failed = results.filter((r) => !r.ok);
 console.log(JSON.stringify({ total: results.length, failed: failed.length, names: failed.map((r) => r.name), fault: FAULT || null }));

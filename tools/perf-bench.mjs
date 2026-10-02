@@ -88,7 +88,8 @@ const SCENARIOS = [
 ];
 if (OLD) {
   const tmp = path.join(os.tmpdir(), `pozerkalam-${OLD}.html`);
-  fs.writeFileSync(tmp, execSync(`git -C "${ROOT}" show ${OLD}:index.html`));
+  /* maxBuffer: со встроенными картинками index.html больше 1 МБ — предела execSync по умолчанию */
+  fs.writeFileSync(tmp, execSync(`git -C "${ROOT}" show ${OLD}:index.html`, { maxBuffer: 64 * 1024 * 1024 }));
   await load('file://' + tmp + '?nocache=' + Date.now());
   await measure(OLD, 'всё');
 }

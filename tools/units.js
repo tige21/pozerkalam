@@ -260,6 +260,26 @@ function unitCheck() {
   ok('линия к кольцу не идёт в центр островка', toRing && toRing.pts.every(
     (p) => Math.hypot(p.u - gg.V.N4.u, p.v - gg.V.N4.v) > gg.V.N4.round - 7.5));
 
+  g('кузов снаружи');
+  /* след модели кузова на земле обязан быть тем, по которому считается касание (CAR_HULL): модель
+     уже следа рисовала бы касание до металла, шире — металл входил бы в стену без касания */
+  if (carModel.state === 'ready') {
+    const V = carModel.V, pts = [];
+    for (let i = 0; i < V.length; i += 3) pts.push({ u: V[i], v: V[i + 2] });
+    const mh = hull2(pts).map((q) => [q.u, q.v]), ch = CAR_HULL.map((h) => [h.lat, h.z]);
+    const toPoly = (p, poly) => {
+      let best = Infinity;
+      for (let i = 0; i < poly.length; i++) {
+        const a = poly[i], b = poly[(i + 1) % poly.length], dx = b[0] - a[0], dz = b[1] - a[1];
+        const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / (dx * dx + dz * dz || 1)));
+        best = Math.min(best, Math.hypot(p[0] - a[0] - dx * t, p[1] - a[1] - dz * t));
+      }
+      return best;
+    };
+    const dev = Math.max(...mh.map((p) => toPoly(p, ch)), ...ch.map((p) => toPoly(p, mh)));
+    ok('след модели кузова совпадает с CAR_HULL в пределах 1 см (@render-car-footprint)', dev <= 0.01);
+  } else fails.push('кузов снаружи · модель не загружена (@render-car-footprint)');
+
   g('детекторы нарушений');
   if (typeof detectorCheck === 'function') {
     for (const c of detectorCheck()) ok(c.name, c.ok);

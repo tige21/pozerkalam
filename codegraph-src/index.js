@@ -554,6 +554,11 @@
 
 
 
+
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -1417,8 +1422,7 @@ function emitCarBody(u,v,th,col){
   const sill=[44,48,54], glass=[42,52,64], pillar=[38,42,48];
   const bump=[(col[0]*0.84)|0,(col[1]*0.84)|0,(col[2]*0.84)|0];
   const NP=CAR_SECS[0].pts.length;
-  const f=fuv(th), r=ruv(th), du=(-cam.pos.x)-u, dv=cam.pos.z-v;
-  const camLat=du*r.u+dv*r.v, camZ=du*f.u+dv*f.v, camDist=Math.hypot(du,dv);
+  const du=(-cam.pos.x)-u, dv=cam.pos.z-v, camDist=Math.hypot(du,dv);
   /* вблизи борта заливаются градиентом по нормалям сечения (только боковые рёбра: у крыши и капота
      нормаль ещё наклонена по z, и сечения её не знают); дальше — плоские грани с материалом */
   const Q=QUALITY[qLevel];
@@ -1444,9 +1448,18 @@ function emitCarBody(u,v,th,col){
   const L=CAR_SECS.length-1;
   pushPoly(CAR_SECS[0].pts.map(q=>P(q[0],q[1],CAR_SECS[0].z)), bump, ref, 0, MO.plastic);
   pushPoly(CAR_SECS[L].pts.map(q=>P(q[0],q[1],CAR_SECS[L].z)), bump, ref, 0, MO.plastic);
-  /* ручки, швы дверей и колёсные арки — то, по чему ставят боковые зеркала («ручка задней двери
-     у внутреннего края») и по чему равняются на соседа. Только вблизи камеры: у дальних машин это
-     шум. bias — накладка на борт: грань кузова с центром ближе к камере закрывала бы деталь на себе */
+  emitCarDoors(u,v,th,true);
+}
+/* ручки, швы дверей и (у лофта) колёсные арки — то, по чему ставят боковые зеркала («ручка задней
+   двери у внутреннего края») и по чему равняются на соседа. Только вблизи камеры: у дальних машин это
+   шум. bias — накладка на борт: грань кузова с центром ближе к камере закрывала бы деталь на себе.
+   У модели арки — настоящие вырезы, а задний шов двери начинается над аркой: он стоит на её центре */
+function emitCarDoors(u,v,th,arches){
+  const F=fwd(th), R=rgt(th), cx=-u, cz=v;
+  const P=(lat,y,z)=>({x:cx+R.x*lat+F.x*z, y:y, z:cz+R.z*lat+F.z*z});
+  const f=fuv(th), r=ruv(th), du=(-cam.pos.x)-u, dv=cam.pos.z-v;
+  const camLat=du*r.u+dv*r.v, camZ=du*f.u+dv*f.v, camDist=Math.hypot(du,dv);
+  const Q=QUALITY[qLevel];
   /* из салона этой же машины накладки не рисуем: со сдвигом bias верх ручки пробивался бы
      сквозь карту двери */
   const camIn = Math.abs(camLat)<0.95 && Math.abs(camZ)<2.3 && cam.pos.y<1.6;
@@ -1455,8 +1468,9 @@ function emitCarBody(u,v,th,col){
     for(const sg of [-1,1]){
       const out=P(sg*0.5,0.7,0);
       for(const z of [0.84,-0.33,-1.30])
-        pushQuad(P(sg*0.906,0.40,z-0.008),P(sg*0.906,0.40,z+0.008),P(sg*0.906,0.985,z+0.008),
-                 P(sg*0.906,0.985,z-0.008), seam, out, 0.3);
+      { const y0 = !arches && z<-1 ? 0.74 : 0.40;
+        pushQuad(P(sg*0.906,y0,z-0.008),P(sg*0.906,y0,z+0.008),P(sg*0.906,0.985,z+0.008),
+                 P(sg*0.906,0.985,z-0.008), seam, out, 0.3); }
       for(const z of [-0.12,-1.06]){
         const c=P(sg*0.915,0.90,z), o=sg*0.935, i=sg*0.895, y0=0.886, y1=0.914, z0=z-0.085, z1=z+0.085;
         pushQuad(P(o,y0,z0),P(o,y0,z1),P(o,y1,z1),P(o,y1,z0), handle, c, 0.3, MO.chrome);
@@ -1466,7 +1480,7 @@ function emitCarBody(u,v,th,col){
       }
       /* арки: тёмный полудиск на борту вокруг колеса — сам борт сплошной, и без арки колесо
          «врастало» в дверь */
-      for(const zc of [-C2R, -C2R+CAR.wheelbase]){
+      if(arches) for(const zc of [-C2R, -C2R+CAR.wheelbase]){
         const pts=[]; const Ra=CAR.wheelR+0.075;
         for(let k=0;k<=8;k++){ const a=k/8*PI; pts.push(P(sg*0.905, Math.max(0.33, CAR.wheelR+Math.sin(a)*Ra), zc+Math.cos(a)*Ra)); }
         pushPoly(pts, arch, out, 0.3);
@@ -1570,7 +1584,7 @@ function emitCarLow(u,v,th,col){
   for(const dz of [-C2R, -C2R+CAR.wheelbase]) for(const sg of [-1,1])
     pushBox(u+f.u*dz+r.u*sg*t, Rw, v+f.v*dz+r.v*sg*t, CAR.wheelW/2, Rw, Rw*0.8, th, [28,29,33]);
 }
-function pushWheelCyl(u,v,yaw,side){
+function pushWheelCyl(u,v,yaw,side,img){
   const Rw=CAR.wheelR, hw=CAR.wheelW/2;
   const F=fwd(yaw), Rv=rgt(yaw), cx=-u, cz=v, cy=Rw;
   const N=12, out=[], inn=[];
@@ -1581,7 +1595,15 @@ function pushWheelCyl(u,v,yaw,side){
   }
   const ref={x:cx,y:cy,z:cz}, tyre=[28,29,33];
   for(let i=0;i<N;i++){ const j=(i+1)%N; pushQuad(out[i],out[j],inn[j],inn[i],tyre,ref,0,MO.rubber); }
-  pushPoly(out,[20,21,25],ref); pushPoly(inn,[20,21,25],ref);
+  pushPoly(inn,[20,21,25],ref);
+  /* у модели бок колеса — картинка шины с диском на квадрате 2R: углы квадрата прозрачные (основа
+     грани с нулевой альфой), иначе вокруг колеса стоял бы тёмный квадрат */
+  if(img){
+    const d=hw+0.004, at=(dz,dy)=>({x:cx+Rv.x*d*side+F.x*dz, y:cy+dy, z:cz+Rv.z*d*side+F.z*dz});
+    pushFace([at(-Rw*side,Rw), at(Rw*side,Rw), at(Rw*side,-Rw), at(-Rw*side,-Rw)], {x:Rv.x*side, y:0, z:Rv.z*side}, CM_CLEAR, 0.02, {img});
+    return;
+  }
+  pushPoly(out,[20,21,25],ref);
   /* диск: светлый круг с пятью тёмными окнами между спицами и ступицей — колесо перестаёт быть
      чёрным цилиндром с серым пятном */
   const d=hw+0.006, at=(k,a,dd)=>({x:cx+Rv.x*dd*side+F.x*Math.cos(a)*Rw*k, y:cy+Math.sin(a)*Rw*k, z:cz+Rv.z*dd*side+F.z*Math.cos(a)*Rw*k});
@@ -2423,17 +2445,130 @@ function emitInteriorLive(u,v,th){
   } finally{ cabinLit=false; cabinFrame=null; }
 }
 cabinBakeLoad();
+/* ---------- кузов снаружи: модель ---------- */
+/* Кузов из tools/blender/exterior.py (≈300 граней, <template id="car-mesh">): своя машина всегда,
+   соседи и поток ближе CAR_MODEL_D; дальше — прежний лофт emitCarBody, за TRAF_LOD у потока —
+   emitCarLow. След модели на земле — CAR_HULL (exterior.py проверяет ≤ 1 см, unit-check —
+   @render-car-footprint), так что касание считается по тому же, что нарисовано. Модель читается один
+   раз при загрузке; без шаблона или с битым шаблоном — прежний лофт и одно предупреждение [assets] */
+const CAR_MODEL_D=20;
+const carModel={state:'off', V:null, F:null, zones:null, img:{}, cut:new Map(), W:null, scratch:null};
+/* цвета материалов модели: краска приходит от машины, остальное — постоянное */
+const CM_COL={glass:[42,52,64], trim:[30,32,36], liner:[18,19,22], grille:[30,32,36], plate:[228,232,236],
+              head:[52,56,64], tail:[74,16,18]};
+const CM_CLEAR=[0,0,0,0];
+function carModelLoad(){
+  const root=document.getElementById('assets');
+  if(!root) return;
+  const t=document.getElementById('car-mesh');
+  if(!t){ carModel.state='failed'; console.warn('[assets] кузов: нет модели — рисуется прежний'); return; }
+  try{
+    const d=JSON.parse((t.content||t).textContent);
+    const v=d.v; if(!v || v.length%3 || !d.f || !d.f.length) throw new Error('пустая');
+    const nv=v.length/3, F=[];
+    for(const f of d.f){
+      for(const i of f.i) if(!(i>=0 && i<nv)) throw new Error('индекс вершины вне модели');
+      F.push({i:f.i, m:f.m, n:f.n, s:f.s||null, b:f.b||0, img:f.img||null, uv:f.uv||null, lamp:f.lamp||null});
+    }
+    carModel.V=Float32Array.from(v); carModel.F=F; carModel.zones=d.zones||{};
+    carModel.W=Array.from({length:nv},()=>({x:0,y:0,z:0}));
+    carModel.scratch=[[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]];
+    carModel.state='ready';
+  }catch(e){ carModel.state='failed'; console.warn('[assets] кузов: модель не читается ('+e.message+') — рисуется прежний'); return; }
+  for(const k of ['headlight','taillight','grille','wheel']){
+    const img=root.querySelector('img[data-asset="car-'+k+'"]');
+    if(!img){ console.warn('[assets] кузов: нет картинки '+k+' — грань без неё'); continue; }
+    img.decode().then(()=>{ carModel.img[k]=img; }).catch(e=>console.warn('[assets] кузов: '+k+' не распаковалась — грань без неё'));
+  }
+}
+/* доля картинки для грани: фара и фонарь лежат на двух гранях (торец и скос угла), каждой — своя
+   часть картинки; резка один раз, дальше из кэша */
+function carModelImg(key, uv){
+  if(key==='plate') return plateCanvas();
+  const img=carModel.img[key]; if(!img) return null;
+  if(!uv || (uv[0]===0 && uv[1]===0 && uv[2]===1 && uv[3]===1)) return img;
+  const ck=key+uv.join(','); let c=carModel.cut.get(ck);
+  if(!c){
+    const W=img.naturalWidth, H=img.naturalHeight, sx=uv[0]*W, sy=uv[1]*H, sw=Math.max(1,(uv[2]-uv[0])*W), sh=Math.max(1,(uv[3]-uv[1])*H);
+    c=document.createElement('canvas'); c.width=Math.round(sw); c.height=Math.round(sh);
+    c.getContext('2d').drawImage(img,sx,sy,sw,sh,0,0,c.width,c.height);
+    carModel.cut.set(ck,c);
+  }
+  return c;
+}
+/* светящаяся доля грани фонаря или фары: доля картинки zone пересекается с долей грани uv и
+   переводится в четыре угла на грани (v0 — левый верх картинки, v1 — правый верх, v3 — левый низ) */
+function carZoneQuad(q, uv, zone){
+  const u0=Math.max(zone[0],uv[0]), u1=Math.min(zone[2],uv[2]); if(u1<=u0) return null;
+  const s0=(u0-uv[0])/(uv[2]-uv[0]), s1=(u1-uv[0])/(uv[2]-uv[0]), t0=zone[1], t1=zone[3];
+  const at=(s,t)=>{ const a=q[0], b=q[1], c=q[2], d=q[3];
+    const tx=a.x+(b.x-a.x)*s, ty=a.y+(b.y-a.y)*s, tz=a.z+(b.z-a.z)*s;
+    const bx=d.x+(c.x-d.x)*s, by=d.y+(c.y-d.y)*s, bz=d.z+(c.z-d.z)*s;
+    return {x:tx+(bx-tx)*t, y:ty+(by-ty)*t, z:tz+(bz-tz)*t}; };
+  return [at(s0,t0), at(s1,t0), at(s1,t1), at(s0,t1)];
+}
+function emitCarModel(u,v,th,col,lit){
+  const M=carModel, V=M.V, W=M.W, F=fwd(th), R=rgt(th), cx=-u, cz=v;
+  for(let i=0,k=0;i<W.length;i++,k+=3){ const lat=V[k], z=V[k+2], w=W[i];
+    w.x=cx+R.x*lat+F.x*z; w.y=V[k+1]; w.z=cz+R.z*lat+F.z*z; }
+  const dx=-cam.pos.x-u, dz=cam.pos.z-v, d2=dx*dx+dz*dz, Q=QUALITY[qLevel];
+  /* градиент борта — вблизи (как у лофта: дальше 16 м его не видно), блик и отражение — до 40 м:
+     pow на каждую грань виден в JS-времени кадра */
+  const smooth=Q.cars && d2<256, mats=Q.cars && d2<1600;
+  const paint=mats?MO.paint:undefined, glass=mats?MO.glass:undefined, plastic=mats?MO.plastic:undefined;
+  const blinkOn=Math.floor(game.t/0.75)%2===0;
+  const turnL=(lit.hazard || lit.blink==='L') && blinkOn, turnR=(lit.hazard || lit.blink==='R') && blinkOn;
+  const Z=M.zones;
+  for(const f of M.F){
+    const ix=f.i, q=M.scratch[ix.length]; for(let j=0;j<ix.length;j++) q[j]=W[ix[j]];
+    const n=f.n, nw={x:R.x*n[0]+F.x*n[2], y:n[1], z:R.z*n[0]+F.z*n[2]};
+    let c, o;
+    switch(f.m){
+      case 'paint': c=col; o=paint;
+        if(smooth && f.s){ const a=f.s[0], b=f.s[1];
+          o={mat:'paint', n1:{x:R.x*a[0]+F.x*a[2], y:a[1], z:R.z*a[0]+F.z*a[2]}, n2:{x:R.x*b[0]+F.x*b[2], y:b[1], z:R.z*b[0]+F.z*b[2]}}; }
+        break;
+      case 'glass': c=CM_COL.glass; o=glass; break;
+      case 'trim': c=CM_COL.trim; o=plastic; break;
+      case 'liner': c=CM_COL.liner; o=undefined; break;
+      default: {
+        c = f.m==='lamp' ? (f.lamp.startsWith('tail')?CM_COL.tail:CM_COL.head) : CM_COL[f.m] || CM_COL.trim;
+        const im=f.img ? carModelImg(f.img, f.uv) : null;
+        o = im ? {img:im} : plastic;
+      }
+    }
+    pushFace(q, nw, c, f.b, o);
+    if(f.lamp){
+      const tail=f.lamp.startsWith('tail'), left=f.lamp.endsWith('L');
+      /* стоп — весь фонарь полупрозрачным красным поверх картинки: световод и стекло видны и включёнными */
+      if(tail && lit.brake) pushFace(q, nw, [255,40,30,0.55], f.b+0.004, MO.emit);
+      const zt=Z[tail?'tail':'head']||{};
+      if(tail && lit.rev && zt.rev){ const zq=carZoneQuad(q, f.uv, zt.rev); if(zq) pushFace(zq, nw, [255,255,240,0.9], f.b+0.006, MO.emit); }
+      if((left?turnL:turnR) && zt.turn){ const zq=carZoneQuad(q, f.uv, zt.turn); if(zq) pushFace(zq, nw, [255,170,30,0.9], f.b+0.006, MO.emit); }
+    }
+  }
+}
+carModelLoad();
 function emitCarMesh(u, v, th, col, st, lights){
   const f=fuv(th), r=ruv(th), a=ackermann(st||0), t=CAR.track/2;
   const at=(du,dz)=>({u:u+f.u*dz+r.u*du, v:v+f.v*dz+r.v*du});
   const F=fwd(th), R=rgt(th), cx=-u, cz=v;
   const P=(lat,y,z)=>({x:cx+R.x*lat+F.x*z, y:y, z:cz+R.z*lat+F.z*z});
-  emitCarBody(u,v,th,col);
-  const zr=-C2R, zf=-C2R+CAR.wheelbase;
-  const w1=at(-t,zr), w2=at(t,zr), w3=at(-t,zf), w4=at(t,zf);
-  pushWheelCyl(w1.u,w1.v,th,-1); pushWheelCyl(w2.u,w2.v,th,1);
-  pushWheelCyl(w3.u,w3.v,th+a.l,-1); pushWheelCyl(w4.u,w4.v,th+a.r,1);
   const lit = lights || {};
+  /* своя машина — всегда модель: её капот виден из салона, борт — в боковых зеркалах */
+  const mdx=-cam.pos.x-u, mdz=cam.pos.z-v;
+  const model = carModel.state==='ready' && (lit.own || mdx*mdx+mdz*mdz < CAR_MODEL_D*CAR_MODEL_D);
+  if(model) emitCarModel(u,v,th,col,lit); else emitCarBody(u,v,th,col);
+  emitCarDoors(u,v,th,!model);
+  const zr=-C2R, zf=-C2R+CAR.wheelbase, wimg = model ? carModel.img.wheel : null;
+  const w1=at(-t,zr), w2=at(t,zr), w3=at(-t,zf), w4=at(t,zf);
+  pushWheelCyl(w1.u,w1.v,th,-1,wimg); pushWheelCyl(w2.u,w2.v,th,1,wimg);
+  pushWheelCyl(w3.u,w3.v,th+a.l,-1,wimg); pushWheelCyl(w4.u,w4.v,th+a.r,1,wimg);
+  if(!model) emitCarLamps(P,F,lit);
+  emitCarMirrorsEtc(P,F,R,at,th,col,lights);
+}
+/* огни, решётка и номера прежнего лофта: у модели они — её же грани с картинками */
+function emitCarLamps(P,F,lit){
   /* аварийка стоящей машины: четыре янтарных сегмента по углам мигают по времени игры (фаза от
      game.t, не от часов — computeIdealPath проигрывает уровень тем же временем) */
   if(lit.hazard){
@@ -2455,6 +2590,8 @@ function emitCarMesh(u, v, th, col, st, lights){
   pushFace([P(-0.34,0.74,2.226),P(0.34,0.74,2.226),P(0.34,0.62,2.226),P(-0.34,0.62,2.226)], nF, [38,40,46], 0, {img:carGrilleCanvas()});
   pushFace([P(-0.26,0.56,2.227),P(0.26,0.56,2.227),P(0.26,0.45,2.227),P(-0.26,0.45,2.227)], nF, [228,232,236], 0, {img:plateCanvas()});
   pushFace([P(0.26,0.70,-2.228),P(-0.26,0.70,-2.228),P(-0.26,0.56,-2.228),P(0.26,0.56,-2.228)], nB, [228,232,236], 0, {img:plateCanvas()});
+}
+function emitCarMirrorsEtc(P,F,R,at,th,col,lights){
   for(const sg of [-1,1]){
     emitMirrorHousing(P, F, R, sg, col, lights ? (sg<0?'left':'right') : null);
     /* дворники лежат на жабо перед стеклом: на z=0.60 они оказывались внутри салона над торпедо */
@@ -7967,7 +8104,7 @@ function drawSceneInto(o){
     carRampUse=true;
     try{
       emitCarMesh(c.u,c.v,car.th,[206,214,226],car.steer,
-                  {brake:input.back, rev:car.sel==='R', own:true});
+                  {brake:input.back, rev:car.sel==='R', own:true, blink:car.blink});
       if(bake){
         /* тон лобового и живые слои — перед глазом; салонное зеркало смотрит назад, им там не место */
         if(bake===cabinBake) emitWindshieldTint(cabinCtx(c.u,c.v,car.th));

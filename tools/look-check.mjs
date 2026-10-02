@@ -6,7 +6,8 @@
      PW_DIR=/tmp/pw node tools/look-check.mjs after --mobile    # телефон 844×390, DPR 2, тач
    Выход: build/shots/look-<tag>-<кадр>.png, одна JSON-строка в stdout; код 1 на любой красной
    проверке, ошибке страницы или пустом кадре. Коды требований — specs/features/render/vid.feature.
-   Числа берутся с основного канваса (getImageData), координаты граней — через снимок viewCam. */
+   Числа берутся с основного канваса (getImageData), координаты граней — через снимок viewCam.
+   FAULT=handle — развернуть боковые зеркала до упора наружу и увидеть @render-mirror-handle красным. */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -170,6 +171,44 @@ await shot('hud-mirrors');
     return { quiet, labels: quiet.map(k => mirrorLabel(k)) };
   });
   check('подпись HUD-зеркала только новичку или при подсветке (@render-mirror-label)', r && r.labels.every(l => l === ''), r ? JSON.stringify(r) : 'mirrorLabel нет — подпись всегда');
+}
+
+/* --- боковые зеркала: ручка задней двери у внутреннего края чуть ниже середины --- */
+/* по ней в жизни выставляют боковое зеркало; кузов модели и камера зеркала обязаны её туда ставить.
+   Проекция точки ручки в буфер зеркала (буфер не отражён: свой борт у левого зеркала слева) и кадр
+   без накладок дверей: если пиксели в точке ручки не изменились, её закрывает что-то другое.
+   Яркость против борта не годится — правый борт в тени темнее хромовой ручки */
+{
+  const r = await page.evaluate((fault) => {
+    const out = [];
+    for (const kind of ['left', 'right']) {
+      const sg = kind === 'left' ? -1 : 1;
+      if (fault === 'handle') opt.mirAdj[kind] = { yaw: -sg * MIR_YAW_MAX, pitch: 0 };
+      const rect = mirrorRects()[kind], b = mirrorBuf(rect, kind);
+      const grab = (s) => { const x = Math.round(s.x * b.sc), y = Math.round(s.y * b.sc);
+        if (x < 2 || y < 2 || x >= b.w - 2 || y >= b.h - 2) return null;
+        return Array.from(b.g.getImageData(x - 2, y - 2, 5, 5).data); };
+      renderMirrorInto(b, rect, kind);
+      const mc = mirrorCam(kind); setVP(0, 0, rect.w, rect.h); setCam(mc.pos, mc.tgt, null, mc.fov);
+      const c = bodyPos(), F = fwd(car.th), R = rgt(car.th), lat = sg * 0.915, z = -1.06;
+      const cc = toCam({ x: -c.u + R.x * lat + F.x * z, y: 0.90, z: c.v + R.z * lat + F.z * z });
+      if (cc.d <= NEAR) { out.push({ kind, ok: false, why: 'ручка за камерой' }); continue; }
+      const s = toScreen(cc), fx = s.x / rect.w, fy = s.y / rect.h, inner = kind === 'left' ? fx : 1 - fx;
+      const withH = grab(s);
+      const orig = emitCarDoors; window.emitCarDoors = () => {};
+      try { renderMirrorInto(b, rect, kind); } finally { window.emitCarDoors = orig; }
+      const noH = grab(s);
+      let diff = null;
+      if (withH && noH) { diff = 0; for (let i = 0; i < withH.length; i++) diff = Math.max(diff, Math.abs(withH[i] - noH[i])); }
+      out.push({ kind, inner: +inner.toFixed(2), fy: +fy.toFixed(2), diff,
+        ok: inner >= 0.05 && inner <= 0.40 && fy >= 0.45 && fy <= 0.75 && diff !== null && diff >= 8 });
+      if (fault === 'handle') opt.mirAdj[kind] = { yaw: 0, pitch: 0 };
+      renderMirrorInto(b, rect, kind);
+    }
+    render(0);
+    return out;
+  }, process.env.FAULT || '');
+  check('ручка задней двери в боковом зеркале у внутреннего края чуть ниже середины (@render-mirror-handle)', r.every(x => x.ok), JSON.stringify(r));
 }
 
 /* --- стены: уровень 2 (четыре бетонные стены двора), из-за машины --- */

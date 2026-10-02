@@ -29,7 +29,15 @@ const ASSETS = [
   ...['pz', 'nz', 'px', 'nx', 'py', 'ny'].map((f) => ({ key: 'cmir-' + f, file: `cmir-${f}.png`, q: 80, required: true })),
   /* подушка руля на экране ≈100 px шириной: исходник 1194 px весил 219 КБ */
   { key: 'wheel-pad', file: 'clean/dec-wheel-pad.png', q: 85, required: false, width: 320 },
+  /* кузов снаружи: фара и фонарь на экране не шире 150 px даже у своей машины вблизи, диск — 120 */
+  { key: 'car-headlight', file: 'clean/dec-headlight.png', q: 85, required: true, width: 384 },
+  { key: 'car-taillight', file: 'clean/dec-taillight.png', q: 85, required: true, width: 384 },
+  { key: 'car-grille', file: 'clean/dec-grille.png', q: 85, required: true, width: 320 },
+  { key: 'car-wheel', file: 'clean/dec-wheel.png', q: 85, required: true, width: 256 },
 ];
+/* модель кузова (tools/blender/export-exterior.py) — JSON в <template>: шаблон не исполняется и не
+   попадает ни в скрипты страницы, ни в зеркало codegraph */
+const CAR_MESH = path.join(SRC, 'car-mesh.json');
 
 const log = (m) => console.log('[embed] ' + m);
 
@@ -61,6 +69,9 @@ function check() {
     if (head.toString('ascii', 0, 4) !== 'RIFF' || head.toString('ascii', 8, 12) !== 'WEBP') fails.push(`${a.key}: не WebP`);
   }
   if (!/data-fingerprint="[0-9a-f]{64}"/.test(block)) fails.push('у блока нет data-fingerprint');
+  const tpl = block.match(/<template id="car-mesh">([^<]*)<\/template>/);
+  if (!tpl) fails.push('нет модели кузова <template id="car-mesh">');
+  else { try { const d = JSON.parse(tpl[1]); if (!d.v || !d.f || !d.f.length) fails.push('модель кузова пустая'); } catch { fails.push('модель кузова — не JSON'); } }
   log(`index.html ${(size / 1048576).toFixed(2)} МБ, бюджет ${(BUDGET / 1048576).toFixed(1)} МБ, блок ${(block.length / 1048576).toFixed(2)} МБ`);
   if (size > BUDGET) fails.push(`страница ${(size / 1048576).toFixed(2)} МБ больше бюджета`);
   for (const f of fails) console.error('ПРОВАЛ: ' + f);
@@ -90,6 +101,11 @@ function build() {
     lines.push(`<img data-asset="${a.key}" alt="" src="data:image/webp;base64,${buf.toString('base64')}">`);
     log(`${a.key}: ${(fs.statSync(file).size / 1024).toFixed(0)} КБ PNG → ${(buf.length / 1024).toFixed(0)} КБ WebP q${a.q}`);
   }
+  if (!fs.existsSync(CAR_MESH)) throw new Error('нет build/assets/car-mesh.json — сначала python3 tools/blender/export-exterior.py');
+  const mesh = JSON.parse(fs.readFileSync(CAR_MESH, 'utf8'));
+  if (mesh.fingerprint !== stamp.fingerprint) throw new Error('модель кузова собрана на других константах — export-exterior.py заново');
+  lines.push(`<template id="car-mesh">${JSON.stringify(mesh)}</template>`);
+  log(`car-mesh: ${mesh.f.length} граней, ${(JSON.stringify(mesh).length / 1024).toFixed(0)} КБ`);
   const block = [BEGIN,
     `<div id="assets" hidden data-fingerprint="${stamp.fingerprint}" data-baked="${stamp.baked}" data-cube='${JSON.stringify(cube)}'>`,
     ...lines, '</div>', END].join('\n');

@@ -19,6 +19,7 @@ from mathutils.bvhtree import BVHTree
 
 sys.path.insert(0, __import__('os').path.dirname(__file__))
 from common import BUILD, G, Gv, ROOT, cube_camera, load_consts, log, script_args, setup_cycles  # noqa: E402
+import exterior  # noqa: E402
 
 ARGS = script_args()
 DATA = load_consts()
@@ -517,6 +518,26 @@ def area_light(name, size, size_y, energy, at, target):
     ob.rotation_euler = (Gv(target) - ob.location).to_track_quat('-Z', 'Y').to_euler()
 
 
+def build_exterior():
+    """Кузов снаружи — в сцене только посмотреть: из рендера куба он исключён (hide_render), иначе
+    капот и крыша изнутри закрыли бы окна. В игру его выгружает export-exterior.py из того же
+    exterior.py, и та же проверка следа и линий взгляда стоит там."""
+    m, sts, hull = exterior.build(C)
+    fails, summ = exterior.check(m, hull, C)
+    if fails:
+        raise SystemExit('ПРОВАЛ кузов: ' + '; '.join(fails))
+    me = bpy.data.meshes.new('exterior')
+    me.from_pydata([Gv(v) for v in m.v], [], [f['i'] for f in m.f])
+    me.validate()
+    ob = bpy.data.objects.new('exterior', me)
+    coll = bpy.data.collections.new('exterior')
+    bpy.context.scene.collection.children.link(coll)
+    coll.objects.link(ob)
+    ob.hide_render = True
+    log(f"кузов: сечений {len(sts)}, граней {summ['faces']}, след ±{summ['dev_cm']} см от CAR_HULL, "
+        f"над линией взгляда перёд {summ['over_front']}°, зад {summ['over_rear']}° (из рендера исключён)")
+
+
 def build_lights():
     """Дневной свет без солнца: солнце дало бы тени, которые не двигаются с курсом машины (в игре
     свет салона идёт от лобового, cabinLight). Окружение — небо сверху и тёмная земля снизу, свет
@@ -729,6 +750,9 @@ def main():
     check_live(bvh, tunnel_top)
     bm.free()
     check_headrests()
+    # кузов — после проверок обзора: лучи из глаза изнутри упирались бы в его стойки, а в игре
+    # грани кузова изнутри отсекаются по нормали
+    build_exterior()
     polys = sum(len(o.data.polygons) for o in BAKED)
     bpy.context.scene['consts_fingerprint'] = DATA['fingerprint']
     BUILD.mkdir(parents=True, exist_ok=True)
