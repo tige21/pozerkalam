@@ -202,6 +202,16 @@ button.ghost{background:transparent;border-color:rgba(255,255,255,.16);color:#b9
 #overlay .winfb{margin-top:10px}
 #overlay button.linkbtn{margin:0;padding:4px 0;border:0;background:none;color:#93a7bd;
   font-size:12.5px;font-weight:500;text-decoration:underline}
+/* вход: две тихие кнопки под главной — «Поехали» остаётся единственной громкой, гость просто едет */
+#overlay .acct{margin:14px 0 6px}
+#overlay .acctlead{margin:0 0 8px;font-size:13.5px;color:#c3d2e2}
+#overlay .acctbtns{display:flex;flex-wrap:wrap;gap:8px}
+#overlay .acctbtns button{margin:0}
+#overlay .legal{margin:8px 0 0;font-size:12px;color:#7f93a8}
+#overlay .legal a,#overlay a.authlink{color:#9fd0ff;text-decoration:underline}
+#overlay .acctline{font-size:13.5px;color:#c3d2e2}
+#overlay .acctnote{margin:12px 0 0;font-size:13px;color:#ffd27a}
+#overlay a.authlink{display:inline-block;margin-top:6px;font-size:16px;font-weight:600}
 /* коробка выбирается парой сегментов, а не кнопкой-переключателем: надпись «Коробка: автомат»
    читается как статус, и владелец не нашёл, чем её сменить */
 .gbrow{display:flex;align-items:center;gap:12px;margin:18px 0 0;flex-wrap:wrap}
@@ -428,6 +438,10 @@ body.compact #overlay .winacts button{margin:0;padding:12px 8px;font-size:14.5px
 body.compact #overlay .nextgo{gap:4px;max-width:none}
 body.compact #overlay .nextname{font-size:12px;text-align:center}
 body.compact #overlay button.linkbtn{width:auto;margin:0;padding:4px 0;font-size:12.5px}
+/* на телефоне кнопки входа — пара в один ряд: столбиком во всю ширину они сталкивали подсказку за край */
+body.compact #overlay .acctbtns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+body.compact #overlay .acctbtns button{width:auto;margin:0;padding:11px 6px;font-size:14px}
+body.compact #overlay .acct{margin:10px 0 12px}
 /* iOS зумит страницу при фокусе в поле мельче 16px */
 body.compact #overlay .fbfield{font-size:16px}
 /* в салоне HUD прижимается к нижней кромке, чтобы не закрывать руль и приборку */
@@ -8911,6 +8925,322 @@ $('coach').addEventListener('click', e=>{
   if(e.target.closest('.cq') || document.body.classList.contains('compact')) coachWhyToggle();
 });
 
+/* ---------- аккаунт ---------- */
+/* Вход через VK ID и Яндекс ID и синк прогресса — server/account.py за nginx (/api/v1/).
+   Адрес абсолютный, как у отзывов: гейты открывают игру с file:// и мокают ровно его.
+   Включается списком window.AUTH_PROVIDERS, который вставляет только веб-деплой: без него
+   нет ни кнопок, ни одного запроса — локально, в гейтах, в билде ЯИ и на старом зеркале.
+   Ключи хранилища — pz_*, никогда trainer_*: адаптер ЯИ зеркалит trainer_* в облако площадки,
+   и refresh-токен уехал бы туда. Access живёт только в памяти */
+const API='https://pozerkalam.space/api/v1';
+/* порядок задан законом, а не деплоем: VK ID → Яндекс ID, как в spark (149-ФЗ ст. 10.6) */
+const AUTH_PROVIDERS=Array.isArray(window.AUTH_PROVIDERS)
+  ? ['vk','yandex'].filter(p=>window.AUTH_PROVIDERS.indexOf(p)>=0) : [];
+const AUTH_ON=AUTH_PROVIDERS.length>0;
+const AUTH_NAMES={vk:'VK ID', yandex:'Яндекс ID'};
+const AUTH_KEY='pz_auth';
+let acct=null, acctRefresh='', acctAccess='', acctAccessExp=0, acctNote='', acctBack='';
+let authWait=null, authRefreshing=null;
+function authRead(){
+  try{ const a=JSON.parse(localStorage.getItem(AUTH_KEY)||'null');
+    if(a && typeof a.refresh==='string' && a.acct && typeof a.acct.id==='string') return a; }catch(e){}
+  return null;
+}
+if(AUTH_ON){ const a=authRead(); if(a){ acct=a.acct; acct.ent=Array.isArray(acct.ent)?acct.ent:[]; acctRefresh=a.refresh; } }
+function authSave(){
+  try{ localStorage.setItem(AUTH_KEY, JSON.stringify({refresh:acctRefresh, acct:acct})); }catch(e){}
+}
+function b64url(bytes){
+  let s=''; for(let i=0;i<bytes.length;i++) s+=String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+async function apiRaw(path, method, body, opts){
+  opts=opts||{};
+  const h={};
+  if(body!==undefined) h['Content-Type']='application/json';
+  if(opts.auth) h.Authorization='Bearer '+acctAccess;
+  const r=await fetch(API+path, { method:method, headers:h, cache:'no-store', keepalive:!!opts.keepalive,
+    body: body!==undefined ? JSON.stringify(body) : undefined });
+  let j=null; try{ j=await r.json(); }catch(e){}
+  return { status:r.status, json:j||{} };
+}
+/* access просрочен или вот-вот истечёт — сначала refresh; 401 на запросе — один refresh и повтор */
+async function apiFetch(path, method, body, opts){
+  opts=Object.assign({}, opts, {auth:true});
+  if((!acctAccess || Date.now()>acctAccessExp-60e3) && !(await authRefresh())) return { status:401, json:{error:'auth'} };
+  let r=await apiRaw(path, method, body, opts);
+  if(r.status===401 && await authRefresh()) r=await apiRaw(path, method, body, opts);
+  return r;
+}
+function jwtExp(t){
+  try{ const p=JSON.parse(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))); return p.exp*1000; }
+  catch(e){ return Date.now()+3000e3; }
+}
+function authApply(j){
+  acctAccess=j.access||''; acctAccessExp=jwtExp(acctAccess);
+  if(j.refresh) acctRefresh=j.refresh;
+  const a=j.account||{};
+  acct={ id:a.id, name:String(a.name||'').slice(0,64),
+    provider: j.provider || (acct&&acct.provider) || (a.providers||[])[0] || '',
+    ent: Array.isArray(j.entitlements) ? j.entitlements : (acct&&acct.ent)||[] };
+  authSave();
+}
+/* Refresh ротируется, и вкладок может быть две: перед обменом берём самый свежий refresh из
+   хранилища (его могла записать соседняя вкладка), а на 409 «уже обменян» — перечитываем ещё
+   раз. Иначе вкладка с устаревшим refresh через минуту предъявила бы его повторно, и сервер
+   отозвал бы всю сессию как украденную */
+function authRefresh(){
+  if(authRefreshing) return authRefreshing;
+  authRefreshing=(async()=>{
+    try{
+      for(let k=0;k<2;k++){
+        const st=authRead(); if(st) acctRefresh=st.refresh;
+        if(!acctRefresh) return false;
+        const r=await apiRaw('/auth/refresh','POST',{refresh:acctRefresh});
+        if(r.status===200){ authApply(r.json); console.info('[auth] сессия продлена'); return true; }
+        if(r.status===409){ await new Promise(res=>setTimeout(res,300)); continue; }
+        if(r.status===401){ console.warn('[auth] сессия не продлена: '+(r.json.error||r.status));
+          authDrop('Сессия истекла. Войди снова — прогресс на этом устройстве на месте'); }
+        return false;
+      }
+      return false;
+    }catch(e){ console.warn('[auth] refresh: нет связи с сервером'); return false; }
+    finally{ authRefreshing=null; }
+  })();
+  return authRefreshing;
+}
+function authDrop(msg){
+  const was=!!acct;
+  acct=null; acctRefresh=''; acctAccess=''; acctAccessExp=0;
+  try{ localStorage.removeItem(AUTH_KEY); }catch(e){}
+  if(was) anClear();
+  if(msg){ acctNote=msg; toast(msg, 3.5); }
+  acctRerender();
+}
+/* редирект — только в окне верхнего уровня: в iframe VK/Telegram площадка не пускает на
+   id.vk.ru, а iOS-PWA открывает внешний адрес в отдельном листе Safari со своим sessionStorage,
+   и nonce после возврата не нашёлся бы. Там вход идёт во вкладке, игра опрашивает сервер */
+function authMode(){ return (anFramed() || anPlatform()==='pwa') ? 'poll' : 'redirect'; }
+async function authStart(provider){
+  if(!AUTH_ON || AUTH_PROVIDERS.indexOf(provider)<0 || authWait) return;
+  const nonce=b64url(crypto.getRandomValues(new Uint8Array(32)));
+  const mode=authMode();
+  const back=ovCard.innerHTML, backOpen=ovEl.style.display!=='none';
+  try{ sessionStorage.setItem('pz_nonce', nonce); sessionStorage.setItem('pz_ret', JSON.stringify({li:game.li})); }catch(e){}
+  acctNote='';
+  track('auth_start', {provider:provider, mode:mode});
+  console.info('[auth] вход: '+provider+', режим '+mode);
+  /* окно открывается синхронно в обработчике нажатия: после await блокировщик всплывающих окон
+     его уже не пропустит, адрес вписывается, когда сервер его выдаст */
+  let win=null;
+  if(mode==='poll'){ try{ win=window.open('', '_blank'); }catch(e){ win=null; } }
+  let r;
+  try{ r=await apiRaw('/auth/start','POST',{provider:provider, mode:mode, nonce:nonce}); }
+  catch(e){ r={status:0, json:{}}; }
+  if(r.status!==200 || !r.json.authUrl){
+    if(win) try{ win.close(); }catch(e){}
+    authFail(provider, r.status===429 ? 'rate' : r.status===0 ? 'net' : 'start');
+    return; }
+  if(mode==='redirect'){ location.assign(r.json.authUrl); return; }
+  if(win){ try{ win.location.href=r.json.authUrl; }catch(e){ win=null; } }
+  authWait={ provider:provider, sid:r.json.sid, nonce:nonce, url:r.json.authUrl, win:win, t0:Date.now(),
+    timer:0, back:back, backOpen:backOpen };
+  showOv(authWaitHTML());
+  authPollTick();
+}
+function authWaitHTML(){
+  const w=authWait, nm=AUTH_NAMES[w.provider];
+  return '<h1>Вход через '+nm+'</h1>'
+    +(w.win ? '<p>Подтверди вход в новой вкладке и вернись сюда.</p>'
+            : '<p>Браузер не открыл вкладку. Нажми «Открыть вход», подтверди и вернись сюда.</p>'
+              +'<p><a class="authlink" href="'+esc(w.url)+'" target="_blank" rel="noopener">Открыть вход</a></p>')
+    +'<button data-act="auth-cancel" class="ghost">Отмена</button>';
+}
+async function authPollTick(){
+  const w=authWait; if(!w) return;
+  clearTimeout(w.timer);
+  if(Date.now()-w.t0>300e3){ authWaitEnd(); authFail(w.provider,'timeout'); return; }
+  let r;
+  try{ r=await apiRaw('/auth/claim','POST',{sid:w.sid, nonce:w.nonce}); }catch(e){ r={status:0, json:{}}; }
+  if(authWait!==w) return;   /* отменили, пока ждали ответ */
+  if(r.status===0 || (r.status===200 && r.json.status==='pending')){ w.timer=setTimeout(authPollTick, r.status?2000:3000); return; }
+  authWaitEnd();
+  if(w.win) try{ w.win.close(); }catch(e){}
+  authClaimed(w.provider, r);
+}
+function authWaitEnd(){
+  const w=authWait; if(!w) return;
+  clearTimeout(w.timer); authWait=null;
+  if(w.backOpen) showOv(w.back); else hideOv();
+}
+/* игрок вернулся из вкладки входа — спросить сразу, не дожидаясь двух секунд таймера */
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState==='visible' && authWait) authPollTick();
+  if(document.visibilityState==='hidden' && syncDirty) syncNow('hide', true);
+});
+function authClaimed(provider, r){
+  const j=r.json||{};
+  if(r.status===200 && j.status==='ok' && j.account && j.account.id){
+    authApply(j);
+    console.info('[auth] вход выполнен: '+acct.provider+(j.is_new?', новый аккаунт':''));
+    track('auth_ok', {provider:acct.provider||provider, is_new:!!j.is_new});
+    anIdentify(acct.id);
+    acctNote='';
+    toast('Вход выполнен: '+acct.name, 3);
+    acctRerender();
+    syncNow('login');
+    return true;
+  }
+  authFail(provider, j.status==='failed' ? (j.reason||'provider')
+    : r.status===410||r.status===404 ? 'expired' : r.status===403 ? 'forbidden' : r.status===0 ? 'net' : 'claim');
+  return false;
+}
+const AUTH_FAIL_TEXT={ denied:'Вход отменён.', expired:'Ссылка входа устарела. Попробуй ещё раз.',
+  timeout:'За 5 минут вход не подтвердился. Попробуй ещё раз.',
+  rate:'Слишком много попыток входа. Подожди пару минут.',
+  net:'Нет связи с сервером. Прогресс сохранён на этом устройстве.' };
+function authFail(provider, reason){
+  console.warn('[auth] вход не выполнен: '+provider+' — '+reason);
+  track('auth_fail', {provider:provider, reason:reason});
+  acctNote=AUTH_FAIL_TEXT[reason]||'Не получилось войти. Попробуй ещё раз.';
+  toast(acctNote, 3.5);
+  acctRerender();
+}
+async function authLogout(){
+  const rt=acctRefresh;
+  console.info('[auth] выход');
+  track('logout', {provider:acct&&acct.provider});
+  authDrop('');
+  acctNote='Выход выполнен. Прогресс на этом устройстве остался.';
+  acctRerender();
+  if(rt) try{ await apiRaw('/auth/logout','POST',{refresh:rt}); }catch(e){}
+}
+async function authDelete(){
+  let r;
+  try{ r=await apiFetch('/me','DELETE'); }catch(e){ r={status:0, json:{}}; }
+  if(r.status!==200){
+    console.warn('[auth] удаление аккаунта не прошло: '+r.status);
+    acctNote='Удалить не получилось: нет связи с сервером. Попробуй позже.';
+    showOv(startHTML()); return; }
+  console.info('[auth] аккаунт удалён');
+  track('account_delete', {});
+  authDrop('');
+  acctNote='Аккаунт удалён. Прогресс на этом устройстве остался.';
+  showOv(startHTML());
+}
+async function authMe(){
+  let r;
+  try{ r=await apiFetch('/me','GET'); }catch(e){ return; }
+  if(r.status!==200 || !r.json.account) return;
+  acct.name=String(r.json.account.name||'').slice(0,64);
+  acct.ent=Array.isArray(r.json.entitlements)?r.json.entitlements:[];
+  authSave();
+  acctRerender();
+}
+/* Возврат с редиректа: #auth=<sid>. Hash снимается до любого ожидания — sid без nonce
+   бесполезен, но в адресной строке и в аналитике ему делать нечего */
+async function authBoot(){
+  if(!AUTH_ON) return;
+  const m=/^#auth=([A-Za-z0-9_-]{20,})$/.exec(location.hash);
+  if(!m){ if(acct){ authMe(); syncNow('boot'); } return; }
+  try{ history.replaceState(null, '', location.pathname+location.search); }catch(e){}
+  let nonce='', ret=null;
+  try{ nonce=sessionStorage.getItem('pz_nonce')||''; ret=JSON.parse(sessionStorage.getItem('pz_ret')||'null');
+       sessionStorage.removeItem('pz_nonce'); sessionStorage.removeItem('pz_ret'); }catch(e){}
+  if(!nonce){ authFail('?','expired'); return; }
+  let r;
+  try{ r=await apiRaw('/auth/claim','POST',{sid:m[1], nonce:nonce}); }catch(e){ r={status:0, json:{}}; }
+  const ok=authClaimed(r.json.provider||'?', r);
+  /* уровень, с которого уходили на вход: грузится за стартовым экраном, «Поехали» продолжит его */
+  if(ok && ret && ret.li>0 && ret.li<LEVELS.length){
+    loadLevel(ret.li);
+    showOv(startHTML()); }
+}
+
+/* синк прогресса: слияние делает сервер (server/account.py merge), клиент отдаёт свой
+   trainer_progress целиком и кладёт итог обратно. Перенос гостевого прогресса при входе —
+   тот же PUT */
+let syncTimer=0, syncDirty=false, syncBusy=false, syncWarned=false;
+function syncSoon(){
+  if(!acct) return;
+  syncDirty=true; clearTimeout(syncTimer);
+  syncTimer=setTimeout(()=>syncNow('progress'), 5000);
+}
+async function syncNow(why, keepalive){
+  if(!acct || syncBusy) return;
+  clearTimeout(syncTimer);
+  syncBusy=true; syncDirty=false;
+  let sent=null; try{ sent=localStorage.getItem(PROG_KEY); }catch(e){}
+  const local=progAll();
+  try{
+    const r=await apiFetch('/progress','PUT',{data:local},{keepalive:!!keepalive});
+    if(r.status===200 && r.json.data && typeof r.json.data==='object' && !Array.isArray(r.json.data)){
+      let cur=null; try{ cur=localStorage.getItem(PROG_KEY); }catch(e){}
+      /* пока ответ шёл, игрок мог пройти уровень: тогда итог сервера не содержит свежей записи,
+         и класть его поверх нельзя — отправим ещё раз, сервер сольёт */
+      if(cur!==sent){ syncSoon(); return; }
+      try{ localStorage.setItem(PROG_KEY, JSON.stringify(r.json.data)); }catch(e){}
+      console.info('[sync] '+why+': уровней '+Object.keys(local).length+' → '+Object.keys(r.json.data).length+', rev '+r.json.rev);
+      acctRerender();
+    } else if(r.status!==401){ syncFail(why, 'http '+r.status); }
+  }catch(e){ syncFail(why, 'net'); }
+  finally{ syncBusy=false; }
+}
+function syncFail(why, reason){
+  syncDirty=true;
+  console.warn('[sync] '+why+': не отправлен — '+reason);
+  if(!syncWarned){ syncWarned=true; track('sync_fail', {reason:reason}); }
+}
+
+/* --- экраны --- */
+function acctBtnsHTML(lead){
+  return '<div class="acct"><p class="acctlead">'+lead+'</p><div class="acctbtns">'
+    +AUTH_PROVIDERS.map(p=>'<button data-act="auth:'+p+'" class="ghost">Войти через '+AUTH_NAMES[p]+'</button>').join('')
+    +'</div><p class="legal">Входя, ты принимаешь '
+    +'<a href="/privacy/" target="_blank" rel="noopener">политику конфиденциальности</a>.</p></div>';
+}
+function acctLineHTML(){
+  return '<p class="acct acctline">Аккаунт: <b>'+esc(acct.name||AUTH_NAMES[acct.provider]||'без имени')+'</b>'
+    +(acct.provider?' ('+AUTH_NAMES[acct.provider]+')':'')
+    +' · <button data-act="auth-logout" class="linkbtn">Выйти</button>'
+    +' · <button data-act="auth-delete" class="linkbtn">Удалить аккаунт</button></p>';
+}
+function acctNoteHTML(){ return acctNote ? '<p class="acctnote">'+esc(acctNote)+'</p>' : ''; }
+function acctStartHTML(){
+  if(!AUTH_ON) return '';
+  return acctNoteHTML() + (acct ? acctLineHTML() : acctBtnsHTML('Войди, и прогресс будет на телефоне и на компьютере.'));
+}
+function acctPickHTML(){
+  if(!AUTH_ON) return '';
+  return acctNoteHTML() + (acct ? acctLineHTML() : acctBtnsHTML('Войди, чтобы прогресс не потерялся при смене устройства.'));
+}
+/* после первой победы гостя — один раз и больше никогда: напоминание на каждом экране итогов
+   превратилось бы в рекламу поверх результата */
+function acctNudgeHTML(){
+  if(!AUTH_ON || acct) return '';
+  try{ if(localStorage.getItem('pz_nudge')==='1') return ''; localStorage.setItem('pz_nudge','1'); }catch(e){ return ''; }
+  return acctBtnsHTML('Войди, чтобы этот результат был и на другом устройстве.');
+}
+function acctDeleteHTML(){
+  return '<h1>Удалить аккаунт?</h1>'
+    +'<p>С сервера удалятся аккаунт и прогресс. На этом устройстве прогресс останется.</p>'
+    +'<button data-act="auth-delete-yes">Удалить</button>'
+    +'<button data-act="auth-delete-no" class="ghost">Назад</button>';
+}
+/* открытый экран показывает состояние входа — перерисовать его, если он сейчас на экране */
+function acctRerender(){
+  if(ovEl.style.display==='none' || authWait) return;
+  if(ovCard.querySelector('.lvgrid')) showOv(levelPickHTML());
+  else if(ovCard.querySelector('[data-act="start"]')) showOv(startHTML());
+  else {
+    /* итоги уровня целиком не перерисовываются (их держит game.done) — меняется только слот входа */
+    const slot=ovCard.querySelector('.acctslot');
+    if(!slot) return;
+    slot.innerHTML=acctNoteHTML()+(acct?acctLineHTML():'');
+    slot.querySelectorAll('button[data-act]').forEach(b=> b.onclick=()=>doAct(b.dataset.act));
+  }
+}
+
 /* ---------- оверлеи ---------- */
 const ovEl=$('overlay'), ovCard=$('ovCard');
 let helpOpen=false;
@@ -9108,6 +9438,12 @@ function doAct(a){
     showOv(exam&&exam.done ? (exam.failed?examFailHTML():examPassHTML())
          : (attempt&&attempt.failed) ? levelFailHTML() : winHTML()); return; }
   if(a==='pick'){ helpOpen=false; showLevelPick(); return; }
+  if(a.indexOf('auth:')===0){ authStart(a.slice(5)); return; }
+  if(a==='auth-cancel'){ const w=authWait; authWaitEnd(); if(w) console.info('[auth] вход отменён игроком'); return; }
+  if(a==='auth-logout'){ authLogout(); return; }
+  if(a==='auth-delete'){ acctBack=ovCard.innerHTML; showOv(acctDeleteHTML()); return; }
+  if(a==='auth-delete-no'){ showOv(acctBack||startHTML()); return; }
+  if(a==='auth-delete-yes'){ authDelete(); return; }
   /* «прервать» обязано выводить ИЗ экзамена. Раньше кнопка вела в 'again': маршрут
      начинался заново, игрок оставался в экзамене — со стороны это выглядело как
      «нажал прервать, ничего не произошло» */
@@ -9171,7 +9507,7 @@ function ctrlHTML(){ return ''
   +'</ul></div>'; }
 /* уровней больше девяти, цифрами уже не покрыть — отдельный экран с карточками */
 function levelPickHTML(){
-  let s='<h1>Выбор уровня</h1>'+readinessHTML()+'<div class="lvgrid">';
+  let s='<h1>Выбор уровня</h1>'+acctPickHTML()+readinessHTML()+'<div class="lvgrid">';
   let drillHead=false, cityHead=false;
   /* «слабое место» подсвечивается только когда есть с чем сравнивать (при 0 % горели 12 карточек из 32)
      и только у трёх уровней, которые названы в строке готовности: весь хвост слабых — это 13–15 карточек,
@@ -9218,6 +9554,7 @@ function startHTML(){
     +'<h1>По зеркалам</h1>'
     +'<p style="margin:-4px 0 10px;color:#93a7bd">тренажёр манёвров и подготовки к экзамену</p>'
     +'<button data-act="start">Поехали</button>'
+    +acctStartHTML()
     +'<p>Держи телефон горизонтально. Карточка сверху ведёт манёвр: действие + до какого показания. '
     +'Оранжевые стойки показывают, где реально габариты машины. '
     +'Линии траекторий (дуги колёс, путь демо) — в меню, если захочется подсмотреть.</p>'
@@ -9232,6 +9569,7 @@ function startHTML(){
   +'<h1>По зеркалам</h1>'
   +'<p style="margin:-4px 0 10px;color:#93a7bd">тренажёр манёвров и подготовки к экзамену</p>'
   +'<button data-act="start">Поехали</button>'
+  +acctStartHTML()
   +readinessHTML()
   +'<ul class="startlist" style="text-align:left">'
   +'<li><b>Едешь так:</b> <span class="kbd">W</span> газ, <span class="kbd">S</span>/пробел тормоз, '
@@ -9321,6 +9659,7 @@ function winActsHTML(){
     +'<button data-act="again" class="ghost">Заново'+(MOB?'':' (R)')+'</button>'
     +'<span class="nextgo"><button data-act="next">Следующий уровень'+(MOB?'':' (N)')+'</button>'
     +'<span class="nextname">'+(nx.custom?'★ ':'')+esc(nx.name)+'</span></span></div>'
+    +'<div class="acctslot">'+acctNudgeHTML()+'</div>'
     +'<p class="winfb"><button data-act="feedback:win" class="linkbtn">✉︎ Что-то не так — написать</button></p>'; }
 function toggleHelp(){
   if(helpOpen){ hideOv(); return; }
@@ -10076,6 +10415,7 @@ function progAdd(name, t, hits, err, blind){
   }
   a[name]=p;
   try{ localStorage.setItem(PROG_KEY, JSON.stringify(a)); }catch(e){}
+  syncSoon();
   return p;
 }
 function progLine(name){
@@ -10120,6 +10460,7 @@ function progExam(passed){
   }
   a[name]=p;
   try{ localStorage.setItem(PROG_KEY, JSON.stringify(a)); }catch(e){}
+  syncSoon();
   return p;
 }
 /* «готов» = сдан в НАСТОЯЩЕМ режиме на каждом из трёх маршрутов: три сдачи одного
@@ -10626,6 +10967,12 @@ function buildMenu(){
   add('Что делают кнопки', ()=>{ closeMenu(); setTimeout(showTouchHelp,120); });
   add('Справка и правила', ()=>{ closeMenu(); pressKey('KeyH'); });
   add('✉︎ Сообщить об ошибке', ()=>{ closeMenu(); doAct('feedback:menu'); });
+  if(AUTH_ON){
+    h('Аккаунт');
+    if(acct){ add('Выйти из аккаунта', ()=>{ closeMenu(); authLogout(); showOv(startHTML()); });
+      add('Удалить аккаунт', ()=>{ closeMenu(); acctBack=''; showOv(acctDeleteHTML()); }); }
+    else AUTH_PROVIDERS.forEach(p=> add('Войти через '+AUTH_NAMES[p], ()=>{ closeMenu(); authStart(p); }));
+  }
   h('Уровень');
   add('Выбрать уровень…', ()=>{ closeMenu(); showLevelPick(); });
   add('Редактор площадок', ()=>{ closeMenu(); openEditor(editorSource()); });
@@ -10910,7 +11257,10 @@ loadLevel(0);
 showOv(startHTML());
 requestAnimationFrame(frame);
 track('app_open', Object.assign({ platform:anPlatform(), framed:anFramed(), mob:MOB,
-  lang:(navigator.language||'').slice(0,8), runs:runsCnt, build:window.BUILD||'dev' }, anSource()));
+  lang:(navigator.language||'').slice(0,8), runs:runsCnt, build:window.BUILD||'dev',
+  account: AUTH_ON ? (acct?1:0) : null, provider: acct ? acct.provider : null }, anSource()));
+if(acct) anIdentify(acct.id);
+authBoot();
 /* PWA: офлайн и мгновенный повторный вход; с file:// и без https молча пропускается */
 /* .catch обязателен: на file:// (и в любом origin без https) регистрация отвергается,
    и без обработчика это всплывает как Uncaught (in promise) в консоли игрока */
