@@ -7,11 +7,11 @@
 
 **Состояние на 03.10.2026:** сервис развёрнут на vdsina и зеркале (build `a96080e0a5ad6805`).
 Приложения заведены: VK ID `54801931`, Яндекс ClientID `3cd6ae5b005b486687f09ca27592264b` — оба в
-`/etc/pozerkalam-account.env`, `/api/v1/health` → `vk:true, yandex:false`. Ждёт: `YANDEX_CLIENT_SECRET`
-на боксе и `/privacy/` (доска #180); до этого кнопок входа в игре нет (`AUTH_PROVIDERS` пуст).
+`/etc/pozerkalam-account.env` вместе с секретом Яндекса, `/api/v1/health` → `vk:true, yandex:true`. Ждёт
+`/privacy/` (доска #180); до неё кнопок входа в игре нет (`AUTH_PROVIDERS` пуст).
 Проверено без входа в аккаунт: адрес авторизации, который строит сервис, VK принимает (302 на свою
 страницу входа; фальшивый ID даёт страницу ошибки), Яндекс на этот ClientID отвечает «Wrong client
-secret», на фальшивый — «Client not found».
+secret», на фальшивый — «Client not found»; с секретом — «Code has expired» (пара ClientID + секрет принята).
 
 ## Схема
 
