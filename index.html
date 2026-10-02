@@ -2624,6 +2624,22 @@ function emitCarModel(u,v,th,col,lit,body,style){
   }
 }
 carModelLoad();
+/* картинки мира: трамвай (перёд, кусок борта у кабины, середина) и панорама неба; без картинки —
+   прежние коробки трамвая и градиент неба, одно предупреждение на картинку */
+const worldImg={};
+function worldImgLoad(){
+  const root=document.getElementById('assets'); if(!root) return;
+  for(const k of ['tram-front','tram-side-end','tram-side-mid','sky-pano']){
+    const img=root.querySelector('img[data-asset="'+k+'"]');
+    if(!img){ console.warn('[assets] '+k+': нет картинки — рисуется прежний вид'); continue; }
+    img.decode().then(()=>{ worldImg[k]=img;
+      /* цвет над картинкой неба — её верхний ряд: при взгляде вверх выше панорамы */
+      if(k==='sky-pano'){ const c=document.createElement('canvas'); c.width=1; c.height=1; const g=c.getContext('2d');
+        g.drawImage(img,0,0,img.naturalWidth,4,0,0,1,1); const d=g.getImageData(0,0,1,1).data; worldImg.skyTop='rgb('+d[0]+','+d[1]+','+d[2]+')'; }
+    }).catch(()=>console.warn('[assets] '+k+': не распаковалась — рисуется прежний вид'));
+  }
+}
+worldImgLoad();
 function emitCarMesh(u, v, th, col, st, lights, look){
   const f=fuv(th), r=ruv(th), a=ackermann(st||0), t=CAR.track/2;
   const at=(du,dz)=>({u:u+f.u*dz+r.u*du, v:v+f.v*dz+r.v*du});
@@ -3365,12 +3381,64 @@ function tramCar(u,v,yaw,len,sp,trig){
          u0:u, v0:v, yaw0:o.yaw, rt:actorPath(u, v, [{u:u+f.u*len, v:v+f.v*len}]), s:0, s0:0, flow:false, rail:true};
   return o;
 }
+/* борт трамвая — три куска по трети длины: торец с кабиной, середина, торец зеркально; высота у
+   обоих кусков одна, полосы ливреи у картинок совпадают по долям высоты (бриф world-assets).
+   Коробку боков не рисуем: картинки и есть борт, а сплошная грань длиной 14 м сортировалась бы по
+   центру и закрашивала дальний кусок. Основа граней прозрачная — скругление кабины на картинке
+   остаётся вырезом в силуэте */
+const TRAM_SIDE_Y=[0.40, 2.82];
+/* профиль носа кабины — снят с картинки борта (первый непрозрачный столбец по высоте): высота и
+   отступ от торца. Плоский перёд на самом торце в косом ракурсе стоял отдельной коробкой, а за ним
+   в прозрачном скруглении картинки борта была видна земля */
+const TRAM_NOSE=[[0.30,0.00],[1.13,0.05],[2.09,0.36],[2.82,0.80]];
+/* доля высоты картинки переда над кузовом — база пантографа; на торец она не ложится */
+const TRAM_FRONT_TOP=0.06;
+const imgCuts=new WeakMap();
+function sliceImg(img, u0, v0, u1, v1){
+  let m=imgCuts.get(img); if(!m){ m=new Map(); imgCuts.set(img,m); }
+  const k=u0+','+v0+','+u1+','+v1; let c=m.get(k);
+  if(!c){ const W=img.naturalWidth||img.width, H=img.naturalHeight||img.height;
+    c=document.createElement('canvas'); c.width=Math.max(1,Math.round((u1-u0)*W)); c.height=Math.max(1,Math.round((v1-v0)*H));
+    c.getContext('2d').drawImage(img,u0*W,v0*H,(u1-u0)*W,(v1-v0)*H,0,0,c.width,c.height); m.set(k,c); }
+  return c;
+}
+function emitTramPictured(o, P, R, F){
+  const HW=TRAM_W/2, HL=TRAM_L/2, t=HL/3, [y0,y1]=TRAM_SIDE_Y;
+  const end=worldImg['tram-side-end'], mid=worldImg['tram-side-mid'], front=worldImg['tram-front'];
+  for(const sd of [-1,1]){
+    const n={x:R.x*sd, y:0, z:R.z*sd}, lat=sd*(HW+0.004);
+    /* левый край картинки — к кабине; снаружи справа нос (+z) слева от зрителя, слева — справа */
+    for(const [za,zb,img] of [[HL,t,end],[-HL,-t,end],[sd*t,-sd*t,mid]])
+      pushFace([P(lat,y1,za), P(lat,y1,zb), P(lat,y0,zb), P(lat,y0,za)], n, CM_CLEAR, 0.03, {img});
+  }
+  const fy0=TRAM_NOSE[0][0], fy1=TRAM_NOSE[TRAM_NOSE.length-1][0];
+  const vOf=(y)=>TRAM_FRONT_TOP+(fy1-y)/(fy1-fy0)*(1-TRAM_FRONT_TOP);
+  for(const sd of [-1,1]){
+    for(let i=0;i+1<TRAM_NOSE.length;i++){
+      const [ya,da]=TRAM_NOSE[i], [yb,db]=TRAM_NOSE[i+1], za=sd*(HL-da+0.004), zb=sd*(HL-db+0.004);
+      const nl=Math.hypot(yb-ya, db-da)||1;
+      const nz=(yb-ya)/nl, nyy=(db-da)/nl, n={x:F.x*sd*nz, y:nyy, z:F.z*sd*nz};
+      const img=sliceImg(front, 0, +vOf(yb).toFixed(4), 1, +vOf(ya).toFixed(4));
+      pushFace([P(-sd*HW,yb,zb), P(sd*HW,yb,zb), P(sd*HW,ya,za), P(-sd*HW,ya,za)], n, CM_CLEAR, 0.05, {img});
+    }
+  }
+  /* крыша — между верхними кромками носов: коробкой во всю длину она висела серой полосой над бортом */
+  const zr=HL-TRAM_NOSE[TRAM_NOSE.length-1][1];
+  pushFace([P(-HW,y1,-zr), P(HW,y1,-zr), P(HW,y1,zr), P(-HW,y1,zr)], {x:0,y:1,z:0}, [232,234,236], 0);
+}
 function emitTram(o){
   const u=o.u, v=o.v, yaw=o.yaw, f=fuv(yaw), R=rgt(yaw), F=fwd(yaw), col=o.col;
   const at=(s)=>[u+f.u*s, v+f.v*s];
   const P=(lat,y,z)=>({x:-u+R.x*lat+F.x*z, y, z:v+R.z*lat+F.z*z});
   const HW=TRAM_W/2, HL=TRAM_L/2;
   for(const sgn of [-1,1]){ const c=at(sgn*4.2); pushBox(c[0],0.30,c[1],0.85,0.16,1.15,yaw,[38,40,44]); }
+  if(worldImg['tram-side-end'] && worldImg['tram-side-mid'] && worldImg['tram-front']){
+    emitTramPictured(o, P, R, F);
+    for(const sgn of [-1,1]){ const c=at(sgn*0.55); pushBox(c[0],3.18,c[1],0.02,0.18,0.02,yaw,[40,42,46]); }
+    pushBox(u,3.36,v,0.02,0.02,0.58,yaw,[40,42,46]);
+    pushBox(u,3.38,v,0.55,0.015,0.03,yaw,[40,42,46]);
+    return;
+  }
   pushBox(u,0.74,v,HW,0.32,HL,yaw,col);                     /* нижний пояс 0,42–1,06 */
   pushBox(u,1.55,v,HW-0.02,0.49,HL,yaw,col);                /* оконный пояс: стойки — это его красный между стёклами */
   pushBox(u,2.40,v,HW,0.36,HL,yaw,col);                     /* верхний пояс 2,04–2,76 */
@@ -7735,7 +7803,32 @@ function updateCamera(dt){
 }
 
 /* ---------- сцена ---------- */
+/* небо — панорама: один период картинки — 180° курса (на 360° облака растянулись бы вчетверо по
+   горизонтали; края картинки сведены наплывом в clean.py, и две копии стыкуются без шва). По вертикали
+   картинка сжата в SKY_PANO_SY раза относительно горизонтали: в одном масштабе город у горизонта
+   вставал небоскрёбами в 170 px и читался соседним кварталом, а не дымкой вдали; облака у горизонта
+   и в жизни сплющены перспективой. Низ картинки (город) — на проецированной линии горизонта при
+   любом наклоне камеры; выше картинки — её верхний цвет. На уровне качества ≥ SKY_PANO_Q и без
+   картинки — прежний градиент: на телефоне с программным холстом лишний drawImage на весь экран */
+const SKY_PANO_Q=5, SKY_PANO_SY=0.35;
 function drawSky(){
+  const img=worldImg['sky-pano'];
+  if(img && qLevel<SKY_PANO_Q && drawSkyPano(img)) return;
+  drawSkyGradient();
+}
+function drawSkyPano(img){
+  const f=cam.f, u=cam.u, hl=Math.sqrt(f.x*f.x+f.z*f.z); if(hl<1e-3) return false;
+  const dx=f.x/hl, dz=f.z/hl, a=dx*f.x+dz*f.z, b=dx*u.x+dz*u.z; if(a<=1e-3) return false;
+  const yh=VP.cy-cam.scale*b/a;
+  const W=img.naturalWidth, H=img.naturalHeight, pxPerRad=W/PI, k=cam.scale/pxPerRad;
+  let h=Math.atan2(-dx, dz)%PI; if(h<0) h+=PI;
+  const tw=W*k, th=H*k*SKY_PANO_SY, x0=VP.cx-h*pxPerRad*k, top=yh-th;
+  ctx.fillStyle=worldImg.skyTop||'#4f7fae'; ctx.fillRect(VP.x,VP.y,VP.w,Math.max(0,top-VP.y+1));
+  for(let x=x0-Math.ceil((x0-VP.x)/tw)*tw; x<VP.x+VP.w; x+=tw) ctx.drawImage(img, x, top, tw+0.5, th);
+  if(yh<VP.y+VP.h){ ctx.fillStyle='#c3d4e2'; ctx.fillRect(VP.x,yh,VP.w,VP.y+VP.h-yh); }
+  return true;
+}
+function drawSkyGradient(){
   const g=ctx.createLinearGradient(0,VP.y,0,VP.y+VP.h*0.75);
   g.addColorStop(0,'#4f7fae'); g.addColorStop(0.55,'#8fb3d2'); g.addColorStop(1,'#c3d4e2');
   ctx.fillStyle=g; ctx.fillRect(VP.x,VP.y,VP.w,VP.h);
