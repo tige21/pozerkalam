@@ -1,0 +1,8 @@
+#!/bin/sh
+# Обслуживание сервиса аккаунтов на боксе:
+#   pz-account stats | list [--name Егор] | grant <account_id> course [--days 30] | revoke <account_id> course
+# Те же env и база, что у сервиса, и тот же пользователь — иначе root создал бы файлы базы,
+# которые сервис потом не смог бы писать.
+set -a; . /etc/pozerkalam-account.env; set +a
+export STATE_DIRECTORY=/var/lib/pozerkalam-account
+exec runuser -u www-data -- /usr/bin/python3 /opt/pozerkalam-account/account.py "$@"

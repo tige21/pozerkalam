@@ -1,0 +1,9 @@
+#!/bin/sh
+# Ежедневная копия базы аккаунтов (cron.daily). .backup безопасен на живой базе в WAL,
+# простое копирование файла — нет.
+set -e
+DB=/var/lib/pozerkalam-account/account.db
+[ -f "$DB" ] || exit 0
+mkdir -p /root/backups
+sqlite3 "$DB" ".backup /root/backups/pz-account-$(date +%F).db"
+find /root/backups -name 'pz-account-*.db' -mtime +14 -delete

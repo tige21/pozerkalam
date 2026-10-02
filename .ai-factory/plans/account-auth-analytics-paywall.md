@@ -133,7 +133,7 @@ P1 не ждёт P2–P4: аналитика выкатывается перво
 
 ### Фаза 2 · Сервис аккаунтов
 
-- [ ] **T4. `server/account.py`: каркас, схема SQLite, JWT, сессии, `/me`, CLI**
+- [x] **T4. `server/account.py`: каркас, схема SQLite, JWT, сессии, `/me`, CLI**
   Файлы: `server/account.py` (новый), `server/account.env.example` (новый, без секретов).
   - `ThreadingHTTPServer` на `127.0.0.1:${ACCT_PORT:-8788}`, роутинг по `path` и `method`, JSON in/out, тело не больше 128 КБ. Шаблон — `server/feedback.py`.
   - SQLite в `$STATE_DIRECTORY/account.db` (systemd `StateDirectory`; при `ProtectSystem=strict` писать больше некуда), `PRAGMA journal_mode=WAL; foreign_keys=ON`, одно соединение на поток.
@@ -153,7 +153,7 @@ P1 не ждёт P2–P4: аналитика выкатывается перво
   - CLI в том же файле: `python3 account.py grant <account_id> <product> [--days N] [--ref X]`, `revoke <account_id> <product>`, `stats` (аккаунты по провайдерам, активные за 7/30 дней, сессии, гранты). Владельцу это нужно сразу: тестеры, пилоты автошкол, ручные возвраты.
   - Логи — по «Правилам логов»; строка `CONFIG:` при старте.
 
-- [ ] **T5. Флоу входа VK ID и Яндекс ID: `start` / `callback` / `claim`** (зависит от T4)
+- [x] **T5. Флоу входа VK ID и Яндекс ID: `start` / `callback` / `claim`** (зависит от T4)
   Файл: `server/account.py`.
   - Клиенты провайдеров с базовыми адресами из env (`VK_BASE=https://id.vk.ru`, `YA_OAUTH_BASE=https://oauth.yandex.ru`, `YA_LOGIN_BASE=https://login.yandex.ru`) — так тест подставит заглушку. Таймаут 10 с. `urllib.request` **без прокси** (`ProxyHandler({})`): сервис не должен унаследовать `HTTPS_PROXY` соседа-приёмника отзывов.
     - VK: authorize `{VK_BASE}/authorize?response_type=code&client_id&redirect_uri&state&code_challenge&code_challenge_method=S256`. Обмен — `POST {VK_BASE}/oauth2/auth` (`grant_type=authorization_code, code, code_verifier, device_id, client_id, redirect_uri, state`), профиль — `POST {VK_BASE}/oauth2/user_info` (`access_token, client_id`) → `user.user_id` (число или строка — как `FlexID` в spark), `first_name`, `last_name`.
@@ -163,18 +163,18 @@ P1 не ждёт P2–P4: аналитика выкатывается перво
   - `POST /auth/claim {sid, nonce}`: нет строки → 404; `sha256(nonce)` не сошёлся → 403 и WARN; `pending` → `{status:'pending'}`; `failed` → строка удаляется, `{status:'failed', reason}`; `authorized` → в одной транзакции строка удаляется и выдаются токены → `{status:'ok', account, access, refresh, entitlements, is_new}`. Повторный claim даёт 404 — токены выдаются ровно один раз.
   - Уборка: строки `oauth_pending` старше 10 мин удаляет фоновый тред раз в 5 мин, сессии с истёкшим `expires_at` — раз в сутки.
 
-- [ ] **T6. Синк прогресса `GET/PUT /progress` со слиянием на сервере** (зависит от T4)
+- [x] **T6. Синк прогресса `GET/PUT /progress` со слиянием на сервере** (зависит от T4)
   Файл: `server/account.py`.
   - `GET /progress` (Bearer) → `{data, rev}`. `PUT /progress {data}`: проверка — объект, не больше 64 КБ, не больше 200 уровней. Ответ — `merge(stored, incoming)` с правилом из «Решений» п. 7, `rev+1`, тело `{data, rev}`.
   - `merge` — чистая функция без I/O, рядом с ней докстринг с правилом и причиной, почему max, а не сумма.
   - Логи: INFO `sync acct=ab12cd levels 12→14 bytes 3.1k rev 7`.
 
-- [ ] **T7. unittest сервиса** (зависит от T4–T6)
+- [x] **T7. unittest сервиса** (зависит от T4–T6)
   Файл: `server/test_account.py` (новый). Запуск: `python3 -m unittest server/test_account.py` из корня, без сети и без зависимостей.
   - Заглушка провайдеров — локальный `ThreadingHTTPServer` на свободном порту, который отвечает как VK и Яндекс и проверяет `code_verifier` против `code_challenge`. Сервис поднимается в треде на временной БД.
   - Случаи: полный путь VK и Яндекс (start → callback → claim → `/me`); неверный nonce → 403; повторный claim → 404; повторный callback — no-op; просроченная строка; `access_denied` → `failed`; провайдер вернул 400 → `failed` и сервис жив; refresh-ротация; повтор старого refresh отзывает семью; logout; `DELETE /me` стирает связки, прогресс и сессии, а платный грант сохраняется обезличенным; `merge` (min для `best*`, max для счётчиков, поэлементно для `routes`, идемпотентность `merge(a, merge(a, b)) == merge(a, b)`, мусор на входе); лимит 429; Bearer с чужой подписью и с истёкшим `exp` → 401; `grant`/`revoke` из CLI видны в `/me`.
 
-- [ ] **T8. Инфраструктура: systemd, nginx прода и зеркала, env, бэкап, деплой и смоук** (зависит от T4–T7)
+- [x] **T8. Инфраструктура: systemd, nginx прода и зеркала, env, бэкап, деплой и смоук** (зависит от T4–T7)
   Файлы: `server/pozerkalam-account.service`, `server/nginx-account.conf`, `server/nginx-account-mirror.conf` (новые), `deploy-pozerkalam.sh`.
   - Unit — копия `pozerkalam-feedback.service` с `StateDirectory=pozerkalam-account`, `EnvironmentFile=/etc/pozerkalam-account.env` и `ExecStart=/usr/bin/python3 /opt/pozerkalam-account/account.py`.
   - nginx прода: `location /api/v1/ { include snippets/pozerkalam-headers.conf; set_real_ip_from 194.5.65.182; real_ip_header X-Real-IP; limit_req zone=acct burst=20 nodelay; client_max_body_size 128k; proxy_pass http://127.0.0.1:8788/; proxy_set_header X-Real-IP $remote_addr; proxy_read_timeout 25s; }`. Зона `acct` (30r/s на IP — поллинг идёт раз в 2 с, грубый барьер от флуда) — в `conf.d/pozerkalam-limits.conf`, рядом с `fb`. CORS нет. Зеркало — `proxy_pass https://83.217.215.66/api/v1/` по шаблону отзывов.

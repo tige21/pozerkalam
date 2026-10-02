@@ -1,0 +1,28 @@
+[Unit]
+Description=Аккаунты «По зеркалам»: вход VK ID / Яндекс ID, синк прогресса, покупки
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+EnvironmentFile=/etc/pozerkalam-account.env
+# база в /var/lib/pozerkalam-account: при ProtectSystem=strict писать больше некуда
+StateDirectory=pozerkalam-account
+StateDirectoryMode=0700
+ExecStart=/usr/bin/python3 /opt/pozerkalam-account/account.py serve
+Restart=always
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

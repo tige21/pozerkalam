@@ -191,6 +191,10 @@ scpr server/nginx-rybbit.conf "$HOST:/etc/nginx/snippets/pozerkalam-rybbit.conf"
 sshr 'grep -q "pozerkalam-rybbit.conf" /etc/nginx/sites-available/pozerkalam.space || \
   sed -i "s|    location / { try_files|    include snippets/pozerkalam-rybbit.conf;\n    location / { try_files|" /etc/nginx/sites-available/pozerkalam.space'
 
+# Зоны лимитов — одним файлом на обе локации: раньше его писал только блок отзывов, и без
+# TG_TOKEN зона acct не появилась бы, а nginx -t упал бы на её использовании.
+sshr "printf 'limit_req_zone \$binary_remote_addr zone=fb:1m rate=6r/m;\nlimit_req_zone \$binary_remote_addr zone=acct:2m rate=10r/s;\n' > /etc/nginx/conf.d/pozerkalam-limits.conf"
+
 echo "==> приёмник отзывов"
 if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
   scpr server/feedback.py "$HOST:/tmp/feedback.py"
@@ -211,7 +215,6 @@ if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
   scpr "$TMPENV" "$HOST:/etc/pozerkalam-feedback.env"
   rm -f "$TMPENV"
   sshr "chown root:root /etc/pozerkalam-feedback.env && chmod 600 /etc/pozerkalam-feedback.env"
-  sshr "printf 'limit_req_zone \$binary_remote_addr zone=fb:1m rate=6r/m;\n' > /etc/nginx/conf.d/pozerkalam-limits.conf"
   sshr 'grep -q "pozerkalam-feedback.conf" /etc/nginx/sites-available/pozerkalam.space || \
     sed -i "s|    location / { try_files|    include snippets/pozerkalam-feedback.conf;\n    location / { try_files|" /etc/nginx/sites-available/pozerkalam.space'
   sshr "systemctl daemon-reload && systemctl enable pozerkalam-feedback >/dev/null 2>&1; systemctl restart pozerkalam-feedback && echo '    сервис перезапущен'"
@@ -221,6 +224,23 @@ if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
 else
   echo "    пропуск: в .deploy.env нет TG_TOKEN/TG_CHAT_ID"
 fi
+
+echo "==> сервис аккаунтов"
+scpr server/account.py "$HOST:/tmp/account.py"
+scpr server/pozerkalam-account.service "$HOST:/etc/systemd/system/pozerkalam-account.service"
+scpr server/nginx-account.conf "$HOST:/etc/nginx/snippets/pozerkalam-account.conf"
+scpr server/pozerkalam-account-backup "$HOST:/etc/cron.daily/pozerkalam-account-backup"
+scpr server/pz-account "$HOST:/usr/local/bin/pz-account"
+sshr "mkdir -p /opt/pozerkalam-account && mv /tmp/account.py /opt/pozerkalam-account/account.py && chmod 755 /etc/cron.daily/pozerkalam-account-backup /usr/local/bin/pz-account"
+# env создаётся один раз и потом не трогается: JWT_SECRET рождается на боксе, ключи провайдеров
+# кладутся руками (docs/ACCOUNT.md) — секрет Яндекса не живёт в .deploy.env на ноутбуке, а
+# перезапись файла разлогинила бы всех игроков сменой секрета.
+sshr 'test -f /etc/pozerkalam-account.env || { umask 077; printf "%s\n" "# ключи провайдеров — руками, см. docs/ACCOUNT.md" "JWT_SECRET=$(openssl rand -base64 48 | tr -d "\n")" "VK_CLIENT_ID=" "YANDEX_CLIENT_ID=" "YANDEX_CLIENT_SECRET=" "OAUTH_CALLBACK_URL=https://pozerkalam.space/api/v1/auth/callback" "LOG_LEVEL=debug" > /etc/pozerkalam-account.env; echo "    env создан с новым JWT_SECRET, ключи провайдеров пусты"; }'
+sshr 'grep -q "pozerkalam-account.conf" /etc/nginx/sites-available/pozerkalam.space || \
+  sed -i "s|    location / { try_files|    include snippets/pozerkalam-account.conf;\n    location / { try_files|" /etc/nginx/sites-available/pozerkalam.space'
+sshr "systemctl daemon-reload && systemctl enable pozerkalam-account >/dev/null 2>&1; systemctl restart pozerkalam-account && echo '    сервис перезапущен'"
+sshr "sleep 1; systemctl is-active pozerkalam-account"
+sshr "journalctl -u pozerkalam-account -n 30 --no-pager -o cat | grep -E 'CONFIG' | tail -2 || true"
 
 echo "==> заливка"
 sshr "mkdir -p $DOCROOT/play"
@@ -318,6 +338,23 @@ rb_smoke(){ # $1 — IP, $2 — подпись
   echo "    (аналитика выключена — не валю деплой)"
 }
 rb_smoke "$PROD_IP" "прод"
+acct_smoke(){ # $1 — IP, $2 — подпись. Сервис жив и отвечает через nginx; ключи провайдеров
+  # могут быть ещё пусты — это не провал, /health честно скажет vk:false
+  local h st
+  h=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} --resolve "pozerkalam.space:443:$1" https://pozerkalam.space/api/v1/health || echo err)
+  echo "    $2 /api/v1/health -> ${h}"
+  case "$h" in *'"ok": true'*|*'"ok":true'*) ;; *) echo "СМОУК ПРОВАЛЕН: $2 /api/v1/health"; exit 1;; esac
+  st=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} --resolve "pozerkalam.space:443:$1" -o /dev/null -w "%{http_code}" \
+       -X POST https://pozerkalam.space/api/v1/auth/start -H 'Content-Type: application/json' -d '{"provider":"none"}' || echo 000)
+  echo "    $2 /api/v1/auth/start (провайдер none) -> ${st}"
+  [ "$st" = "400" ] || { echo "СМОУК ПРОВАЛЕН: $2 /api/v1/auth/start"; exit 1; }
+  if [ -n "${AUTH_PROVIDERS:-}" ]; then
+    for pv in $(echo "$AUTH_PROVIDERS" | tr ',' ' '); do
+      case "$h" in *"\"$pv\": true"*|*"\"$pv\":true"*) ;; *) echo "СМОУК ПРОВАЛЕН: в странице включён $pv, а на сервисе нет ключей"; exit 1;; esac
+    done
+  fi
+}
+acct_smoke "$PROD_IP" "прод"
 if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
   # dry: эндпоинт проверяется целиком, но сообщение не уходит — иначе каждый деплой
   # присылал бы владельцу мусорный отчёт.
@@ -375,6 +412,10 @@ else
     mirror_scp server/nginx-rybbit-mirror.conf /tmp/pz-rybbit.conf || MIRROR_OK=0
     mirror_ssh "sudo cp /tmp/pz-rybbit.conf /etc/nginx/snippets/pozerkalam-rybbit.conf" || MIRROR_OK=0
     mirror_ssh "grep -q 'snippets/pozerkalam-rybbit.conf' /etc/nginx/sites-available/pozerkalam.space || sudo sed -i 's|    location / { try_files|    include snippets/pozerkalam-rybbit.conf;\n    location / { try_files|' /etc/nginx/sites-available/pozerkalam.space" || MIRROR_OK=0
+    # Аккаунты: база одна, на проде — зеркало только проксирует /api/v1/
+    mirror_scp server/nginx-account-mirror.conf /tmp/pz-account.conf || MIRROR_OK=0
+    mirror_ssh "sudo cp /tmp/pz-account.conf /etc/nginx/snippets/pozerkalam-account.conf" || MIRROR_OK=0
+    mirror_ssh "grep -q 'snippets/pozerkalam-account.conf' /etc/nginx/sites-available/pozerkalam.space || sudo sed -i 's|    location / { try_files|    include snippets/pozerkalam-account.conf;\n    location / { try_files|' /etc/nginx/sites-available/pozerkalam.space" || MIRROR_OK=0
     if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
       # На зеркале своего приёмника нет: локация проксирует отчёт на прод.
       mirror_scp server/nginx-feedback-mirror.conf /tmp/pz-feedback.conf || MIRROR_OK=0
@@ -399,6 +440,7 @@ else
     fi
     csp_wait "$MIRROR_IP" /play/ "зеркало /play/"
     rb_smoke "$MIRROR_IP" "зеркало"
+    acct_smoke "$MIRROR_IP" "зеркало"
     if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
       m_fb=$(curl -s -m 20 ${CURL_BIND[@]+"${CURL_BIND[@]}"} --resolve "pozerkalam.space:443:$MIRROR_IP" \
              -X POST https://pozerkalam.space/api/feedback -H 'Content-Type: application/json' \
