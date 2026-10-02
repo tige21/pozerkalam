@@ -5,10 +5,13 @@
 вход на российском сервисе — через российский сервис авторизации). Принципы взяты у spark
 (`~/Documents/projects/spark/docs/AUTH-VK-YANDEX.md`), сервис свой.
 
-**Состояние на 02.10.2026:** сервис развёрнут на vdsina и зеркале (build `a96080e0a5ad6805`),
-`/etc/pozerkalam-account.env` создан деплоем с новым `JWT_SECRET`, ключей провайдеров нет —
-`/api/v1/health` отвечает `vk:false, yandex:false`, кнопок входа в игре нет (`AUTH_PROVIDERS` пуст).
-Ждёт: приложения VK ID и Яндекс ID (ниже) и `/privacy/` (доска #180).
+**Состояние на 03.10.2026:** сервис развёрнут на vdsina и зеркале (build `a96080e0a5ad6805`).
+Приложения заведены: VK ID `54801931`, Яндекс ClientID `3cd6ae5b005b486687f09ca27592264b` — оба в
+`/etc/pozerkalam-account.env`, `/api/v1/health` → `vk:true, yandex:false`. Ждёт: `YANDEX_CLIENT_SECRET`
+на боксе и `/privacy/` (доска #180); до этого кнопок входа в игре нет (`AUTH_PROVIDERS` пуст).
+Проверено без входа в аккаунт: адрес авторизации, который строит сервис, VK принимает (302 на свою
+страницу входа; фальшивый ID даёт страницу ошибки), Яндекс на этот ClientID отвечает «Wrong client
+secret», на фальшивый — «Client not found».
 
 ## Схема
 
