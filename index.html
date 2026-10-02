@@ -9278,6 +9278,12 @@ function paywallHTML(i){
   if(acct) s+='<button data-act="pay-restore" class="ghost">Восстановить покупку</button>';
   return s+'<button data-act="pick" class="ghost">Выбрать другой уровень</button>';
 }
+function paywallShow(i, via){
+  paywallLi=i;
+  console.info('[pay] уровень '+(i+1)+' закрыт — пейволл');
+  track('paywall_view', Object.assign(anLevel(i), {via:via, account:acct?1:0}));
+  showOv(paywallHTML(i));
+}
 function payStart(product){
   console.info('[pay] покупка: '+product+' — провайдер не подключён');
   track('purchase_start', {product:product});
@@ -9477,13 +9483,7 @@ function showLevelPick(){ showOv(levelPickHTML()); }
    Экзамен открывает свой бриф маршрута, и его не закрываем: раньше вызывающий hideOv() гасил
    бриф в тот же миг, и с карточки выбора маршрут перед стартом не видел никто */
 function openLevel(i, via){
-  if(levelLocked(i)){
-    paywallLi=i;
-    console.info('[pay] уровень '+(i+1)+' закрыт — пейволл');
-    track('paywall_view', Object.assign(anLevel(i), {via:via, account:acct?1:0}));
-    showOv(paywallHTML(i));
-    return;
-  }
+  if(levelLocked(i)){ paywallShow(i, via); return; }
   loadLevel(i);
   if(!level.def.examRoute) hideOv();
   anLevelStart(via);

@@ -280,6 +280,41 @@ function unitCheck() {
     ok('след модели кузова совпадает с CAR_HULL в пределах 1 см (@render-car-footprint)', dev <= 0.01);
   } else fails.push('кузов снаружи · модель не загружена (@render-car-footprint)');
 
+  g('пейволл и покупки');
+  {
+    /* состояние игрока подменяется на время группы и возвращается: набор гоняется в живой странице */
+    const acct0 = acct, pf0 = window.PAYWALL_FORCE, t = Math.floor(Date.now() / 1000);
+    try {
+      window.PAYWALL_FORCE = [19];
+      acct = null;
+      ok('без покупки уровень курса закрыт', levelLocked(19) === true);
+      ok('соседние уровни вне курса открыты', levelLocked(18) === false && levelLocked(20) === false);
+      window.PAYWALL_FORCE = [0, 19];
+      ok('первый уровень не закрывается, даже если он в списке', levelLocked(0) === false);
+      acct = { id: 'u', name: 'u', provider: 'vk', ent: [{ product: 'course', expires_at: null }] };
+      ok('бессрочная покупка открывает курс', entitled('course') && levelLocked(19) === false);
+      acct.ent = [{ product: 'course', expires_at: t + 60 }];
+      ok('покупка со сроком через минуту открывает', entitled('course') === true);
+      acct.ent = [{ product: 'course', expires_at: t - 1 }];
+      ok('покупка, истёкшая секунду назад, не открывает', entitled('course') === false && levelLocked(19) === true);
+      acct.ent = [{ product: 'pilot', expires_at: null }];
+      ok('другой продукт курс не открывает', entitled('course') === false);
+      acct.ent = [];
+      ok('пустой список покупок — ничего не открыто', entitled('course') === false);
+      /* своя площадка игрока — его работа, её не закрывает и попавший в список номер */
+      acct = null;
+      LEVELS.push({ name: '★ проверка', custom: true });
+      window.PAYWALL_FORCE = [19, LEVELS.length - 1];
+      ok('своя площадка не закрывается, даже если её номер в списке', levelLocked(LEVELS.length - 1) === false && levelLocked(19) === true);
+      LEVELS.pop();
+      delete window.PAYWALL_FORCE;
+      ok('пока список платных пуст, закрытых уровней нет', LEVELS.every((l, i) => levelLocked(i) === false));
+    } finally {
+      acct = acct0; window.PAYWALL_FORCE = pf0;
+      if (LEVELS.length && LEVELS[LEVELS.length - 1].name === '★ проверка') LEVELS.pop();
+    }
+  }
+
   g('детекторы нарушений');
   if (typeof detectorCheck === 'function') {
     for (const c of detectorCheck()) ok(c.name, c.ok);

@@ -9,7 +9,8 @@
     "cityPathNodes", "cityRoute", "lightPhase", "lightStops",
     "trafPath", "trafPose", "trafSpeed", "trafBlock", "trafConflict", "trafLight",
     "trafficGap", "carExtent", "trafKey",
-    "violationsTick", "examPenalty"
+    "violationsTick", "examPenalty",
+    "entitled", "levelLocked"
   ],
   "constants": [
     "YIELD_TCA", "TRAF", "TRAF_SPACING", "GAP_AHEAD", "EXAM_FAIL_SUM", "SENS_MAX",

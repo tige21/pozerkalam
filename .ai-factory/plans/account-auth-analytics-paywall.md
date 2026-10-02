@@ -229,7 +229,7 @@ P1 не ждёт P2–P4: аналитика выкатывается перво
 
 ### Фаза 5 · Проверки, документация, выкатка
 
-- [ ] **T13. Гейты: `account-check.mjs`, сценарии, юниты, мутации, чек-лист** (зависит от T9–T12)
+- [x] **T13. Гейты: `account-check.mjs`, сценарии, юниты, мутации, чек-лист** (зависит от T9–T12)
   Файлы: `tools/account-check.mjs` (новый), `specs/features/account/account.feature`, `specs/features/account/paywall.feature` (новые), `tools/steps/domain.js`, `tools/units.js`, `tools/mutation-zone.json`, `docs/qa-checklist.md` (генерат).
   - `account-check.mjs` (playwright-core из `PW_DIR`, каркас `crash-check.mjs`; API мокает `page.route('https://pozerkalam.space/api/v1/**')`, Rybbit — `window.rybbit` с журналом вызовов). Проверки с кодами в имени:
     - `@acct-off-by-default` — без `AUTH_PROVIDERS` кнопок входа нет и ни одного запроса к API;
@@ -248,7 +248,7 @@ P1 не ждёт P2–P4: аналитика выкатывается перво
   - `gherkin-check.mjs` зелёный (каждый код ↔ проверка); `qa-checklist.mjs` пересобран.
   - Регрессия: `crash-check`, `touch-check`, `sw-check`, `yandex-check`, `gherkin-run`, `unit-check`, демо-регрессия (ноль таймаутов по `DEMOS`) — зелёные.
 
-- [ ] **T14. Документация** (зависит от T1–T13)
+- [x] **T14. Документация** (зависит от T1–T13)
   Файлы: `docs/ACCOUNT.md`, `docs/ANALYTICS.md` (новые), `CLAUDE.md`, `docs/monetization-m7.md`, `.ai-factory/ROADMAP.md`.
   - `ACCOUNT.md`: схема флоу, таблица env (где живёт, секрет или нет), регистрация в кабинетах VK и Яндекса (P2–P3), CLI `grant/revoke/stats`, бэкап и восстановление, разбор неисправностей по образцу spark (`redirect_uri mismatch`, `invalid_client`, «вход не завершается в iframe», устаревшая ссылка).
   - `ANALYTICS.md`: сайт Rybbit, прокси `/rb/`, каталог событий со свойствами, таблица `METRIKA_GOAL`, воронка `app_open → level_start → level_win` (шаги разнесены во времени — правило funnel SQL Rybbit из spark), еженедельное чтение, как смотреть устройства.
