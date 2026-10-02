@@ -46,6 +46,8 @@ HOST=vdsina
 DOCROOT=/var/www/pozerkalam
 [ -f .deploy.env ] && source .deploy.env
 : "${METRIKA_ID:=}"
+: "${RYBBIT_SITE_ID:=}"
+: "${AUTH_PROVIDERS:=}"
 
 # При включённом VPN (Happ) маршрут по умолчанию уходит в utun, и ssh к серверу
 # виснет на banner exchange, а curl не доходит до сайта. Привязываем к физическому
@@ -88,17 +90,29 @@ npx --yes html-minifier-terser index.html -o build/play/index.html \
 # старый кэш SW».
 BUILD_SHA=$(shasum -a 256 build/play/index.html | cut -c1-16)
 
-echo "==> игра: пути /play/ + версия сборки + Метрика"
-python3 - "$METRIKA_ID" "$BUILD_SHA" <<'PYEOF'
-import sys
-mid, build = sys.argv[1], sys.argv[2]
+echo "==> игра: пути /play/ + версия сборки + Метрика + Rybbit + вход"
+python3 - "$METRIKA_ID" "$BUILD_SHA" "$RYBBIT_SITE_ID" "$AUTH_PROVIDERS" <<'PYEOF'
+import json, re, sys
+mid, build, rb, auth = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 s = open('build/play/index.html').read()
 for a, b in [('href="/manifest.webmanifest"', 'href="/play/manifest.webmanifest"'),
              ('href="/icon-192.png"', 'href="/play/icon-192.png"'),
              ('register("/sw.js")', 'register("/play/sw.js")')]:
     assert a in s, a
     s = s.replace(a, b)
-s = s.replace('</head>', '<script>window.BUILD="%s"</script></head>' % build, 1)
+# Вход появляется в игре только по этому списку: пусто — кнопок нет (локально, в гейтах, в
+# билде ЯИ, на старом зеркале). Один инлайн-скрипт с BUILD — один CSP-хэш, а не два.
+prov = [x for x in auth.replace(' ', '').split(',') if x in ('vk', 'yandex')]
+boot = 'window.BUILD="%s"' % build
+if prov:
+    boot += ';window.AUTH_PROVIDERS=%s' % json.dumps(prov)
+s = s.replace('</head>', '<script>%s</script></head>' % boot, 1)
+print('    вход: ' + (', '.join(prov) if prov else 'выключен (AUTH_PROVIDERS пуст)'))
+# Rybbit spark: тег со своего домена — скрипт шлёт события туда, откуда загружен (/rb/ → nginx)
+if rb:
+    assert re.fullmatch(r'[A-Za-z0-9_-]{1,40}', rb), 'RYBBIT_SITE_ID: только буквы, цифры, - и _'
+    s = s.replace('</head>', '<script defer src="/rb/script.js" data-site-id="%s"></script></head>' % rb, 1)
+print('    аналитика: ' + ('Rybbit site ' + rb if rb else 'Rybbit выключен (RYBBIT_SITE_ID пуст)'))
 if mid:
     tag = ('<script>window.METRIKA_ID=%s;'
      '(function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};'
@@ -169,6 +183,13 @@ sshr 'grep -q "location = /play/index.html" /etc/nginx/sites-available/pozerkala
 # протухнет старый воркер, хотя страница уже свежая
 sshr 'grep -q "location = /play/sw.js" /etc/nginx/sites-available/pozerkalam.space || \
   sed -i "s|    location = /play/index.html { add_header Cache-Control \"no-cache\"; include snippets/pozerkalam-headers.conf; }|&\n    location = /play/sw.js { add_header Cache-Control \"no-cache\"; include snippets/pozerkalam-headers.conf; }|" /etc/nginx/sites-available/pozerkalam.space'
+
+echo "==> nginx: аналитика /rb/ → Rybbit spark"
+# Локация ставится всегда, тег в странице — только при RYBBIT_SITE_ID: без тега /rb/ просто
+# никто не зовёт, а включение аналитики не требует второго прохода по конфигу.
+scpr server/nginx-rybbit.conf "$HOST:/etc/nginx/snippets/pozerkalam-rybbit.conf"
+sshr 'grep -q "pozerkalam-rybbit.conf" /etc/nginx/sites-available/pozerkalam.space || \
+  sed -i "s|    location / { try_files|    include snippets/pozerkalam-rybbit.conf;\n    location / { try_files|" /etc/nginx/sites-available/pozerkalam.space'
 
 echo "==> приёмник отзывов"
 if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
@@ -277,6 +298,26 @@ curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} "${RES_PROD[@]}" https://pozerka
 grep -q 'rel="canonical" href="https://pozerkalam.space/"' /tmp/pz_root.html && echo "    лендинг на корне: ДА"
 csp_wait "$PROD_IP" /play/ "прод /play/"
 csp_wait "$PROD_IP" / "прод /"
+# Rybbit — стек spark: если он лежит, а аналитика игры выключена, это не повод валить деплой
+rb_smoke(){ # $1 — IP, $2 — подпись
+  local rb
+  rb=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} --resolve "pozerkalam.space:443:$1" -o /dev/null \
+       -w "%{http_code} %{size_download}" https://pozerkalam.space/rb/script.js || echo 000)
+  echo "    $2 /rb/script.js -> ${rb} байт"
+  case "$rb" in 200*)
+    [ -n "${RYBBIT_SITE_ID:-}" ] || return 0
+    # настройки трекера по сайту — их скрипт берёт первым запросом; 404 тут = не тот site-id
+    local cfg
+    cfg=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} --resolve "pozerkalam.space:443:$1" -o /dev/null -w "%{http_code}" \
+          "https://pozerkalam.space/rb/site/tracking-config/${RYBBIT_SITE_ID}" || echo 000)
+    echo "    $2 /rb/site/tracking-config/${RYBBIT_SITE_ID} -> ${cfg}"
+    [ "$cfg" = "200" ] && return 0
+    echo "СМОУК ПРОВАЛЕН: $2 Rybbit не знает сайт ${RYBBIT_SITE_ID}"; exit 1;;
+  esac
+  if [ -n "${RYBBIT_SITE_ID:-}" ]; then echo "СМОУК ПРОВАЛЕН: $2 /rb/ не отдаёт скрипт Rybbit"; exit 1; fi
+  echo "    (аналитика выключена — не валю деплой)"
+}
+rb_smoke "$PROD_IP" "прод"
 if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
   # dry: эндпоинт проверяется целиком, но сообщение не уходит — иначе каждый деплой
   # присылал бы владельцу мусорный отчёт.
@@ -330,6 +371,10 @@ else
   if [ "$MIRROR_OK" = "1" ]; then
     mirror_scp build/pozerkalam-headers.conf /tmp/pz-headers.conf || MIRROR_OK=0
     mirror_ssh "sudo cp /tmp/pz-headers.conf /etc/nginx/snippets/pozerkalam-headers.conf" || MIRROR_OK=0
+    # Аналитика зарубежных и VPN-игроков: /rb/ проксируется на прод, своего Rybbit здесь нет.
+    mirror_scp server/nginx-rybbit-mirror.conf /tmp/pz-rybbit.conf || MIRROR_OK=0
+    mirror_ssh "sudo cp /tmp/pz-rybbit.conf /etc/nginx/snippets/pozerkalam-rybbit.conf" || MIRROR_OK=0
+    mirror_ssh "grep -q 'snippets/pozerkalam-rybbit.conf' /etc/nginx/sites-available/pozerkalam.space || sudo sed -i 's|    location / { try_files|    include snippets/pozerkalam-rybbit.conf;\n    location / { try_files|' /etc/nginx/sites-available/pozerkalam.space" || MIRROR_OK=0
     if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
       # На зеркале своего приёмника нет: локация проксирует отчёт на прод.
       mirror_scp server/nginx-feedback-mirror.conf /tmp/pz-feedback.conf || MIRROR_OK=0
@@ -353,6 +398,7 @@ else
       echo "ЗЕРКАЛО РАСХОДИТСЯ С ПРОДОМ (код ${m_code}) — зарубежные юзеры на другой сборке"; exit 1
     fi
     csp_wait "$MIRROR_IP" /play/ "зеркало /play/"
+    rb_smoke "$MIRROR_IP" "зеркало"
     if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
       m_fb=$(curl -s -m 20 ${CURL_BIND[@]+"${CURL_BIND[@]}"} --resolve "pozerkalam.space:443:$MIRROR_IP" \
              -X POST https://pozerkalam.space/api/feedback -H 'Content-Type: application/json' \

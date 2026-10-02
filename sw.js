@@ -27,6 +27,9 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
+  /* API аккаунта и аналитика — только из сети. Ветка ресурсов ниже cache-first:
+     GET /api/v1/me закэшировался бы навсегда вместе с покупками */
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/rb/')) return;
   const isPage = e.request.mode === 'navigate' || url.pathname === PAGE || url.pathname === PAGE + 'index.html';
   if (isPage) {
     e.respondWith(fetch(e.request)

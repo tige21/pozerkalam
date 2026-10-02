@@ -96,6 +96,18 @@ check('в билде площадки нет регистрации service work
 const build = await page.evaluate(() => window.BUILD);
 check('тег сборки вида ya-<16 hex> (@dist-yandex-build-tag)', /^ya-[0-9a-f]{16}$/.test(build || ''), 'BUILD=' + build);
 
+/* 2б. Сторонняя аналитика в играх площадки запрещена, а вход VK/Яндекс в её iframe не
+   работает: их вставляет только веб-деплой. Ищутся вставки, не имена — сам код игры их читает */
+const leaks = [];
+if (/<script[^>]*src="\/rb\/script\.js"/.test(html)) leaks.push('тег Rybbit');
+if (/window\.AUTH_PROVIDERS\s*=/.test(html)) leaks.push('AUTH_PROVIDERS');
+if (/window\.METRIKA_ID\s*=\s*\d/.test(html)) leaks.push('Метрика');
+const live = await page.evaluate(() => ({ rb: typeof AN_RB === 'undefined' ? 'нет AN_RB' : AN_RB,
+  auth: Array.isArray(window.AUTH_PROVIDERS), ym: typeof window.ym }));
+check('в билде площадки нет Rybbit, Метрики и входа (@dist-yandex-no-account)',
+  leaks.length === 0 && live.rb === false && !live.auth && live.ym === 'undefined',
+  (leaks.length ? 'вставки: ' + leaks.join(', ') + '; ' : '') + JSON.stringify(live));
+
 /* 3. SDK инициализирован, адаптер на месте */
 const sdk = await page.evaluate(() => ({ ysdk: !!window.ysdk, ready: window.__ya.ready,
   inter: typeof (window.ADS || {}).interstitial, rew: typeof (window.ADS || {}).rewarded, calls: window.__ya.calls.slice() }));

@@ -106,6 +106,21 @@ async function suite(label, code, PAGE) {
   check(`${label}: ресурс 404 не кэшируется, ресурс 200 отдаётся из кэша без сети (@dist-sw-asset-not-ok-not-cached)`,
     r4 && r4.status === 404 && !(await c.match(PAGE + 'nope.png')) && r5 && r5.status === 200 && fetches === 1,
     'nope ' + (r4 && r4.status) + ', в кэше ' + !!(await c.match(PAGE + 'nope.png')) + ', сеть за icon-512: ' + fetches);
+
+  /* respondWith не вызван — запрос уходит в сеть мимо воркера; дважды подряд, чтобы второй
+     не мог прийти из кэша, положенного первым */
+  const bypass = [];
+  for (const p of ['/api/v1/me', '/rb/script.js', '/rb/site/tracking-config/7']) {
+    w.routes.set(p, { status: 200, body: 'live' });
+    for (let k = 0; k < 2; k++) {
+      const ev = w.evt(p, 'cors');
+      await w.fire('fetch', ev);
+      if (ev.p !== undefined) bypass.push(p + ' перехвачен');
+    }
+    if (await c.match(p)) bypass.push(p + ' в кэше');
+  }
+  check(`${label}: /api/ и /rb/ идут мимо воркера и не кэшируются (@dist-sw-api-bypass)`,
+    bypass.length === 0, bypass.join('; ') || 'мимо кэша: /api/v1/me, /rb/script.js, /rb/site/tracking-config');
 }
 
 await suite('sw.js', src, '/');

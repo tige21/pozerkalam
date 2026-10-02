@@ -5897,8 +5897,99 @@ let selWarn='', selWarnT=0, selBlockT=0;
 /* короткое уведомление о смене настройки — гаснет быстрее подсказки, чтобы не перебивать урок */
 let note='', noteT=0;
 function toast(msg,t){ note=msg; noteT=t||1.4; }
-/* воронка: уходит в Метрику, если деплой вставил счётчик; в репозитории — no-op */
-function track(goal){ try{ if(window.ym&&window.METRIKA_ID) ym(window.METRIKA_ID,'reachGoal',goal); }catch(e){} }
+/* ---------- аналитика ---------- */
+/* Одна точка для двух систем: Метрика (если деплой вставил счётчик) и Rybbit — тот же
+   инстанс, что у spark, дашборд analytics.sparkcards.space; тег /rb/script.js вставляет
+   деплой при RYBBIT_SITE_ID. В репозитории, в гейтах (file://) и в билде ЯИ обоих нет —
+   track молчит. Имена событий snake_case, как в spark; Метрике уходят старые имена целей:
+   цели в её интерфейсе настроены на них, переименование обнулило бы воронку */
+const METRIKA_GOAL={ level_start:'level-start', level_win:'win', level_fail:'level-fail',
+  exam_pass:'exam-pass', exam_fail:'exam-fail', demo_start:'demo-start', feedback_sent:'feedback-sent' };
+const AN_RB=!!document.querySelector('script[src$="/rb/script.js"]');
+/* скрипт Rybbit async: события до его загрузки копятся (до 20) и досылаются не дольше 10 с —
+   контракт адаптера spark (src/core/analytics/rybbit.ts); не загрузился — блокировщик или офлайн */
+const AN_BUF=[], AN_BUF_MAX=20, AN_WAIT_MS=10000;
+let anBufT=0, anTimer=0;
+const AN_DEBUG=(()=>{ try{ return (localStorage.getItem('pz_debug')||'').indexOf('an')>=0; }catch(e){ return false; } })();
+function anProps(p){
+  const o={};
+  if(p) for(const k in p){ let v=p[k];
+    if(v===null || v===undefined || (typeof v==='number' && !isFinite(v))) continue;
+    if(typeof v==='boolean') v=v?1:0;
+    else if(typeof v==='object') v=JSON.stringify(v);
+    if(typeof v==='string' && v.length>128) v=v.slice(0,128);
+    o[k]=v; }
+  return o;
+}
+function anFlush(){
+  clearTimeout(anTimer);
+  if(window.rybbit){
+    while(AN_BUF.length){ const e=AN_BUF.shift(); try{ window.rybbit.event(e[0], e[1]); }catch(err){} }
+    return; }
+  if(performance.now()-anBufT < AN_WAIT_MS) anTimer=setTimeout(anFlush, 400);
+  else { if(AN_DEBUG) console.info('[an] Rybbit не загрузился, сброшено событий: '+AN_BUF.length); AN_BUF.length=0; }
+}
+function track(name, props){
+  const p=anProps(props);
+  if(AN_DEBUG) console.info('[an] '+name, p);
+  try{ if(window.ym&&window.METRIKA_ID)
+    ym(window.METRIKA_ID,'reachGoal', name==='feedback_open' ? 'feedback-open:'+p.src : (METRIKA_GOAL[name]||name), p); }catch(e){}
+  if(!AN_RB) return;
+  if(window.rybbit && !AN_BUF.length){ try{ window.rybbit.event(name, p); }catch(e){} return; }
+  if(!AN_BUF.length) anBufT=performance.now();
+  if(AN_BUF.length<AN_BUF_MAX) AN_BUF.push([name, p]);
+  anFlush();
+}
+function anIdentify(id){
+  if(AN_DEBUG) console.info('[an] identify '+String(id).slice(0,6));
+  try{ if(window.rybbit) window.rybbit.identify(String(id)); }catch(e){}
+  try{ if(window.ym&&window.METRIKA_ID) ym(window.METRIKA_ID,'setUserID',String(id)); }catch(e){}
+}
+function anClear(){
+  if(AN_DEBUG) console.info('[an] clearIdentity');
+  try{ if(window.rybbit) window.rybbit.clearIdentity(); }catch(e){}
+}
+/* площадка запуска — у каждой своя аудитория, и воронку без неё не прочитать */
+function anPlatform(){
+  if(String(window.BUILD||'').indexOf('ya-')===0) return 'ya';
+  if(/[?&]vk_(app_id|platform)=/.test(location.search)) return 'vk';
+  if(/tgWebApp/.test(location.hash) || /[?&]tgWebApp/.test(location.search)) return 'tg';
+  try{ if(matchMedia('(display-mode: standalone)').matches || navigator.standalone) return 'pwa'; }catch(e){}
+  return 'web';
+}
+function anFramed(){ try{ return window.top!==window; }catch(e){ return true; } }
+/* метки кампаний: utm_* из адреса и метка запуска Mini App. Telegram кладёт start_param в hash,
+   который Rybbit сам не видит (spark, attribution.ts); от метки остаётся ведущий [A-Za-z0-9_-] */
+function anSource(){
+  const o={}, q=new URLSearchParams(location.search);
+  for(const k of ['utm_source','utm_medium','utm_campaign','utm_content','utm_term']){
+    const v=q.get(k); if(v) o[k]=v.slice(0,128); }
+  const h=new URLSearchParams(location.hash.replace(/^#/,''));
+  const src=q.get('tgWebAppStartParam')||h.get('tgWebAppStartParam')||q.get('startapp')||q.get('vk_ref');
+  const m=src && /^[A-Za-z0-9_-]+/.exec(src);
+  if(m) o.source=m[0].slice(0,128);
+  return o;
+}
+function anLevel(i){
+  const l=LEVELS[i]||{};
+  return { li:i+1, kind: l.custom?'custom' : l.examRoute?'exam' : l.drill?'drill' : l.strict?'city' : 'yard' };
+}
+function anLevelStart(via){
+  const p=anLevel(game.li); p.via=via;
+  if(level && level.def.examRoute) p.exam_mode=examTrain()?'train':'real';
+  track('level_start', p);
+}
+/* «с какого устройства и как ему» — один замер за сессию после 20 с езды: на старте регулятор
+   качества ещё не устоялся, а стоящая на паузе игра не говорит о скорости ничего */
+let anPerfN=0;
+const anPerfTimer=setInterval(()=>{
+  if(paused || game.done) return;
+  if(++anPerfN<4) return;
+  clearInterval(anPerfTimer);
+  track('perf', { q:qLevel, fps:Math.round(1000/Math.max(frameGap,1)), js:+frameCost.toFixed(1),
+    dpr:+(window.devicePixelRatio||1).toFixed(2), cores:navigator.hardwareConcurrency,
+    mem:navigator.deviceMemory, gfx:opt.gfx, cam:opt.camMode, mob:MOB });
+}, 5000);
 /* рекламный слой: в веб-билде no-op, билд Яндекс Игр подставляет window.ADS.
    Кулдаун interstitial жёсткий: площадки снимают игры за частый показ,
    поэтому никогда в первые 60 с сессии и не чаще раза в 180 с */
@@ -6135,7 +6226,8 @@ function loadLevel(i){
   document.getElementById('lvlTask').textContent = def.task;
   document.getElementById('lvlTip').textContent  = def.tip;
   document.getElementById('lvlIdx').textContent  = 'уровень ' + (game.li+1) + ' / ' + LEVELS.length;
-  track('level-start');
+  /* level_start шлёт не загрузка, а игрок (openLevel, «Поехали», «Заново»): loadLevel зовут и
+     старт страницы, и смена потока, и режим экзамена — воронка считала их попытками (#181) */
   /* маршрут показываем ДО старта: «слишком маленький и непонятный» был не про длину,
      а про то, что игрок не видел, куда его повезут */
   if(def.examRoute) showOv(examBriefHTML());
@@ -6633,7 +6725,7 @@ function examFail(why){
      на месте, иначе новичок видит экран провала раньше, чем понимает, что сделал */
   if(examTrain()){ examWhy=why; examWhyT=6; return; }
   exam.done=true; exam.failed=true; exam.failWhy=why;
-  track('exam-fail');
+  track('exam_fail', { route:exam.routeId+1, mode:'real', score:exam.score });
   console.warn('[exam] НЕ СДАН — '+why);
   game.done=true;
   if(demo) stopDemo();
@@ -6772,7 +6864,7 @@ function failAttempt(code, why){
   if(!attemptOn()) return;
   attempt.failed=true; attempt.code=code; attempt.why=why;
   console.warn('[fail] попытка не засчитана — '+why);
-  track('level-fail');
+  track('level_fail', Object.assign(anLevel(game.li), { code:code }));
   game.done=true;
   if(demo) stopDemo();
   attWarn=''; attWarnT=0;
@@ -7057,7 +7149,7 @@ function examTeardown(){
 function examPass(){
   if(!examActive()) return;
   exam.done=true; exam.failed=false;
-  track('exam-pass');
+  track('exam_pass', { route:exam.routeId+1, mode:examTrain()?'train':'real', score:exam.score });
   game.done=true;
   if(demo) stopDemo();
   game.prog = progExam(true);
@@ -8916,7 +9008,7 @@ function openFeedback(src){
   fbBack=src||'game';
   fbShot=fbGrab();
   fbKind='bug';
-  track('feedback-open:'+fbBack);
+  track('feedback_open', { src:fbBack });
   showOv(fbHTML());
   const t=$('fbText'); if(t) setTimeout(()=>t.focus(),50);
 }
@@ -8978,7 +9070,7 @@ function fbSend(){
     .then(j=>{
       if(!j||!j.ok) throw new Error((j&&j.err)||'нет ответа');
       try{ localStorage.setItem('trainer_fb_t',String(Date.now())); }catch(e){}
-      track('feedback-sent');
+      track('feedback_sent', { kind:fbKind });
       done(); fbClose();
       toast(body.contact ? 'Отправлено. Ответлю на указанный контакт.' : 'Отправлено. Спасибо.', 3.5);
     })
@@ -8996,9 +9088,17 @@ function showOv(html){ ovCard.innerHTML=html; ovEl.style.display='flex'; paused=
   document.body.classList.add('ov');
   for(const k in input) input[k]=false;
   ovCard.querySelectorAll('button').forEach(b=> b.onclick=()=>doAct(b.dataset.act));
-  ovCard.querySelectorAll('.lvcard').forEach(c=> c.onclick=()=>{
-    loadLevel(+c.dataset.lvl); hideOv(); }); }
+  ovCard.querySelectorAll('.lvcard').forEach(c=> c.onclick=()=> openLevel(+c.dataset.lvl,'pick')); }
 function showLevelPick(){ showOv(levelPickHTML()); }
+/* Вход игрока в уровень. loadLevel остаётся сырым: его зовут старт страницы, редактор, смена
+   потока и режима экзамена и все гейты tools/ — воронка (и замок пейволла) живут здесь.
+   Экзамен открывает свой бриф маршрута, и его не закрываем: раньше вызывающий hideOv() гасил
+   бриф в тот же миг, и с карточки выбора маршрут перед стартом не видел никто */
+function openLevel(i, via){
+  loadLevel(i);
+  if(!level.def.examRoute) hideOv();
+  anLevelStart(via);
+}
 function hideOv(){ ovEl.style.display='none'; paused=false; helpOpen=false;
   document.body.classList.remove('ov'); }
 function doAct(a){
@@ -9012,7 +9112,7 @@ function doAct(a){
      начинался заново, игрок оставался в экзамене — со стороны это выглядело как
      «нажал прервать, ничего не произошло» */
   if(a==='exam-exit'){ helpOpen=false; restart(); showLevelPick(); return; }
-  if(a && a.indexOf('train:')===0){ loadLevel(+a.slice(6)); hideOv(); return; }
+  if(a && a.indexOf('train:')===0){ openLevel(+a.slice(6),'train'); return; }
   if(a==='help'){ helpOpen=true; showOv(helpHTML()); return; }
   if(a==='task'){ helpOpen=false; showTask(); return; }
   if(a==='demo'){ helpOpen=false; hideOv(); startDemo(); return; }
@@ -9029,7 +9129,8 @@ function doAct(a){
   if(a==='start'||a==='resume'){ hideOv();
     /* счётчик запусков: первые 3 «почему» в карточке раскрыто само, дальше — по «?» */
     if(a==='start' && !game.runCounted){ game.runCounted=true; runsCnt++;
-      try{ localStorage.setItem('trainer_runs',String(runsCnt)); }catch(e){} }
+      try{ localStorage.setItem('trainer_runs',String(runsCnt)); }catch(e){}
+      anLevelStart('start'); }
     let seen=true, seenOnb=true;
     try{ seen = localStorage.getItem('trainer_hint')==='1';
          seenOnb = localStorage.getItem('trainer_seen')==='1'; }catch(e){}
@@ -9038,8 +9139,8 @@ function doAct(a){
     else if(!seenOnb) setTimeout(showOnboard,240);
     else maybeStartTut();
   }
-  else if(a==='next'){ adsInterstitial('next'); loadLevel(game.li+1); hideOv(); }
-  else if(a==='again'){ adsInterstitial('again'); restart(); hideOv(); }
+  else if(a==='next'){ adsInterstitial('next'); openLevel(game.li+1,'next'); }
+  else if(a==='again'){ adsInterstitial('again'); restart(); hideOv(); anLevelStart('again'); }
 }
 function ctrlHTML(){ return ''
   +'<h2>Управление</h2><div class="grid2"><ul>'
@@ -9266,7 +9367,7 @@ function pressKey(code){
   if(editor && code!=='KeyK' && code!=='Delete' && code!=='Backspace') return;
   if(code.indexOf('Digit')===0){
     const n=+code.slice(5);
-    if(n>=1&&n<=LEVELS.length){ loadLevel(n-1); hideOv(); }
+    if(n>=1&&n<=LEVELS.length) openLevel(n-1,'digit');
     return;
   }
   switch(code){
@@ -9305,7 +9406,7 @@ function pressKey(code){
       if(examActive() && !paused && !game.done){ showOv(examAbortHTML()); break; }
       toggleHelp(); break;
     case 'Slash': coachWhyToggle(); break;
-    case 'KeyN': if(game.done){ loadLevel(game.li+1); hideOv(); } break;
+    case 'KeyN': if(game.done) openLevel(game.li+1,'next'); break;
     /* Q/E отданы поворотникам (ядро экзаменационного ритуала — прайм-клавиши у WASD);
        подворот камеры переехал на [ ] — до этого они были недокументированными дублями селектора */
     case 'KeyQ': if(!paused) setBlink('L'); break;
@@ -9727,7 +9828,7 @@ function demoActive(){ return !!demo; }
 function stopDemo(){ demo=null; for(const k in input) input[k]=false; }
 function startDemo(){
   const d=DEMOS[game.li]; if(!d) return;
-  track('demo-start');
+  track('demo_start', anLevel(game.li));
   restart(); hideOv();
   if(d.start) setBody(d.start.u, d.start.v, d.start.th);
   const s0=d.segs[0];
@@ -10791,7 +10892,8 @@ function parkBeep(dt){
 }
 function win(){
   game.done=true;
-  track('win');
+  track('level_win', Object.assign(anLevel(game.li), { t:+game.t.toFixed(1), hits:game.hits, clean:game.hits===0,
+    err_cm: precDef() ? Math.round(Math.abs(precErr())*100) : null, demo:!!demo }));
   if(demo) stopDemo();
   game.prog = precDef()
     ? progAdd(level.def.name, game.t, game.hits, precErr(), opt.refs===0)
@@ -10807,6 +10909,8 @@ loadCustomLevels();
 loadLevel(0);
 showOv(startHTML());
 requestAnimationFrame(frame);
+track('app_open', Object.assign({ platform:anPlatform(), framed:anFramed(), mob:MOB,
+  lang:(navigator.language||'').slice(0,8), runs:runsCnt, build:window.BUILD||'dev' }, anSource()));
 /* PWA: офлайн и мгновенный повторный вход; с file:// и без https молча пропускается */
 /* .catch обязателен: на file:// (и в любом origin без https) регистрация отвергается,
    и без обработчика это всплывает как Uncaught (in promise) в консоли игрока */
