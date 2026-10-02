@@ -153,7 +153,7 @@ def clean_decal(name, path):
     fg[..., 1] = np.minimum(fg[..., 1], np.maximum(fg[..., 0], fg[..., 2]) + 2)
     fg = np.clip(fg, 0, 255)
     note = ''
-    if name == 'dec-wheel':
+    if name.startswith('dec-wheel') and name != 'dec-wheel-pad':
         ys, xs = np.where(alpha > 0.5)
         cx, cy = (xs.min() + xs.max()) / 2, (ys.min() + ys.max()) / 2
         rad = min(xs.max() - xs.min(), ys.max() - ys.min()) / 2 - 2
@@ -165,9 +165,24 @@ def clean_decal(name, path):
         alpha[disc] = 1
         note = f', окна между спицами залиты тёмным ({holes.sum()} px)'
     ys, xs = np.where(alpha > 0.5)
-    pad = 8
+    # куски борта трамвая встают встык, и любой прозрачный отступ дал бы щель между ними
+    pad = 0 if name.startswith('tram-') else 8
     x0, x1 = max(xs.min() - pad, 0), min(xs.max() + pad + 1, a.shape[1])
     y0, y1 = max(ys.min() - pad, 0), min(ys.max() + pad + 1, a.shape[0])
+    if name == 'tram-front':
+        # перёд ложится на торец шириной кузова, а зеркала торчат за кузов: ширина — по самой длинной
+        # сплошной полосе на 70 % высоты, где зеркал уже нет
+        row = alpha[y0 + int((y1 - y0) * 0.7)] > 0.5
+        runs, start = [], None
+        for x, on in enumerate(list(row) + [False]):
+            if on and start is None:
+                start = x
+            if not on and start is not None:
+                runs.append((start, x))
+                start = None
+        bx0, bx1 = max(runs, key=lambda r: r[1] - r[0])
+        note += f', обрезан по кузову {bx1 - bx0} из {x1 - x0} px'
+        x0, x1 = bx0, bx1
     rgba = np.dstack([fg, alpha * 255])[y0:y1, x0:x1]
     Image.fromarray(rgba.astype(np.uint8), 'RGBA').save(OUT / (name + '.png'))
     obj = rgba[..., 3] > 127
@@ -180,12 +195,32 @@ def clean_decal(name, path):
         log(f'WARN {name}: на детали осталось {fringe} px зелёной каймы')
 
 
+SKY_BLEND = 0.06  # доля ширины неба, на которой правый край наплывает на левый
+
+
+def clean_sky(name, path):
+    """Небо: без ключа, края сводятся наплывом — панорама оборачивается на 360° без шва.
+    Правая полоса ширины k накладывается на левую с весом, растущим к правому краю результата;
+    результат короче на k, и его последний столбец — сосед первого в исходнике."""
+    t0 = time.time()
+    a = np.asarray(Image.open(path).convert('RGB')).astype(float)
+    h, w, _ = a.shape
+    k = int(w * SKY_BLEND)
+    before = np.abs(a[:, 0] - a[:, -1]).mean()
+    wgt = (np.arange(k) / k)[None, :, None]
+    out = a[:, :w - k].copy()
+    out[:, :k] = a[:, :k] * wgt + a[:, w - k:] * (1 - wgt)
+    after = np.abs(out[:, 0] - out[:, -1]).mean()
+    Image.fromarray(np.clip(out, 0, 255).astype(np.uint8), 'RGB').save(OUT / (name + '.png'))
+    log(f'{name}: {w}×{h} → {w - k}×{h}, разница краёв {before:.1f} → {after:.1f} (из 255), {time.time() - t0:.1f} с')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--only')
     args = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
-    names = sorted({p.stem for p in SRC.iterdir() if p.suffix in ('.png', '.webp') and p.stem[:4] in ('mat-', 'dec-')})
+    names = sorted({p.stem for p in SRC.iterdir() if p.suffix in ('.png', '.webp') and p.stem.split('-')[0] in ('mat', 'dec', 'tram', 'sky')})
     if args.only:
         names = [n for n in names if n == args.only]
     missing = [n for n in TARGET if n not in names and not args.only]
@@ -199,6 +234,8 @@ def main():
                 log(f'WARN {n}: нет цели цвета в TARGET — пропущен')
                 continue
             clean_material(n, p)
+        elif n.startswith('sky-'):
+            clean_sky(n, p)
         else:
             clean_decal(n, p)
     log(f'готово: {len(names)} файлов в {OUT.relative_to(ROOT)}, {time.time() - t0:.1f} с')

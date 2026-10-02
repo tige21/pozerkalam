@@ -34,6 +34,19 @@ const ASSETS = [
   { key: 'car-taillight', file: 'clean/dec-taillight.png', q: 85, required: true, width: 384 },
   { key: 'car-grille', file: 'clean/dec-grille.png', q: 85, required: true, width: 320 },
   { key: 'car-wheel', file: 'clean/dec-wheel.png', q: 85, required: true, width: 256 },
+  /* стили B–E чужих машин: те же размеры, что у стиля A */
+  ...['b', 'c', 'd', 'e'].flatMap((st) => [
+    { key: `car-headlight-${st}`, file: `clean/dec-headlight-${st}.png`, q: 85, required: true, width: 320 },
+    { key: `car-taillight-${st}`, file: `clean/dec-taillight-${st}.png`, q: 85, required: true, width: 320 },
+    { key: `car-grille-${st}`, file: `clean/dec-grille-${st}.png`, q: 85, required: true, width: 320 },
+    { key: `car-wheel-${st}`, file: `clean/dec-wheel-${st}.png`, q: 85, required: true, width: 256 },
+  ]),
+  /* трамвай: торец 2,2 м на экране не шире 500 px даже вблизи, кусок борта 4,7 м — до 1000 */
+  { key: 'tram-front', file: 'clean/tram-front.png', q: 82, required: true, width: 512 },
+  { key: 'tram-side-end', file: 'clean/tram-side-end.png', q: 82, required: true, width: 1024 },
+  { key: 'tram-side-mid', file: 'clean/tram-side-mid.png', q: 82, required: true, width: 1024 },
+  /* небо — вся ширина: панорама 360° на экране растягивается втрое и без того */
+  { key: 'sky-pano', file: 'clean/sky-pano.png', q: 80, required: true },
 ];
 /* модель кузова (tools/blender/export-exterior.py) — JSON в <template>: шаблон не исполняется и не
    попадает ни в скрипты страницы, ни в зеркало codegraph */

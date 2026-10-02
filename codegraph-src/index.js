@@ -575,6 +575,35 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -2468,11 +2497,26 @@ cabinBakeLoad();
    @render-car-footprint), так что касание считается по тому же, что нарисовано. Модель читается один
    раз при загрузке; без шаблона или с битым шаблоном — прежний лофт и одно предупреждение [assets] */
 const CAR_MODEL_D=20;
-const carModel={state:'off', bodies:{}, zones:null, img:{}, cut:new Map(), scratch:null, warned:{}};
+const carModel={state:'off', bodies:{}, zones:null, img:{}, imgDone:false, cut:new Map(), scratch:null, warned:{}};
 /* цвета материалов модели: краска приходит от машины, остальное — постоянное */
 const CM_COL={glass:[42,52,64], trim:[30,32,36], liner:[18,19,22], grille:[30,32,36], plate:[228,232,236],
               head:[52,56,64], tail:[74,16,18]};
 const CM_CLEAR=[0,0,0,0];
+/* стиль чужой машины — детали (фара, фонарь, решётка, диск) и кузов; своя — стиль A, седан: под
+   него запечён салон и сверены линии взгляда. Стиль по порядку машины в уровне: соседи в ряду
+   идут подряд и потому не совпадают */
+const CAR_STYLES=['b','c','d','e'];
+const STYLE_BODY={a:'sedan', b:'sedan', c:'hatch', d:'cross', e:'hatch'};
+function carStyle(o, i){ o.style=CAR_STYLES[i%CAR_STYLES.length]; o.body=STYLE_BODY[o.style]; }
+/* имя картинки детали в стиле: у A — без суффикса; картинки стиля нет — деталь стиля A и одно
+   предупреждение на стиль */
+function carStyleImg(key, style){
+  if(!style || style==='a') return key;
+  const k=key+'-'+style;
+  if(carModel.img[k]) return k;
+  if(carModel.state==='ready' && carModel.imgDone && !carModel.warned[k]){ carModel.warned[k]=1; console.warn('[assets] кузов: нет картинки '+k+' — деталь стиля A'); }
+  return key;
+}
 function carModelLoad(){
   const root=document.getElementById('assets');
   if(!root) return;
@@ -2494,11 +2538,13 @@ function carModelLoad(){
     carModel.scratch=[[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]];
     carModel.state='ready';
   }catch(e){ carModel.state='failed'; console.warn('[assets] кузов: модель не читается ('+e.message+') — рисуется прежний'); return; }
-  for(const k of ['headlight','taillight','grille','wheel']){
-    const img=root.querySelector('img[data-asset="car-'+k+'"]');
-    if(!img){ console.warn('[assets] кузов: нет картинки '+k+' — грань без неё'); continue; }
-    img.decode().then(()=>{ carModel.img[k]=img; }).catch(e=>console.warn('[assets] кузов: '+k+' не распаковалась — грань без неё'));
+  const jobs=[];
+  for(const st of ['', ...CAR_STYLES.map(x=>'-'+x)]) for(const d of ['headlight','taillight','grille','wheel']){
+    const k=d+st, img=root.querySelector('img[data-asset="car-'+k+'"]');
+    if(!img){ if(!st) console.warn('[assets] кузов: нет картинки '+k+' — грань без неё'); continue; }
+    jobs.push(img.decode().then(()=>{ carModel.img[k]=img; }).catch(e=>console.warn('[assets] кузов: '+k+' не распаковалась — грань без неё')));
   }
+  Promise.all(jobs).then(()=>{ carModel.imgDone=true; });
 }
 /* доля картинки для грани: фара и фонарь лежат на двух гранях (торец и скос угла), каждой — своя
    часть картинки; резка один раз, дальше из кэша */
@@ -2533,7 +2579,7 @@ function carBody(name){
   if(!carModel.warned[name]){ carModel.warned[name]=1; console.warn('[assets] кузов '+name+': нет в модели — рисуется седан'); }
   return carModel.bodies.sedan;
 }
-function emitCarModel(u,v,th,col,lit,body){
+function emitCarModel(u,v,th,col,lit,body,style){
   const M=carModel, B=body||M.bodies.sedan, V=B.V, W=B.W, F=fwd(th), R=rgt(th), cx=-u, cz=v;
   for(let i=0,k=0;i<W.length;i++,k+=3){ const lat=V[k], z=V[k+2], w=W[i];
     w.x=cx+R.x*lat+F.x*z; w.y=V[k+1]; w.z=cz+R.z*lat+F.z*z; }
@@ -2544,7 +2590,7 @@ function emitCarModel(u,v,th,col,lit,body){
   const paint=mats?MO.paint:undefined, glass=mats?MO.glass:undefined, plastic=mats?MO.plastic:undefined;
   const blinkOn=Math.floor(game.t/0.75)%2===0;
   const turnL=(lit.hazard || lit.blink==='L') && blinkOn, turnR=(lit.hazard || lit.blink==='R') && blinkOn;
-  const Z=M.zones.a||M.zones;
+  const Z=M.zones[style||'a']||M.zones.a||M.zones;
   for(const f of B.F){
     const ix=f.i, q=M.scratch[ix.length]; for(let j=0;j<ix.length;j++) q[j]=W[ix[j]];
     const n=f.n, nw={x:R.x*n[0]+F.x*n[2], y:n[1], z:R.z*n[0]+F.z*n[2]};
@@ -2558,9 +2604,12 @@ function emitCarModel(u,v,th,col,lit,body){
       case 'trim': c=CM_COL.trim; o=plastic; break;
       case 'liner': c=CM_COL.liner; o=undefined; break;
       default: {
-        c = f.m==='lamp' ? (f.lamp.startsWith('tail')?CM_COL.tail:CM_COL.head) : CM_COL[f.m] || CM_COL.trim;
-        const im=f.img ? carModelImg(f.img, f.uv) : null;
-        o = im ? {img:im} : plastic;
+        const im=f.img ? carModelImg(f.img==='plate' ? 'plate' : carStyleImg(f.img, style), f.uv) : null;
+        /* у фар, фонарей и решётки прозрачное в картинке — краска кузова: фара «врезана» в кузов,
+           а скошенная фара стилей C–E не стоит в тёмном прямоугольнике */
+        const painted = im && (f.m==='lamp' || f.m==='grille');
+        c = painted ? col : f.m==='lamp' ? (f.lamp.startsWith('tail')?CM_COL.tail:CM_COL.head) : CM_COL[f.m] || CM_COL.trim;
+        o = im ? (painted && mats ? {mat:'paint', img:im} : {img:im}) : plastic;
       }
     }
     pushFace(q, nw, c, f.b, o);
@@ -2586,9 +2635,10 @@ function emitCarMesh(u, v, th, col, st, lights, look){
   const model = carModel.state==='ready' && (lit.own || mdx*mdx+mdz*mdz < CAR_MODEL_D*CAR_MODEL_D);
   /* кузов — по виду машины (look.body); своя — всегда седан */
   const body = model ? carBody(look && look.body || 'sedan') : null, dy = body ? body.dy : 0;
-  if(model) emitCarModel(u,v,th,col,lit,body); else emitCarBody(u,v,th,col);
+  const style = look && look.style || 'a';
+  if(model) emitCarModel(u,v,th,col,lit,body,style); else emitCarBody(u,v,th,col);
   emitCarDoors(u,v,th,!model,dy);
-  const zr=-C2R, zf=-C2R+CAR.wheelbase, wimg = model ? carModel.img.wheel : null;
+  const zr=-C2R, zf=-C2R+CAR.wheelbase, wimg = model ? carModel.img[carStyleImg('wheel', style)] : null;
   const w1=at(-t,zr), w2=at(t,zr), w3=at(-t,zf), w4=at(t,zf);
   pushWheelCyl(w1.u,w1.v,th,-1,wimg); pushWheelCyl(w2.u,w2.v,th,1,wimg);
   pushWheelCyl(w3.u,w3.v,th+a.l,-1,wimg); pushWheelCyl(w4.u,w4.v,th+a.r,1,wimg);
@@ -3565,6 +3615,7 @@ function trafficInit(){
       if(trafNearStart(rt, s0) || tooClose(s0)) continue;
       placed.push(s0);
       const o=trafCar(rt, s0, PALETTE[TRAF_COLS[made%TRAF_COLS.length]]);
+      carStyle(o, made+1);
       level.obs.push(o); level.rend.push(o); level.actors.push(o); made++;
     }
     if(made>=TRAF.cap) break;
@@ -6069,7 +6120,7 @@ function shiftSel(step){
   car.sel=tgt; tone(600,0.05,0.028,'sine');
 }
 const game = { t:0, hits:0, holdT:0, done:false, li:0, hitCd:0, flash:0, moved:false,
-               hitMsg:'', hitMsgT:0 };
+               hitMsg:'', hitMsgT:0, parked:false, parkT:0 };
 /* разбор касания: чем и обо что — именно это знание переносится на реальную машину */
 const OBST_NAME={car:'машину', wall:'стену', kerb:'бордюр', cone:'конус', tram:'трамвай'};
 function hitReason(o){
@@ -6186,7 +6237,9 @@ function setBody(u,v,th){ const f=fuv(th); car.ru=u-f.u*C2R; car.rv=v-f.v*C2R; c
 
 function buildRenderList(obs){
   const out=[];
+  let nCar=0;
   for(const o of obs){
+    if(o.kind==='car' && !o.style) carStyle(o, nCar++);
     /* sign и guide проходят целиком: сегментация копирует только базовые поля и потеряла
        бы pic и rows */
     if(o.kind==='car'||o.kind==='cone'||o.kind==='sign'||o.kind==='light'||o.kind==='guide'||o.kind==='tram'){
@@ -6270,6 +6323,7 @@ function restart(){
   car.blink=null; syncBlinkDom(); car.roll=0;
   car.hand=false; syncHandDom();
   game.t=0; game.hits=0; game.holdT=0; game.done=false; game.hitCd=0; game.flash=0; game.moved=false;
+  setParked(false);
   trails = {fl:[],fr:[],rl:[],rr:[]}; trailT=0;
   for(const o of level.obs){ o.knocked=false; o._touch=false; o._hitByPlayer=false; }
   for(const a of level.actors){ a.u=a.act.u0; a.v=a.act.v0; a.yaw=a.act.yaw0;
@@ -11256,7 +11310,12 @@ function frame(ts){
     if(!game.moved && Math.abs(car.vel)>0.5) game.moved=true;
     game.t+=dt; game.hitCd-=dt;
     pushTrail(dt);
-    if(goalReached()){ game.holdT+=dt; if(game.holdT>0.55) win(); } else game.holdT=0;
+    /* уровень закрывает игрок, а не зона: автозачёт через 0,55 с не давал выехать и заехать
+       ещё раз. Демо и дриллы закрываются сами — у дрилла остановка и есть ответ, а после
+       раскрытия замер живой, и ручной зачёт позволил бы доползти до цели по цифре */
+    if(goalReached()){ game.holdT+=dt;
+      if(game.holdT>0.55){ if(demo || precDef()) win(); else setParked(true); } }
+    else { game.holdT=0; setParked(false); }
   }
   game.flash=Math.max(0,game.flash-dt*2.6);
   if(game.hitMsgT>0) game.hitMsgT-=dt;
@@ -11309,7 +11368,20 @@ function parkBeep(dt){
   if(beepT<=0){ tone(d<0.35?1500:1100, d<0.35?0.16:0.05, 0.05); 
     beepT = d<0.35 ? 0.18 : lerp(0.07,0.62,(d-0.35)/1.1); }
 }
+function setParked(on){
+  if(game.parked===on) return;
+  game.parked=on;
+  if(on){ game.parkT=game.t; console.info('[FIX:finish] в зоне, ждём «Завершить»', {li:game.li, t:+game.t.toFixed(1)}); }
+  document.body.classList.toggle('parked', on);
+}
+/* время — на момент въезда в зону: чтение карточки перед нажатием не должно отнимать рекорд */
+function finishLevel(){
+  if(!game.parked || game.done || paused) return;
+  console.info('[FIX:finish] завершено игроком', {li:game.li, t:+game.parkT.toFixed(1)});
+  game.t=game.parkT; win();
+}
 function win(){
+  setParked(false);
   game.done=true;
   track('level_win', Object.assign(anLevel(game.li), { t:+game.t.toFixed(1), hits:game.hits, clean:game.hits===0,
     err_cm: precDef() ? Math.round(Math.abs(precErr())*100) : null, demo:!!demo }));

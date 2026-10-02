@@ -42,28 +42,35 @@ def log(m):
 
 
 def find_zone(path, pred, x0):
-    """Доля картинки (u0, v0, u1, v1), где лежат пиксели pred правее доли x0; None — не нашлось.
-    Ищется только у правого торца: там по брифу секции заднего хода и поворота, а блики стекла
-    по всей длине дают ложные «белые» пиксели."""
+    """Доля картинки (u0, v0, u1, v1), где лежит секция цвета pred правее доли x0; None — не нашлось.
+    Ищется только у правого торца (там по брифу секции заднего хода и поворота) и по плотности:
+    строки и столбцы, где секции не меньше трети от самой плотной строки. Простая рамка по
+    пикселям ловила хромовый ободок фонаря — белый по всей высоте картинки."""
     if not path.exists():
         return None
     a = np.asarray(Image.open(path).convert('RGBA')).astype(int)
     h, w = a.shape[:2]
     r, g, b, al = a[..., 0], a[..., 1], a[..., 2], a[..., 3]
     mask = pred(r, g, b) & (al > 200)
-    mask[:, :int(w * x0)] = False
-    ys, xs = np.where(mask)
-    if len(xs) < max(40, w * h // 4000):
+    c0 = int(w * x0)
+    mask[:, :c0] = False
+    if mask.sum() < max(40, w * h // 4000):
         return None
-    return [round(xs.min() / w, 3), round(ys.min() / h, 3), round((xs.max() + 1) / w, 3), round((ys.max() + 1) / h, 3)]
+    rows = mask[:, c0:].mean(1)
+    ry = np.where(rows >= rows.max() / 3)[0]
+    cols = mask[ry.min():ry.max() + 1].mean(0)
+    cx = np.where(cols >= cols.max() / 3)[0]
+    return [round(cx.min() / w, 3), round(ry.min() / h, 3), round((cx.max() + 1) / w, 3), round((ry.max() + 1) / h, 3)]
 
 
 def white(r, g, b):
-    return (r > 165) & (g > 165) & (b > 165) & ((np.maximum(np.maximum(r, g), b) - np.minimum(np.minimum(r, g), b)) < 45)
+    mx = np.maximum(np.maximum(r, g), b)
+    return (r > 165) & (g > 165) & (b > 165) & (np.minimum(np.minimum(r, g), b) > 0.75 * mx)
 
 
 def amber(r, g, b):
-    return (r > 160) & (g > 70) & (g < 200) & (b < 90) & ((r - g) > 45)
+    # жёлтое, а не оранжево-красное: у красного световода g/r ≈ 0,2, у поворотника 0,5–0,8
+    return (r > 160) & (g > 0.45 * r) & (g < 0.85 * r) & (b < 0.45 * g)
 
 
 def zones():
