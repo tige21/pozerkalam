@@ -361,6 +361,44 @@ const ovText = (page) => page.evaluate(() => document.getElementById('overlay').
   await ctx.close();
 }
 
+/* ---------- пейволл ---------- */
+{
+  const { ctx, page, errors } = await openGame({ auth: ['vk', 'yandex'], api: mockApi({}) });
+  const r = await page.evaluate(() => {
+    window.PAYWALL_FORCE = [19];
+    doAct('start'); showLevelPick();
+    const card = document.querySelector('.lvcard[data-lvl="19"]');
+    const lock = { cls: card.classList.contains('locked'), n: card.querySelector('.n').textContent, d: card.querySelector('.d').textContent };
+    card.click();
+    const ov = document.getElementById('overlay');
+    return { lock, li: game.li, shown: ov.style.display !== 'none', h1: (ov.querySelector('h1') || {}).textContent,
+      login: [...ov.querySelectorAll('.acctbtns button')].length, buy: !!ov.querySelector('[data-act="pay-buy"]'),
+      back: !!ov.querySelector('[data-act="pick"]'), restore: !!ov.querySelector('[data-act="pay-restore"]') };
+  });
+  const pv = await rbEvents(page, 'paywall_view');
+  check('закрытый уровень: 🔒 на карточке, пейволл гостю с входом, без «Купить» до провайдера (@acct-paywall-screen)',
+    r.lock.cls && /🔒/.test(r.lock.n) && /в курсе/.test(r.lock.d) && r.li !== 19 && r.shown && r.h1 === 'Эстакада: трогание в горку'
+      && r.login === 2 && !r.buy && r.back && !r.restore && pv.length === 1 && pv[0].li === 20 && pv[0].via === 'pick',
+    JSON.stringify({ ...r, pv }));
+  check('консоль чиста на пейволле', realErrors(errors).length === 0, realErrors(errors).slice(0, 2).join(' | '));
+  await ctx.close();
+}
+
+{
+  const st = {};
+  const { ctx, page } = await openGame({ auth: ['vk', 'yandex'], api: mockApi(st), storage: LOGGED });
+  await page.waitForTimeout(600);
+  await page.evaluate(() => { window.PAYWALL_FORCE = [19]; doAct('start'); openLevel(19, 'pick'); });
+  const before = await page.evaluate(() => ({ li: game.li, restore: !!document.querySelector('#overlay [data-act="pay-restore"]') }));
+  st.ent = [{ product: 'course', expires_at: null }];
+  await page.evaluate(() => document.querySelector('#overlay [data-act="pay-restore"]').click());
+  await page.waitForTimeout(500);
+  const after = await page.evaluate(() => ({ li: game.li, ov: document.getElementById('overlay').style.display, ent: acct.ent.length }));
+  check('«Восстановить покупку»: /me с курсом открывает закрытый уровень (@acct-paywall-restore)',
+    before.li !== 19 && before.restore && after.li === 19 && after.ov === 'none' && after.ent === 1, JSON.stringify({ before, after }));
+  await ctx.close();
+}
+
 /* ---------- вход в уровень ---------- */
 {
   const { ctx, page } = await openGame({ rybbit: false });

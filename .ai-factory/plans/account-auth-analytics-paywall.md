@@ -217,7 +217,7 @@ P1 не ждёт P2–P4: аналитика выкатывается перво
 
 ### Фаза 4 · Задел под платёжку
 
-- [ ] **T12. Замки уровней и энтитлменты: `PAYWALL`, `entitled`, `levelLocked`, `openLevel`, пейволл** (зависит от T9)
+- [x] **T12. Замки уровней и энтитлменты: `PAYWALL`, `entitled`, `levelLocked`, `openLevel`, пейволл** (зависит от T9)
   Файл: `index.html`.
   - `const PAYWALL = {product:'course', levels:[]}` — пусто: сегодня ничего не закрыто, список заполнит M7. `const PAY_ON = false` — кнопки «Купить» нет, пока не подключён провайдер. `window.PAYWALL_FORCE` (массив индексов) — только для гейтов.
   - `entitled(product)` — `acct && acct.ent.some(e => e.product===product && (!e.expires_at || e.expires_at*1000 > Date.now()))`. Кэш `acct.ent` живёт в `pz_auth` и обновляется по `/me`.

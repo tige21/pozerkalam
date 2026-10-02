@@ -173,6 +173,8 @@ body.needbrake .tdrive [data-hold="back"]{background:rgba(190,52,52,.8);border-c
 #overlay button.lvcard.weak{border-color:rgba(255,214,60,.5)}
 .lvcard.weak .n{color:#ffd63c}
 .lvcard .n{font-size:11px;color:#9fd0ff;font-weight:700}
+#overlay button.lvcard.locked{border-style:dashed}
+.lvcard.locked .t{color:#93a7bd}
 .lvcard .t{font-size:13.5px;color:#fff;margin:2px 0 3px;line-height:1.25;overflow-wrap:anywhere}
 /* три строки через line-clamp: slice(0,90) резал 20 описаний из 32 посреди слова без многоточия */
 .lvcard .d{font-size:11.5px;color:#93a7bd;line-height:1.4;text-wrap:pretty;
@@ -9152,7 +9154,7 @@ async function authBoot(){
   try{ r=await apiRaw('/auth/claim','POST',{sid:m[1], nonce:nonce}); }catch(e){ r={status:0, json:{}}; }
   const ok=authClaimed(r.json.provider||'?', r);
   /* уровень, с которого уходили на вход: грузится за стартовым экраном, «Поехали» продолжит его */
-  if(ok && ret && ret.li>0 && ret.li<LEVELS.length){
+  if(ok && ret && ret.li>0 && ret.li<LEVELS.length && !levelLocked(ret.li)){
     loadLevel(ret.li);
     showOv(startHTML()); }
 }
@@ -9232,6 +9234,8 @@ function acctRerender(){
   if(ovEl.style.display==='none' || authWait) return;
   if(ovCard.querySelector('.lvgrid')) showOv(levelPickHTML());
   else if(ovCard.querySelector('[data-act="start"]')) showOv(startHTML());
+  else if(ovCard.querySelector('.paywall')){
+    if(paywallLi>=0 && !levelLocked(paywallLi)) openLevel(paywallLi,'unlock'); else showOv(acctNoteHTML()+paywallHTML(paywallLi)); }
   else {
     /* итоги уровня целиком не перерисовываются (их держит game.done) — меняется только слот входа */
     const slot=ovCard.querySelector('.acctslot');
@@ -9239,6 +9243,54 @@ function acctRerender(){
     slot.innerHTML=acctNoteHTML()+(acct?acctLineHTML():'');
     slot.querySelectorAll('button[data-act]').forEach(b=> b.onclick=()=>doAct(b.dataset.act));
   }
+}
+
+/* ---------- пейволл ---------- */
+/* Задел под платёжку (M7). Список закрытых уровней пуст: сегодня не закрыто ничего, его заполнит
+   решение владельца (docs/monetization-m7.md). Кнопки «Купить» нет, пока не подключён провайдер:
+   payStart → провайдер → вебхук сервиса → grant → покупка приходит в /me. Замок стоит только на
+   входе игрока (openLevel): loadLevel зовут старт страницы и все гейты tools/, и замок в нём уронил
+   бы их в день, когда закроют первый уровень. Защита «от честных»: код уровней лежит в странице,
+   сервер честно хранит покупку, а клиентский замок снимается через DevTools */
+const PAYWALL={ product:'course', levels:[] };
+const PAY_ON=false;
+const PAY={ price:'' };
+let paywallLi=-1;
+function entitled(product){
+  if(!acct || !Array.isArray(acct.ent)) return false;
+  const t=Date.now();
+  return acct.ent.some(e=> e && e.product===product && (!e.expires_at || e.expires_at*1000>t));
+}
+/* первый уровень грузится на старте страницы, свои площадки — работа самого игрока: их не закрыть */
+function levelLocked(i){
+  const l=LEVELS[i];
+  if(!l || l.custom || i===0) return false;
+  const list=Array.isArray(window.PAYWALL_FORCE) ? window.PAYWALL_FORCE : PAYWALL.levels;
+  return list.indexOf(i)>=0 && !entitled(PAYWALL.product);
+}
+function paywallHTML(i){
+  const l=LEVELS[i]||{}, nm=String(l.name||'').split('· ')[1]||l.name||'';
+  let s='<div class="paywall"><h1>'+esc(nm)+'</h1>'
+    +'<p>Уровень входит в курс подготовки к экзамену.</p>'
+    +'<p>'+(PAY_ON && PAY.price ? 'Курс: <b>'+esc(PAY.price)+'</b>.' : 'Курс скоро откроется.')+'</p></div>';
+  if(!acct && AUTH_ON) s+=acctBtnsHTML('Покупка привязывается к аккаунту. Войди, чтобы купить.');
+  if(acct && PAY_ON) s+='<button data-act="pay-buy">Купить курс</button>';
+  if(acct) s+='<button data-act="pay-restore" class="ghost">Восстановить покупку</button>';
+  return s+'<button data-act="pick" class="ghost">Выбрать другой уровень</button>';
+}
+function payStart(product){
+  console.info('[pay] покупка: '+product+' — провайдер не подключён');
+  track('purchase_start', {product:product});
+  toast('Оплата появится скоро', 3);
+}
+async function payRestore(){
+  const li=paywallLi;
+  console.info('[pay] восстановление покупки');
+  track('purchase_restore', {product:PAYWALL.product});
+  await authMe();
+  if(li>=0 && !levelLocked(li)){ openLevel(li,'restore'); return; }
+  acctNote='Покупка на этом аккаунте не найдена.';
+  showOv(acctNoteHTML()+paywallHTML(li));
 }
 
 /* ---------- оверлеи ---------- */
@@ -9425,6 +9477,13 @@ function showLevelPick(){ showOv(levelPickHTML()); }
    Экзамен открывает свой бриф маршрута, и его не закрываем: раньше вызывающий hideOv() гасил
    бриф в тот же миг, и с карточки выбора маршрут перед стартом не видел никто */
 function openLevel(i, via){
+  if(levelLocked(i)){
+    paywallLi=i;
+    console.info('[pay] уровень '+(i+1)+' закрыт — пейволл');
+    track('paywall_view', Object.assign(anLevel(i), {via:via, account:acct?1:0}));
+    showOv(paywallHTML(i));
+    return;
+  }
   loadLevel(i);
   if(!level.def.examRoute) hideOv();
   anLevelStart(via);
@@ -9444,6 +9503,8 @@ function doAct(a){
   if(a==='auth-delete'){ acctBack=ovCard.innerHTML; showOv(acctDeleteHTML()); return; }
   if(a==='auth-delete-no'){ showOv(acctBack||startHTML()); return; }
   if(a==='auth-delete-yes'){ authDelete(); return; }
+  if(a==='pay-restore'){ payRestore(); return; }
+  if(a==='pay-buy'){ payStart(PAYWALL.product); return; }
   /* «прервать» обязано выводить ИЗ экзамена. Раньше кнопка вела в 'again': маршрут
      начинался заново, игрок оставался в экзамене — со стороны это выглядело как
      «нажал прервать, ничего не произошло» */
@@ -9526,13 +9587,13 @@ function levelPickHTML(){
         +'<p style="color:#93a7bd;font-size:12.5px;margin:-6px 0 8px">'
         +'Грубая ошибка — столкновение, непропуск, красный — отменяет попытку, как на экзамене.</p><div class="lvgrid">'; }
     const nm=l.custom ? l.name.replace(/^★\s*/,'') : (l.name.split('· ')[1] || l.name);
-    const pg=progOf(l.name), done=progPassed(l.name);
+    const pg=progOf(l.name), done=progPassed(l.name), locked=levelLocked(i);
     s+='<button type="button" class="lvcard'+(i===game.li?' on':'')+(done?' pass':'')
-      +(weakSet.has(i)?' weak':'')+'" data-lvl="'+i+'">'
-      +'<span class="n">'+(l.custom?'★':(i+1))+(done?' ✓':'')+'</span>'
+      +(weakSet.has(i)?' weak':'')+(locked?' locked':'')+'" data-lvl="'+i+'">'
+      +'<span class="n">'+(l.custom?'★':(i+1))+(done?' ✓':'')+(locked?' 🔒':'')+'</span>'
       +'<span class="t">'+nm+'</span>'
       +'<span class="d">'
-      +(pg?progLine(l.name):esc(l.task||''))+'</span></button>';
+      +(locked?'в курсе подготовки к экзамену':pg?progLine(l.name):esc(l.task||''))+'</span></button>';
   });
   s+='</div><p style="margin-top:10px;color:#93a7bd;font-size:12.5px">'
     +(MOB?'':'Первые девять — ещё и клавишами 1…9. ')+'★ — твои площадки из редактора.</p>'

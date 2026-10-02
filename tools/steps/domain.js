@@ -26,9 +26,20 @@
     return L;
   }
   const PHASE_RU = { G: 'зелёный', Y: 'жёлтый', R: 'красный' };
+  /* hideOv прячет карточку, но не чистит её: пейволл прошлого сценария остаётся в DOM */
+  const paywallShown = () => document.getElementById('overlay').style.display !== 'none' && !!document.querySelector('#overlay .paywall');
 
   const STEPS = [
     /* ---------- Дано ---------- */
+    [new RegExp('^в курс входят уровни ' + N + ' и ' + N + '$'), (a, b) => { window.PAYWALL_FORCE = [+a - 1, +b - 1]; }],
+    [new RegExp('^в курс входит уровень ' + N + '$'), (a) => { window.PAYWALL_FORCE = [+a - 1]; }],
+    [/^игрок без покупки$/, () => { acct = null; }],
+    [new RegExp('^у игрока покупка ' + S + '$'), (product) => {
+      acct = { id: 'gh', name: 'gh', provider: 'vk', ent: [{ product, expires_at: null }] };
+    }],
+    [new RegExp('^у игрока покупка ' + S + ', истёкшая вчера$'), (product) => {
+      acct = { id: 'gh', name: 'gh', provider: 'vk', ent: [{ product, expires_at: Math.floor(Date.now() / 1000) - 86400 }] };
+    }],
     [new RegExp('^уровень ' + S + '$'), (name) => {
       loadLevel(levelByName(name)); hideOv(); paused = true;
       ctx.touches = 0;
@@ -71,6 +82,9 @@
       if (after > before) ctx.touches += after - before;
     }],
     [/^измеряются зазоры$/, () => { ctx.clear = clearances(); }],
+    [new RegExp('^игрок открывает уровень ' + N + '$'), (n) => {
+      ctx.before = game.li; hideOv(); openLevel(+n - 1, 'pick');
+    }],
     [new RegExp('^игровое время ' + N + ' секунд[а-я]*$'), (t) => { game.t = +t; }],
     [new RegExp('^начислен штраф ' + S + '$'), (code) => { examPenalty(code); }],
     [/^срабатывают детекторы нарушений$/, () => {
@@ -81,6 +95,14 @@
     [/^считается окно в потоке$/, () => { const c = bodyPos(); ctx.gap = trafficGap(c.u, c.v, 6); }],
 
     /* ---------- Тогда ---------- */
+    [/^открыт пейволл, уровень не сменился$/, () => {
+      if (!paywallShown()) throw new Error('пейволла нет на экране');
+      if (game.li !== ctx.before) throw new Error('уровень сменился на ' + (game.li + 1));
+    }],
+    [new RegExp('^загружен уровень ' + N + '$'), (n) => {
+      if (game.li !== +n - 1) throw new Error('загружен уровень ' + (game.li + 1) + ', ожидали ' + n);
+      if (paywallShown()) throw new Error('на экране пейволл');
+    }],
     [/^касания нет$/, () => { if (ctx.touches) throw new Error('засчитано касаний: ' + ctx.touches); }],
     [/^касание засчитано$/, () => { if (!ctx.touches) throw new Error('касание не засчитано'); }],
     [new RegExp('^засчитано ' + N + ' касани[ея]$'), (n) => {
@@ -141,6 +163,8 @@
   window.ghRun = function (steps) {
     for (const k in ctx) delete ctx[k];
     ctx.touches = 0;
+    /* замки и аккаунт задаёт сам сценарий: пейволл соседнего сценария не должен протечь сюда */
+    delete window.PAYWALL_FORCE; acct = null;
     for (let i = 0; i < steps.length; i++) {
       const text = steps[i];
       const hit = STEPS.find(([re]) => re.test(text));
