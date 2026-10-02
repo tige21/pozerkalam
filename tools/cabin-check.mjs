@@ -8,10 +8,10 @@
    Проём меряется по самим граням куба, а не по кадрам: глаз в кузове неподвижен, и куб от
    поворота головы не зависит — пять поз головы проверяли бы одну и ту же картинку.
      PW_DIR=/tmp/pw node tools/cabin-check.mjs
-     FAULT=shift|eye|budget|normal|script|marks|mirror|car — сломать нарочно и увидеть красный: сдвинуть грани на 4 px,
+     FAULT=shift|eye|budget|normal|script|marks|mirror|car|greenhouse — сломать нарочно и увидеть красный: сдвинуть грани на 4 px,
        поменять EYE после рендера, уронить бюджет до 0,5 МБ, проверить отказ на целой странице,
        завернуть блок картинок в <script>, держать руль прямо при проверке меток, отключить куб зеркала,
-       оставить модель кузова на месте в проверке отказа
+       оставить модель кузова на месте в проверке отказа, рисовать из салона стойки и крышу модели
    Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена. */
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
@@ -197,6 +197,36 @@ if (okPage.frame.state === 'ready') {
   }, FAULT);
   check('метка 12 часов на руле видна и окрашена по оборотам: жёлтая, оранжевая на втором, красная на упоре (@render-wheel-marks)',
     marks.every((m) => m.ok), JSON.stringify(marks));
+}
+/* кузов своей машины из салона: стойки, крыша и рамы окон модели стоят не там, где окна куба, и
+   их грани, смотрящие внутрь проёмов, проходили отсечение — модель рисовалась поверх обзора.
+   Видимые из глаза грани кузова собираются в основном виде на пяти поворотах головы */
+if (okPage.frame.state === 'ready') {
+  const own = await okPage.page.evaluate((fault) => {
+    if (fault === 'greenhouse') for (const b of Object.values(carModel.bodies)) for (const f of b.F) f.g = 0;
+    const origS = drawSceneInto, origE = emitCarModel, origP = pushFace;
+    let main = false, rec = null;
+    const seen = [];
+    window.drawSceneInto = (o) => { main = o.cube === cabinBake; try { return origS(o); } finally { main = false; } };
+    window.emitCarModel = function (u, v, th, col, lit) { rec = main && lit && lit.own ? [] : null;
+      try { return origE.apply(this, arguments); } finally { if (rec) seen.push(...rec); rec = null; } };
+    window.pushFace = function (vv) { const k = faces.length; const r = origP.apply(this, arguments);
+      if (rec && faces.length > k) rec.push(vv.map((q) => ({ x: q.x, y: q.y, z: q.z }))); return r; };
+    try {
+      for (const yaw of [0, -60, 60, 135, -135]) { opt.fpYaw = rad(yaw); opt.fpPitch = rad(-8); render(0); }
+    } finally { window.drawSceneInto = origS; window.emitCarModel = origE; window.pushFace = origP; opt.fpYaw = 0; opt.fpPitch = 0; }
+    const c = bodyPos(), f = fuv(car.th), r = ruv(car.th);
+    let over = 0, top = -1, at = null, hood = 0;
+    for (const vs of seen) {
+      let fy = -1, fz = 0, fl = 0;
+      for (const q of vs) { const du = -q.x - c.u, dv = q.z - c.v; if (q.y > fy) { fy = q.y; fz = du * f.u + dv * f.v; fl = du * r.u + dv * r.v; } }
+      if (fy > MIR_H.y0 + 0.005) { over++; if (fy > top) { top = fy; at = [+fl.toFixed(2), +fz.toFixed(2)]; } }
+      if (fz > 1.2) hood++;
+    }
+    return { faces: seen.length, over, top: +top.toFixed(3), at, hood };
+  }, FAULT);
+  check('из салона кузов своей машины виден только ниже подоконной линии, капот рисуется (@render-cabin-own-body)',
+    own.over === 0 && own.hood > 0, JSON.stringify(own));
 }
 await okPage.context.close();
 

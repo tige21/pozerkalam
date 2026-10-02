@@ -263,6 +263,19 @@ def build(C, body):
     near = [p for p in win if 0.6 < p[2] < 1.0] or win
     belt = min(p[1] for p in near)
     dy = round(belt - 0.975, 3)
+    # надстройка — стёкла, стойки, крыша и рамы окон: всё выше низа окон между кромками лобового и
+    # заднего стекла. Из салона её заменяет куб салона, а грани рам модели, смотрящие внутрь проёмов,
+    # проходят отсечение по нормали и рисовались поверх обзора: окна модели стоят не там, где окна
+    # куба. Игра пропускает грани с g для своей машины, пока камера в салоне
+    g_zmin = min(p[2] for p in win)
+    n_g = 0
+    for f in m.f:
+        pts = [m.v[i] for i in f['i']]
+        cy = sum(p[1] for p in pts) / len(pts)
+        cz = sum(p[2] for p in pts) / len(pts)
+        if f['m'] == 'glass' or (cy > belt - 0.01 and g_zmin < cz < glass_front):
+            f['g'] = 1
+            n_g += 1
     front_glass = [p for p in win if p[2] > glass_front - 0.25 and abs(p[0]) < 0.4]
     wz = glass_front - 0.03
     wy = min(p[1] for p in front_glass) + 0.006 if front_glass else 1.0
@@ -277,7 +290,7 @@ def build(C, body):
         f"(CAR {-C['C2R'] + car['wheelbase']:+.3f} / {-C['C2R']:+.3f}), колея {wh['x'] * sx * 2:.3f}, центр колеса {wh['zc'] * sy:.3f}")
     log(f"{body}: граней {summ['faces']} (склеено {merged}, до {max_n} вершин), зеркал убрано граней {dropped}, труб {len(caps)}; "
         f"фары и фонари {lamp_ids}, номеров {n_plates}; от прежнего следа CAR_ST до {cmp_['dev_cm']} см; "
-        f"низ окна {belt:.2f} → dy {dy:+.3f}"
+        f"низ окна {belt:.2f} → dy {dy:+.3f}, надстройка {n_g} граней"
         + (f"; как в референсе над линией взгляда: перёд {over['over_front']}°, зад {over['over_rear']}° → из салона "
            f"высота × {cabin_k} (капот {low_s['over_front']}°, багажник {low_s['over_rear']}°)" if own else ''))
     for f in fails:

@@ -2540,7 +2540,7 @@ function carModelLoad(){
       const nv=v.length/3, F=[];
       for(const f of b.f){
         for(const i of f.i) if(!(i>=0 && i<nv)) throw new Error('кузов '+name+': индекс вершины вне модели');
-        F.push({i:f.i, m:f.m, n:f.n, s:f.s||null, b:f.b||0, img:f.img||null, uv:f.uv||null, lamp:f.lamp||null, c:f.c||null});
+        F.push({i:f.i, m:f.m, n:f.n, s:f.s||null, b:f.b||0, img:f.img||null, uv:f.uv||null, lamp:f.lamp||null, c:f.c||null, g:f.g||0});
       }
       carModel.bodies[name]={V:Float32Array.from(v), F, W:Array.from({length:nv},()=>({x:0,y:0,z:0})), dy:b.dy||0,
                              wiper:b.wiper||null, doors:b.doors||null, axles:b.axles||null, cabinK:b.cabinK||1,
@@ -2601,8 +2601,12 @@ function carBody(name){
    из models.py: наибольший, при котором капот не выше линии взгляда), а снаружи и в боковых
    зеркалах она как в референсе */
 function carCabinK(B, lit){ return lit.own && B.cabinK<1 && camInsideCabin() ? B.cabinK : 1; }
+/* изнутри своя машина рисуется без надстройки (стёкла, стойки, крыша — грани с g из models.py): её
+   заменяет куб салона, а окна модели стоят не там, где окна куба, и грани рам, смотрящие внутрь
+   проёмов, проходили отсечение — стойки и крыша модели ложились поверх обзора из-за руля */
 function emitCarModel(u,v,th,col,lit,body,style){
-  const M=carModel, B=body||M.bodies.sedan, V=B.V, WB=B.W, F=fwd(th), R=rgt(th), cx=-u, cz=v, ky=carCabinK(B, lit);
+  const M=carModel, B=body||M.bodies.sedan, V=B.V, WB=B.W, F=fwd(th), R=rgt(th), cx=-u, cz=v;
+  const inCab=!!lit.own && camInsideCabin(), ky=inCab && B.cabinK<1 ? B.cabinK : 1;
   for(let i=0,k=0;i<WB.length;i++,k+=3){ const lat=V[k], z=V[k+2], w=WB[i];
     w.x=cx+R.x*lat+F.x*z; w.y=V[k+1]*ky; w.z=cz+R.z*lat+F.z*z; }
   const dx=-cam.pos.x-u, dz=cam.pos.z-v, d2=dx*dx+dz*dz, Q=QUALITY[qLevel];
@@ -2614,6 +2618,7 @@ function emitCarModel(u,v,th,col,lit,body,style){
   const turnL=(lit.hazard || lit.blink==='L') && blinkOn, turnR=(lit.hazard || lit.blink==='R') && blinkOn;
   const Z=M.zones[style||'a']||M.zones.a||M.zones;
   for(const f of B.F){
+    if(inCab && f.g) continue;
     const ix=f.i, q=M.scratch[ix.length]; for(let j=0;j<ix.length;j++) q[j]=WB[ix[j]];
     const n=f.n, nw={x:R.x*n[0]+F.x*n[2], y:n[1], z:R.z*n[0]+F.z*n[2]};
     let c, o;
