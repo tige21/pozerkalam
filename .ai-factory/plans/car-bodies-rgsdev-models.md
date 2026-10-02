@@ -135,7 +135,7 @@ Rationale: Skipped by user — внешний вид машин не относ�
 
 ### Phase 3: Документация и выкатка
 
-- [ ] **Task 8: Документация** (depends on 7) — `CLAUDE.md` (раздел о кузовах: модели RgsDev, конвейер
+- [x] **Task 8: Документация** (depends on 7) — `CLAUDE.md` (раздел о кузовах: модели RgsDev, конвейер
   `models.py` вместо `export-exterior.py`, правила подгонки и почему физика не трогается; убрать абзац
   про картинки с чертежей), `assets/src/SOURCES.md` (набор, лицензия CC0, что выкинуто), память агента.
   <!-- Commit checkpoint: task 8 -->
