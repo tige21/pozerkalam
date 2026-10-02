@@ -601,9 +601,6 @@
 
 
 
-
-
-
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -8878,7 +8875,8 @@ function coachCard(kind, icon, main, goal, ph){
     +(why&&!open?'<span class="cq" title="почему так (Slash)">?</span>':'')
     /* пробел перед блоком обязателен: textContent карточки читают ученик и скринридер,
        без него текст чипа слипался со следующей фразой — «замигаетЛюбой манёвр…» */
-    +(open?' <div class="cwhy"></div>':'');
+    +(open?' <div class="cwhy"></div>':'')
+    +(ph&&ph.finish?' <button type="button" class="cfin" title="Завершить уровень (Y)">✓ Завершить</button>':'');
   /* main/why — через textContent: сюда попадают имена пользовательских площадок */
   el.querySelector('.cm').textContent=main;
   if(open) el.querySelector('.cwhy').textContent=why;
@@ -9015,6 +9013,9 @@ function updateHUD(){
   /* гайд троганья владеет карточкой целиком, пока не пройден: фазовые подсказки подождут */
   else if(tut && TUT[tut.i]){ const st=TUT[tut.i];
     coachCard(st.kind, st.icon, st.act(), null, {why:st.why}); }
+  else if(game.parked) coachCard('ok','✓', MOB
+    ? 'Стоишь в зоне. Тапни «Завершить» — или выезжай и заезжай ещё раз.'
+    : 'Стоишь в зоне. Жми «Завершить» (Y) — или выезжай и заезжай ещё раз.', null, {finish:true});
   /* goalMiss почти на стоянке или при верной позе: на ходу посреди манёвра «доверни и
      подровняйся» перебивал фазу ровно в момент, когда 45° к оси — это цель, а не ошибка */
   else { const gm=(Math.abs(car.vel)<0.3||goalPoseOk())?goalMiss():'';
@@ -9078,6 +9079,8 @@ function tutTick(){
 
 /* тап по чипу цели подсвечивает ячейку панели; «?» (и вся карточка на компакте) — «почему» */
 $('coach').addEventListener('click', e=>{
+  const fin=e.target.closest('.cfin');
+  if(fin){ fin.blur(); initAudio(); finishLevel(); return; }
   if(e.target.closest('.cg') && coachGoal && coachGoal.m.cell){
     const cell=$(coachGoal.m.cell).closest('.cell');
     if(cell){ cell.classList.remove('pulse'); void cell.offsetWidth; cell.classList.add('pulse'); }
@@ -9722,6 +9725,7 @@ function ctrlHTML(){ return ''
   +'<li><span class="kbd">G</span> траектории · <span class="kbd">T</span> след колёс</li>'
   +'<li><span class="kbd">L</span> выбрать уровень · <span class="kbd">1</span>…<span class="kbd">9</span> первые девять</li>'
   +'<li><span class="kbd">K</span> редактор своей площадки</li>'
+  +'<li><span class="kbd">Y</span> завершить уровень, когда стоишь в зоне</li>'
   +'<li><span class="kbd">R</span> заново · <span class="kbd">M</span> звук · <span class="kbd">H</span> справка</li>'
   +'</ul></div>'; }
 /* уровней больше девяти, цифрами уже не покрыть — отдельный экран с карточками */
@@ -9965,6 +9969,7 @@ function pressKey(code){
       toggleHelp(); break;
     case 'Slash': coachWhyToggle(); break;
     case 'KeyN': if(game.done) openLevel(game.li+1,'next'); break;
+    case 'KeyY': finishLevel(); break;
     /* Q/E отданы поворотникам (ядро экзаменационного ритуала — прайм-клавиши у WASD);
        подворот камеры переехал на [ ] — до этого они были недокументированными дублями селектора */
     case 'KeyQ': if(!paused) setBlink('L'); break;

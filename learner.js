@@ -80,6 +80,9 @@ function learnerStart(){
 
   const tick=setInterval(()=>{
     if(paused || game.done){ for(const k of ['fwd','back','left','right','center']) press(k,false); return; }
+    /* в зоне уровень закрывает кнопка «Завершить»: «выезжай и заезжай ещё раз» на той же
+       карточке — выбор, а не команда, и goRe увёл бы ученика из кармана */
+    if(game.parked){ hands(); brake(); tapKey('KeyY'); return; }
     const c=read(); let txt=c.txt;
     /* карточки goalMiss/P-заметки дописывают «Дальше: <действие фазы>» — команда именно там
        (goalMiss кладёт всю фразу в .cm, поэтому без оглядки на тип карточки) */

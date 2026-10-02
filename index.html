@@ -51,14 +51,6 @@ body.compact #perf{left:auto;right:8px;bottom:auto;top:50%;font-size:10px;paddin
 #fbBtn{top:174px}
 #trafBtn{top:210px}
 body.compact .sidebtn,body.hud-off .sidebtn,body.ov .sidebtn{display:none!important}
-/* центрирование полями, а не transform: общий button:active{transform:scale(.96)} снёс бы translateX */
-#finishBtn{display:none;position:fixed;left:0;right:0;width:max-content;margin:0 auto;
-  bottom:calc(112px + var(--bot,0px));z-index:7;padding:10px 22px;border-radius:12px;
-  background:rgba(14,46,26,.92);border:1px solid rgba(80,220,130,.65);color:#d9ffe6;
-  font-family:inherit;font-size:16px;font-weight:700;cursor:pointer}
-body.parked #finishBtn{display:block}
-body.compact #finishBtn{bottom:calc(68px + var(--bot,0px));font-size:15px;padding:8px 18px}
-body.ov #finishBtn,body.edit #finishBtn{display:none!important}
 #topright .big{font-size:22px;font-weight:700;color:#fff;line-height:1.1}
 #topright .sub{color:#93a7bd;font-size:12px;margin-top:3px}
 /* подсказка живёт в полосе между панелью задания и таймером — иначе перекрывает их на широком экране */
@@ -113,6 +105,13 @@ body.ov #finishBtn,body.edit #finishBtn{display:none!important}
   font-size:12px;opacity:.7;text-align:center;vertical-align:middle;margin-left:5px}
 #coach .cwhy{width:100%;margin-top:5px;padding-top:5px;border-top:1px dashed rgba(255,255,255,.18);
   font-size:12.5px;opacity:.92;text-align:left}
+/* карточка сама pointer-events:none — кнопка зачёта ловит нажатие сама */
+#coach .cfin{pointer-events:auto;display:block;margin:7px auto 1px;padding:7px 20px;border-radius:9px;
+  background:rgba(40,150,80,.85);border:1px solid rgba(120,240,160,.75);color:#fff;
+  font-family:inherit;font-size:15px;font-weight:700;cursor:pointer}
+body.compact #coach .cfin{margin-top:5px;padding:6px 16px;font-size:14px}
+/* без карточки на телефоне зачёт было бы нечем нажать */
+body.hud-off.parked #coach{display:block}
 body.compact #coach .cq{display:none}
 body.compact #coach.haswhy{pointer-events:auto;cursor:pointer}
 #bar .cell.pulse{animation:cellPulse 1.2s ease-out}
@@ -507,8 +506,6 @@ body.fp #hint{display:none}
 <button type="button" id="demoBtn" class="sidebtn" title="Показать, как выполняется манёвр">▶ демонстрация</button>
 <button type="button" id="fbBtn" class="sidebtn" title="Сообщить об ошибке или предложить идею">✉︎ написать</button>
 <button type="button" id="trafBtn" class="sidebtn" title="Сколько машин в городе — нажми, чтобы сменить">поток</button>
-<button type="button" id="finishBtn" title="Завершить уровень (Y)">✓ Завершить</button>
-
 <div id="coach" role="status">—</div>
 
 <div id="perf" hidden></div>
@@ -8878,7 +8875,8 @@ function coachCard(kind, icon, main, goal, ph){
     +(why&&!open?'<span class="cq" title="почему так (Slash)">?</span>':'')
     /* пробел перед блоком обязателен: textContent карточки читают ученик и скринридер,
        без него текст чипа слипался со следующей фразой — «замигаетЛюбой манёвр…» */
-    +(open?' <div class="cwhy"></div>':'');
+    +(open?' <div class="cwhy"></div>':'')
+    +(ph&&ph.finish?' <button type="button" class="cfin" title="Завершить уровень (Y)">✓ Завершить</button>':'');
   /* main/why — через textContent: сюда попадают имена пользовательских площадок */
   el.querySelector('.cm').textContent=main;
   if(open) el.querySelector('.cwhy').textContent=why;
@@ -9015,6 +9013,9 @@ function updateHUD(){
   /* гайд троганья владеет карточкой целиком, пока не пройден: фазовые подсказки подождут */
   else if(tut && TUT[tut.i]){ const st=TUT[tut.i];
     coachCard(st.kind, st.icon, st.act(), null, {why:st.why}); }
+  else if(game.parked) coachCard('ok','✓', MOB
+    ? 'Стоишь в зоне. Тапни «Завершить» — или выезжай и заезжай ещё раз.'
+    : 'Стоишь в зоне. Жми «Завершить» (Y) — или выезжай и заезжай ещё раз.', null, {finish:true});
   /* goalMiss почти на стоянке или при верной позе: на ходу посреди манёвра «доверни и
      подровняйся» перебивал фазу ровно в момент, когда 45° к оси — это цель, а не ошибка */
   else { const gm=(Math.abs(car.vel)<0.3||goalPoseOk())?goalMiss():'';
@@ -9078,6 +9079,8 @@ function tutTick(){
 
 /* тап по чипу цели подсвечивает ячейку панели; «?» (и вся карточка на компакте) — «почему» */
 $('coach').addEventListener('click', e=>{
+  const fin=e.target.closest('.cfin');
+  if(fin){ fin.blur(); initAudio(); finishLevel(); return; }
   if(e.target.closest('.cg') && coachGoal && coachGoal.m.cell){
     const cell=$(coachGoal.m.cell).closest('.cell');
     if(cell){ cell.classList.remove('pulse'); void cell.offsetWidth; cell.classList.add('pulse'); }
@@ -9722,6 +9725,7 @@ function ctrlHTML(){ return ''
   +'<li><span class="kbd">G</span> траектории · <span class="kbd">T</span> след колёс</li>'
   +'<li><span class="kbd">L</span> выбрать уровень · <span class="kbd">1</span>…<span class="kbd">9</span> первые девять</li>'
   +'<li><span class="kbd">K</span> редактор своей площадки</li>'
+  +'<li><span class="kbd">Y</span> завершить уровень, когда стоишь в зоне</li>'
   +'<li><span class="kbd">R</span> заново · <span class="kbd">M</span> звук · <span class="kbd">H</span> справка</li>'
   +'</ul></div>'; }
 /* уровней больше девяти, цифрами уже не покрыть — отдельный экран с карточками */
@@ -9965,6 +9969,7 @@ function pressKey(code){
       toggleHelp(); break;
     case 'Slash': coachWhyToggle(); break;
     case 'KeyN': if(game.done) openLevel(game.li+1,'next'); break;
+    case 'KeyY': finishLevel(); break;
     /* Q/E отданы поворотникам (ядро экзаменационного ритуала — прайм-клавиши у WASD);
        подворот камеры переехал на [ ] — до этого они были недокументированными дублями селектора */
     case 'KeyQ': if(!paused) setBlink('L'); break;
