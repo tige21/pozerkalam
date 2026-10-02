@@ -5,6 +5,11 @@
 вход на российском сервисе — через российский сервис авторизации). Принципы взяты у spark
 (`~/Documents/projects/spark/docs/AUTH-VK-YANDEX.md`), сервис свой.
 
+**Состояние на 02.10.2026:** сервис развёрнут на vdsina и зеркале (build `a96080e0a5ad6805`),
+`/etc/pozerkalam-account.env` создан деплоем с новым `JWT_SECRET`, ключей провайдеров нет —
+`/api/v1/health` отвечает `vk:false, yandex:false`, кнопок входа в игре нет (`AUTH_PROVIDERS` пуст).
+Ждёт: приложения VK ID и Яндекс ID (ниже) и `/privacy/` (доска #180).
+
 ## Схема
 
 ```

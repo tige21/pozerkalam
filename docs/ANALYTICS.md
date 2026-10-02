@@ -27,13 +27,39 @@ first-party адрес. Страну Rybbit берёт из `X-Real-IP` — ngin
 (`file://`), во всех гейтах `tools/`, в билде Яндекс Игр (площадка запрещает стороннюю аналитику,
 `@dist-yandex-no-account`) и на старом зеркале по IP.
 
-## Включение
+## Состояние
 
-1. В дашборде https://analytics.sparkcards.space (логин владельца, регистрация закрыта):
-   Add site → домен `pozerkalam.space` → номер сайта. Session replay не включать.
-2. `RYBBIT_SITE_ID=<номер>` в `.deploy.env` → `./deploy-pozerkalam.sh`. Смоук проверяет
-   `/rb/script.js` и `/rb/site/tracking-config/<номер>` на проде и зеркале.
-3. Открыть игру с телефона без VPN и через VPN — в дашборде два визита с разными странами.
+Включено 02.10.2026 (build `a96080e0a5ad6805`): сайт **№ 3** «По зеркалам», `RYBBIT_SITE_ID=3` в
+`.deploy.env`. Номера сайтов в инстансе: 1 — spark staging, 2 — spark prod, 3 — игра.
+
+Сайт заведён без панели — вставкой в таблицу `sites` (Postgres контейнера `postgres` на vdsina,
+база `analytics`) той же записью, что делает панель: `siteConfigurationLifecycle.create` в backend
+Rybbit — одна вставка, `id` = 6 случайных байт в hex, `created_by` и `organization_id` скопированы
+у spark-prod. Других таблиц создание сайта не трогает; конфиг сайта backend кэширует на минуту.
+
+Смоук деплоя проверяет `/rb/script.js` и `/rb/site/tracking-config/3` на проде и зеркале.
+
+## Как проверить, что события доходят
+
+**Headless-браузер и curl в отчёты не попадают.** У сайта включено `blockBots`: Rybbit кладёт такие
+визиты в `bot_events`, а не в `events`. Headless Chromium отсеивается по `detected_client_signals`
+(`navigator.webdriver`, SwiftShader, пустые плагины), curl — по `detected_header_heuristics`. Пустая
+`events` после проверки из Playwright — не поломка; смотреть `bot_events`:
+
+```bash
+ssh vdsina
+CH=$(docker inspect backend --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -E '^CLICKHOUSE_(USER|PASSWORD)=')
+U=$(echo "$CH" | grep USER= | cut -d= -f2-); P=$(echo "$CH" | grep PASSWORD= | cut -d= -f2-)
+ch(){ docker exec clickhouse clickhouse-client ${U:+--user "$U"} ${P:+--password "$P"} -d analytics -q "$1"; }
+ch "SELECT event_name, country, city, browser, device_type, timestamp FROM events WHERE site_id=3 ORDER BY timestamp DESC LIMIT 20"
+ch "SELECT querystring, country, detected_client_signals, detected_header_heuristics, timestamp FROM bot_events WHERE site_id=3 ORDER BY timestamp DESC LIMIT 20"
+```
+
+Что подтвердила выкатка (по `bot_events`): страна определяется по настоящему IP на обоих путях —
+напрямую RU, через VPN и зеркало — страна выхода VPN; браузерные заголовки прокси передаёт целиком
+(`detected_header_heuristics = false` у браузерных визитов). Живой визит проверяется с телефона:
+игра → дашборд, сайт «По зеркалам», визит в течение минуты. Тестовые записи помечай
+`?utm_source=deploy-check` и удаляй: `ALTER TABLE bot_events DELETE WHERE site_id=3 AND querystring LIKE '%deploy-check%'`.
 
 ## События
 
