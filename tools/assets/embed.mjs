@@ -29,18 +29,10 @@ const ASSETS = [
   ...['pz', 'nz', 'px', 'nx', 'py', 'ny'].map((f) => ({ key: 'cmir-' + f, file: `cmir-${f}.png`, q: 80, required: true })),
   /* подушка руля на экране ≈100 px шириной: исходник 1194 px весил 219 КБ */
   { key: 'wheel-pad', file: 'clean/dec-wheel-pad.png', q: 85, required: false, width: 320 },
-  /* кузов снаружи: фара и фонарь на экране не шире 150 px даже у своей машины вблизи, диск — 120 */
-  { key: 'car-headlight', file: 'clean/dec-headlight.png', q: 85, required: true, width: 384 },
-  { key: 'car-taillight', file: 'clean/dec-taillight.png', q: 85, required: true, width: 384 },
-  { key: 'car-grille', file: 'clean/dec-grille.png', q: 85, required: true, width: 320 },
+  /* диски стилей A–E (на экране не шире 120 px). Фары, фонари и решётки стилей в страницу не идут:
+     это грани самих моделей кузовов (tools/blender/models.py) */
   { key: 'car-wheel', file: 'clean/dec-wheel.png', q: 85, required: true, width: 256 },
-  /* стили B–E чужих машин: те же размеры, что у стиля A */
-  ...['b', 'c', 'd', 'e'].flatMap((st) => [
-    { key: `car-headlight-${st}`, file: `clean/dec-headlight-${st}.png`, q: 85, required: true, width: 320 },
-    { key: `car-taillight-${st}`, file: `clean/dec-taillight-${st}.png`, q: 85, required: true, width: 320 },
-    { key: `car-grille-${st}`, file: `clean/dec-grille-${st}.png`, q: 85, required: true, width: 320 },
-    { key: `car-wheel-${st}`, file: `clean/dec-wheel-${st}.png`, q: 85, required: true, width: 256 },
-  ]),
+  ...['b', 'c', 'd', 'e'].map((st) => ({ key: `car-wheel-${st}`, file: `clean/dec-wheel-${st}.png`, q: 85, required: true, width: 256 })),
   /* трамвай: торец 2,2 м на экране не шире 500 px даже вблизи, кусок борта 4,7 м — до 1000 */
   { key: 'tram-front', file: 'clean/tram-front.png', q: 82, required: true, width: 512 },
   { key: 'tram-side-end', file: 'clean/tram-side-end.png', q: 82, required: true, width: 1024 },
@@ -48,7 +40,7 @@ const ASSETS = [
   /* небо — вся ширина: панорама 360° на экране растягивается втрое и без того */
   { key: 'sky-pano', file: 'clean/sky-pano.png', q: 80, required: true },
 ];
-/* модель кузова (tools/blender/export-exterior.py) — JSON в <template>: шаблон не исполняется и не
+/* модель кузова (tools/blender/models.py) — JSON в <template>: шаблон не исполняется и не
    попадает ни в скрипты страницы, ни в зеркало codegraph */
 const CAR_MESH = path.join(SRC, 'car-mesh.json');
 
@@ -114,11 +106,11 @@ function build() {
     lines.push(`<img data-asset="${a.key}" alt="" src="data:image/webp;base64,${buf.toString('base64')}">`);
     log(`${a.key}: ${(fs.statSync(file).size / 1024).toFixed(0)} КБ PNG → ${(buf.length / 1024).toFixed(0)} КБ WebP q${a.q}`);
   }
-  if (!fs.existsSync(CAR_MESH)) throw new Error('нет build/assets/car-mesh.json — сначала python3 tools/blender/export-exterior.py');
+  if (!fs.existsSync(CAR_MESH)) throw new Error('нет build/assets/car-mesh.json — сначала Blender -b -P tools/blender/models.py');
   const mesh = JSON.parse(fs.readFileSync(CAR_MESH, 'utf8'));
-  if (mesh.fingerprint !== stamp.fingerprint) throw new Error('модель кузова собрана на других константах — export-exterior.py заново');
+  if (mesh.fingerprint !== stamp.fingerprint) throw new Error('модель кузова собрана на других константах — tools/blender/models.py заново');
   lines.push(`<template id="car-mesh">${JSON.stringify(mesh)}</template>`);
-  if (!mesh.bodies || !mesh.bodies.sedan) throw new Error('в car-mesh.json нет кузова sedan — export-exterior.py заново');
+  if (!mesh.bodies || !mesh.bodies.sedan) throw new Error('в car-mesh.json нет кузова sedan — tools/blender/models.py заново');
   log(`car-mesh: ${Object.entries(mesh.bodies).map(([k, b]) => `${k} ${b.f.length}`).join(', ')} граней, ${(JSON.stringify(mesh).length / 1024).toFixed(0)} КБ`);
   const block = [BEGIN,
     `<div id="assets" hidden data-fingerprint="${stamp.fingerprint}" data-baked="${stamp.baked}" data-cube='${JSON.stringify(cube)}'>`,

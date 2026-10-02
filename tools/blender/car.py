@@ -8,6 +8,7 @@
 рисует игра поверх куба. Скрипт падает с текстом, если нарушено правило обзора или живой слой
 закрыт обшивкой: с неподвижным глазом порядок «куб, потом живые слои» точен только тогда.
 """
+import json
 import math
 import sys
 import time
@@ -19,7 +20,6 @@ from mathutils.bvhtree import BVHTree
 
 sys.path.insert(0, __import__('os').path.dirname(__file__))
 from common import BUILD, G, Gv, ROOT, cube_camera, load_consts, log, script_args, setup_cycles  # noqa: E402
-import exterior  # noqa: E402
 
 ARGS = script_args()
 DATA = load_consts()
@@ -520,25 +520,26 @@ def area_light(name, size, size_y, energy, at, target):
 
 def build_exterior():
     """Кузова снаружи — в сцене только посмотреть: из рендера куба они исключены (hide_render),
-    иначе капот и крыша изнутри закрыли бы окна. В игру их выгружает export-exterior.py из того же
-    exterior.py, и та же проверка следа (у седана — и линий взгляда) стоит там."""
+    иначе капот и крыша изнутри закрыли бы окна. Кузова — готовые модели, их выгружает в игру
+    tools/blender/models.py (build/assets/car-mesh.json) со своими проверками следа и линий взгляда;
+    здесь они берутся из того же файла, а без него сцена строится без кузовов."""
+    path = ROOT / 'build' / 'assets' / 'car-mesh.json'
+    if not path.exists():
+        log('кузова: нет build/assets/car-mesh.json — сцена без них (tools/blender/models.py)')
+        return
+    bodies = json.loads(path.read_text())['bodies']
     coll = bpy.data.collections.new('exterior')
     bpy.context.scene.collection.children.link(coll)
-    for i, body in enumerate(exterior.BODIES):
-        m, sts, hull = exterior.build(C, body)
-        fails, summ = exterior.check(m, hull, C, sightlines=body == 'sedan')
-        if fails:
-            raise SystemExit(f'ПРОВАЛ кузов {body}: ' + '; '.join(fails))
+    for i, (body, b) in enumerate(bodies.items()):
+        v = b['v']
         me = bpy.data.meshes.new('exterior-' + body)
-        me.from_pydata([Gv(v) for v in m.v], [], [f['i'] for f in m.f])
+        me.from_pydata([Gv((v[k], v[k + 1], v[k + 2])) for k in range(0, len(v), 3)], [], [f['i'] for f in b['f']])
         me.validate()
         ob = bpy.data.objects.new('exterior-' + body, me)
         ob.location.x = i * 2.4  # рядом, а не друг в друге: в сцене их смотрят глазами
         coll.objects.link(ob)
         ob.hide_render = True
-        log(f"кузов {body}: сечений {len(sts)}, граней {summ['faces']}, след ±{summ['dev_cm']} см от CAR_HULL"
-            + (f", над линией взгляда перёд {summ['over_front']}°, зад {summ['over_rear']}°" if body == 'sedan' else '')
-            + ' (из рендера исключён)')
+        log(f"кузов {body}: граней {len(b['f'])} (из рендера исключён)")
 
 
 def build_lights():

@@ -603,21 +603,6 @@
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -866,6 +851,10 @@ const MAT = {
   /* улица: refl — доля отражения неба (сильнее у граней, смотрящих вверх), spec — солнечный блик */
   paint:     {spec:0.55, shin:22, refl:0.16},
   glass:     {spec:0.90, shin:36, refl:0.42},
+  /* тонированное стекло машин-моделей: с отражением неба 0,42 окна выходили светлее кузова и читались
+     панелями. Блик слабее и уже, чем у краски: он считается на всю грань, и заднее стекло седана в
+     блике светлело целиком — серая панель вместо отблеска */
+  tint:      {spec:0.45, shin:60, refl:0.16},
   chrome:    {spec:0.90, shin:12, refl:0.50},
   plastic:   {spec:0.12, shin:6}
 };
@@ -1513,8 +1502,11 @@ function emitCarBody(u,v,th,col){
    двери у внутреннего края») и по чему равняются на соседа. Только вблизи камеры: у дальних машин это
    шум. bias — накладка на борт: грань кузова с центром ближе к камере закрывала бы деталь на себе.
    У модели арки — настоящие вырезы, а задний шов двери начинается над аркой: он стоит на её центре */
-function emitCarDoors(u,v,th,arches,dy){
-  const F=fwd(th), R=rgt(th), cx=-u, cz=v, d=dy||0;
+const DOOR_HANDLES=[[-0.12,0.90],[-1.06,0.90]];
+/* doors — швы и ручки, снятые с модели кузова (высоты абсолютные, подъём кузова в них есть): у
+   каждого кузова двери свои, и шов под стойкой B должен стоять там, где на кузове стойка */
+function emitCarDoors(u,v,th,arches,dy,doors){
+  const F=fwd(th), R=rgt(th), cx=-u, cz=v, d=doors?0:(dy||0);
   const P=(lat,y,z)=>({x:cx+R.x*lat+F.x*z, y:y+d, z:cz+R.z*lat+F.z*z});
   const f=fuv(th), r=ruv(th), du=(-cam.pos.x)-u, dv=cam.pos.z-v;
   const camLat=du*r.u+dv*r.v, camZ=du*f.u+dv*f.v, camDist=Math.hypot(du,dv);
@@ -1526,12 +1518,14 @@ function emitCarDoors(u,v,th,arches,dy){
     const seam=[34,36,40], handle=[40,44,50], arch=[30,32,36];
     for(const sg of [-1,1]){
       const out=P(sg*0.5,0.7,0);
-      for(const z of [0.84,-0.33,-1.30])
+      if(doors) for(const [zt,yt,zb,yb] of doors.seams)
+        pushQuad(P(sg*0.906,yb,zb-0.008),P(sg*0.906,yb,zb+0.008),P(sg*0.906,yt,zt+0.008),P(sg*0.906,yt,zt-0.008), seam, out, 0.3);
+      else for(const z of [0.84,-0.33,-1.30])
       { const y0 = !arches && z<-1 ? 0.74 : 0.40;
         pushQuad(P(sg*0.906,y0,z-0.008),P(sg*0.906,y0,z+0.008),P(sg*0.906,0.985,z+0.008),
                  P(sg*0.906,0.985,z-0.008), seam, out, 0.3); }
-      for(const z of [-0.12,-1.06]){
-        const c=P(sg*0.915,0.90,z), o=sg*0.935, i=sg*0.895, y0=0.886, y1=0.914, z0=z-0.085, z1=z+0.085;
+      for(const [z,yh] of doors ? doors.handles : DOOR_HANDLES){
+        const c=P(sg*0.915,yh,z), o=sg*0.935, i=sg*0.895, y0=yh-0.014, y1=yh+0.014, z0=z-0.085, z1=z+0.085;
         pushQuad(P(o,y0,z0),P(o,y0,z1),P(o,y1,z1),P(o,y1,z0), handle, c, 0.3, MO.chrome);
         pushQuad(P(i,y1,z0),P(i,y1,z1),P(o,y1,z1),P(o,y1,z0), handle, c, 0.3, MO.chrome);
         pushQuad(P(i,y0,z0),P(i,y1,z0),P(o,y1,z0),P(o,y0,z0), handle, c, 0.3, MO.chrome);
@@ -2506,14 +2500,15 @@ function emitInteriorLive(u,v,th){
 cabinBakeLoad();
 /* ---------- кузов снаружи: модель ---------- */
 /* Кузов из tools/blender/exterior.py (≈300 граней, <template id="car-mesh">): своя машина всегда,
-   соседи и поток ближе CAR_MODEL_D; дальше — прежний лофт emitCarBody, за TRAF_LOD у потока —
-   emitCarLow. След модели на земле — CAR_HULL (exterior.py проверяет ≤ 1 см, unit-check —
+   соседи и поток ближе CAR_MODEL_D; дальше — прежний лофт emitCarBody, за trafLod у потока —
+   emitCarLow. CAR_MODEL_D — 45 м, а не 20: при 20 м из-за машины на уровне 1 моделью рисовались 2
+   машины из 7, остальные — прежним лофтом, и владелец новых машин не увидел («все равно старый вид»). След модели на земле — CAR_HULL (exterior.py проверяет ≤ 1 см, unit-check —
    @render-car-footprint), так что касание считается по тому же, что нарисовано. Модель читается один
    раз при загрузке; без шаблона или с битым шаблоном — прежний лофт и одно предупреждение [assets] */
-const CAR_MODEL_D=20;
+const CAR_MODEL_D=45;
 const carModel={state:'off', bodies:{}, zones:null, img:{}, imgDone:false, cut:new Map(), scratch:null, warned:{}};
 /* цвета материалов модели: краска приходит от машины, остальное — постоянное */
-const CM_COL={glass:[42,52,64], trim:[30,32,36], liner:[18,19,22], grille:[30,32,36], plate:[228,232,236],
+const CM_COL={glass:[14,17,22], trim:[30,32,36], liner:[18,19,22], grille:[30,32,36], plate:[228,232,236],
               head:[52,56,64], tail:[74,16,18]};
 const CM_CLEAR=[0,0,0,0];
 /* стиль чужой машины — детали (фара, фонарь, решётка, диск) и кузов; своя — стиль A, седан: под
@@ -2544,16 +2539,19 @@ function carModelLoad(){
       const nv=v.length/3, F=[];
       for(const f of b.f){
         for(const i of f.i) if(!(i>=0 && i<nv)) throw new Error('кузов '+name+': индекс вершины вне модели');
-        F.push({i:f.i, m:f.m, n:f.n, s:f.s||null, b:f.b||0, img:f.img||null, uv:f.uv||null, lamp:f.lamp||null});
+        F.push({i:f.i, m:f.m, n:f.n, s:f.s||null, b:f.b||0, img:f.img||null, uv:f.uv||null, lamp:f.lamp||null, c:f.c||null});
       }
-      carModel.bodies[name]={V:Float32Array.from(v), F, W:Array.from({length:nv},()=>({x:0,y:0,z:0})), dy:b.dy||0};
+      carModel.bodies[name]={V:Float32Array.from(v), F, W:Array.from({length:nv},()=>({x:0,y:0,z:0})), dy:b.dy||0,
+                             wiper:b.wiper||null, doors:b.doors||null};
     }
     carModel.zones=d.zones||{};
     carModel.scratch=[[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]];
     carModel.state='ready';
   }catch(e){ carModel.state='failed'; console.warn('[assets] кузов: модель не читается ('+e.message+') — рисуется прежний'); return; }
   const jobs=[];
-  for(const st of ['', ...CAR_STYLES.map(x=>'-'+x)]) for(const d of ['headlight','taillight','grille','wheel']){
+  /* из картинок стилей остались только диски: фары, фонари и решётка — грани самой модели кузова
+     (tools/blender/models.py), и их картинки занимали 187 КБ страницы впустую */
+  for(const st of ['', ...CAR_STYLES.map(x=>'-'+x)]) for(const d of ['wheel']){
     const k=d+st, img=root.querySelector('img[data-asset="car-'+k+'"]');
     if(!img){ if(!st) console.warn('[assets] кузов: нет картинки '+k+' — грань без неё'); continue; }
     jobs.push(img.decode().then(()=>{ carModel.img[k]=img; }).catch(e=>console.warn('[assets] кузов: '+k+' не распаковалась — грань без неё')));
@@ -2594,19 +2592,19 @@ function carBody(name){
   return carModel.bodies.sedan;
 }
 function emitCarModel(u,v,th,col,lit,body,style){
-  const M=carModel, B=body||M.bodies.sedan, V=B.V, W=B.W, F=fwd(th), R=rgt(th), cx=-u, cz=v;
-  for(let i=0,k=0;i<W.length;i++,k+=3){ const lat=V[k], z=V[k+2], w=W[i];
+  const M=carModel, B=body||M.bodies.sedan, V=B.V, WB=B.W, F=fwd(th), R=rgt(th), cx=-u, cz=v;
+  for(let i=0,k=0;i<WB.length;i++,k+=3){ const lat=V[k], z=V[k+2], w=WB[i];
     w.x=cx+R.x*lat+F.x*z; w.y=V[k+1]; w.z=cz+R.z*lat+F.z*z; }
   const dx=-cam.pos.x-u, dz=cam.pos.z-v, d2=dx*dx+dz*dz, Q=QUALITY[qLevel];
   /* градиент борта — вблизи (как у лофта: дальше 16 м его не видно), блик и отражение — до 40 м:
      pow на каждую грань виден в JS-времени кадра */
   const smooth=Q.cars && d2<256, mats=Q.cars && d2<1600;
-  const paint=mats?MO.paint:undefined, glass=mats?MO.glass:undefined, plastic=mats?MO.plastic:undefined;
+  const paint=mats?MO.paint:undefined, glass=mats?{mat:'tint'}:undefined, plastic=mats?MO.plastic:undefined;
   const blinkOn=Math.floor(game.t/0.75)%2===0;
   const turnL=(lit.hazard || lit.blink==='L') && blinkOn, turnR=(lit.hazard || lit.blink==='R') && blinkOn;
   const Z=M.zones[style||'a']||M.zones.a||M.zones;
   for(const f of B.F){
-    const ix=f.i, q=M.scratch[ix.length]; for(let j=0;j<ix.length;j++) q[j]=W[ix[j]];
+    const ix=f.i, q=M.scratch[ix.length]; for(let j=0;j<ix.length;j++) q[j]=WB[ix[j]];
     const n=f.n, nw={x:R.x*n[0]+F.x*n[2], y:n[1], z:R.z*n[0]+F.z*n[2]};
     let c, o;
     switch(f.m){
@@ -2622,7 +2620,7 @@ function emitCarModel(u,v,th,col,lit,body,style){
         /* у фар, фонарей и решётки прозрачное в картинке — краска кузова: фара «врезана» в кузов,
            а скошенная фара стилей C–E не стоит в тёмном прямоугольнике */
         const painted = im && (f.m==='lamp' || f.m==='grille');
-        c = painted ? col : f.m==='lamp' ? (f.lamp.startsWith('tail')?CM_COL.tail:CM_COL.head) : CM_COL[f.m] || CM_COL.trim;
+        c = painted ? col : f.c ? f.c : f.m==='lamp' ? (f.lamp.startsWith('tail')?CM_COL.tail:CM_COL.head) : CM_COL[f.m] || CM_COL.trim;
         o = im ? (painted && mats ? {mat:'paint', img:im} : {img:im}) : plastic;
       }
     }
@@ -2632,8 +2630,13 @@ function emitCarModel(u,v,th,col,lit,body,style){
       /* стоп — весь фонарь полупрозрачным красным поверх картинки: световод и стекло видны и включёнными */
       if(tail && lit.brake) pushFace(q, nw, [255,40,30,0.55], f.b+0.004, MO.emit);
       const zt=Z[tail?'tail':'head']||{};
-      if(tail && lit.rev && zt.rev){ const zq=carZoneQuad(q, f.uv, zt.rev); if(zq) pushFace(zq, nw, [255,255,240,0.9], f.b+0.006, MO.emit); }
-      if((left?turnL:turnR) && zt.turn){ const zq=carZoneQuad(q, f.uv, zt.turn); if(zq) pushFace(zq, nw, [255,170,30,0.9], f.b+0.006, MO.emit); }
+      /* у фонаря модели (без картинки и uv) зон нет: поворотник и аварийка — на весь фонарь своей
+         стороны, а заднего хода нет — белым на весь фонарь он перекрыл бы стоп */
+      if(tail && lit.rev && zt.rev && f.uv){ const zq=carZoneQuad(q, f.uv, zt.rev); if(zq) pushFace(zq, nw, [255,255,240,0.9], f.b+0.006, MO.emit); }
+      if(left?turnL:turnR){
+        if(!f.uv) pushFace(q, nw, [255,170,30,0.9], f.b+0.006, MO.emit);
+        else if(zt.turn){ const zq=carZoneQuad(q, f.uv, zt.turn); if(zq) pushFace(zq, nw, [255,170,30,0.9], f.b+0.006, MO.emit); }
+      }
     }
   }
 }
@@ -2667,13 +2670,13 @@ function emitCarMesh(u, v, th, col, st, lights, look){
   const body = model ? carBody(look && look.body || 'sedan') : null, dy = body ? body.dy : 0;
   const style = look && look.style || 'a';
   if(model) emitCarModel(u,v,th,col,lit,body,style); else emitCarBody(u,v,th,col);
-  emitCarDoors(u,v,th,!model,dy);
+  emitCarDoors(u,v,th,!model,dy,body&&body.doors);
   const zr=-C2R, zf=-C2R+CAR.wheelbase, wimg = model ? carModel.img[carStyleImg('wheel', style)] : null;
   const w1=at(-t,zr), w2=at(t,zr), w3=at(-t,zf), w4=at(t,zf);
   pushWheelCyl(w1.u,w1.v,th,-1,wimg); pushWheelCyl(w2.u,w2.v,th,1,wimg);
   pushWheelCyl(w3.u,w3.v,th+a.l,-1,wimg); pushWheelCyl(w4.u,w4.v,th+a.r,1,wimg);
   if(!model) emitCarLamps(P,F,lit);
-  emitCarMirrorsEtc(dy ? (lat,y,z)=>P(lat,y+dy,z) : P,F,R,at,th,col,lights,dy);
+  emitCarMirrorsEtc(dy ? (lat,y,z)=>P(lat,y+dy,z) : P,F,R,at,th,col,lights,dy, body && body.wiper);
 }
 /* огни, решётка и номера прежнего лофта: у модели они — её же грани с картинками */
 function emitCarLamps(P,F,lit){
@@ -2699,19 +2702,24 @@ function emitCarLamps(P,F,lit){
   pushFace([P(-0.26,0.56,2.227),P(0.26,0.56,2.227),P(0.26,0.45,2.227),P(-0.26,0.45,2.227)], nF, [228,232,236], 0, {img:plateCanvas()});
   pushFace([P(0.26,0.70,-2.228),P(-0.26,0.70,-2.228),P(-0.26,0.56,-2.228),P(0.26,0.56,-2.228)], nB, [228,232,236], 0, {img:plateCanvas()});
 }
-function emitCarMirrorsEtc(P,F,R,at,th,col,lights,dy){
+function emitCarMirrorsEtc(P,F,R,at,th,col,lights,dy,wiper){
   for(const sg of [-1,1]){
     emitMirrorHousing(P, F, R, sg, col, lights ? (sg<0?'left':'right') : null);
-    /* дворники лежат на жабо перед стеклом: на z=0.60 они оказывались внутри салона над торпедо */
-    const wp=at(sg*0.34, 0.96);
-    pushBox(wp.u, 0.975+(dy||0), wp.v, 0.24, 0.006, 0.010, th+rad(sg*8), [30,32,36]);
+    /* дворники лежат у самой кромки лобового (z 0,88): на z=0.60 они оказывались внутри салона над
+       торпедо, а на z 0,96 — в 11 см впереди стекла и читались чёрной щелью поперёк капота */
+    /* у модели кузова своё лобовое — дворники у его кромки (wiper: z, y из tools/blender/models.py) */
+    const wz = wiper ? wiper[0] : 0.88, wy = wiper ? wiper[1] : 1.0+(dy||0);
+    const wp=at(sg*0.34, wz);
+    pushBox(wp.u, wy, wp.v, 0.24, 0.006, 0.010, th+rad(sg*8), [30,32,36]);
     /* габаритные усы на кромке капота: из-за руля не видно ни бампера, ни углов,
        и это единственная точка кузова, по которой водитель целится вперёд.
        Ярче — только у своей машины, у припаркованных они остаются деталью кузова */
+    /* у чужих машин усов нет: тёмными кубиками на капоте каждой машины они читались как мусор */
     const own = !!(lights && lights.own);
+    if(!own) continue;
     const fg=at(sg*(HALF_W-0.09), HOOD_Z-0.16);
-    pushBox(fg.u, HOOD_Y+0.05+(dy||0), fg.v, 0.030, own?0.088:0.048, 0.030, th,
-            own&&opt.refs>=1 ? [255,206,60] : [34,38,44]);
+    pushBox(fg.u, HOOD_Y+0.05+(dy||0), fg.v, 0.030, 0.088, 0.030, th,
+            opt.refs>=1 ? [255,206,60] : [34,38,44]);
   }
 }
 
