@@ -9194,7 +9194,6 @@ function syncFail(why, reason){
   if(!syncWarned){ syncWarned=true; track('sync_fail', {reason:reason}); }
 }
 
-/* --- экраны --- */
 function acctBtnsHTML(lead){
   return '<div class="acct"><p class="acctlead">'+lead+'</p><div class="acctbtns">'
     +AUTH_PROVIDERS.map(p=>'<button data-act="auth:'+p+'" class="ghost">Войти через '+AUTH_NAMES[p]+'</button>').join('')

@@ -99,8 +99,6 @@ def mask(s):
     return s[:6] + '…' if len(s) > 6 else s
 
 
-# ---------- JWT (HS256 без зависимостей) ----------
-
 def jwt_encode(cfg, sub):
     t = now()
     head = b64u(json.dumps({'alg': 'HS256', 'typ': 'JWT'}, separators=(',', ':')).encode())
@@ -125,8 +123,6 @@ def jwt_decode(cfg, token):
     except (ValueError, TypeError, json.JSONDecodeError, binascii.Error):
         return None
 
-
-# ---------- слияние прогресса ----------
 
 def _num(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float('inf')
@@ -202,8 +198,6 @@ def progress_ok(data):
         return True
     return depth(data) and len(json.dumps(data, ensure_ascii=False).encode()) <= MAX_PROGRESS
 
-
-# ---------- хранилище ----------
 
 MIGRATIONS = [
     """
@@ -300,8 +294,6 @@ class Tx:
         return False
 
 
-# ---------- провайдеры ----------
-
 class ProviderError(Exception):
     def __init__(self, op, status, code=''):
         super().__init__('%s: http %s %s' % (op, status, code))
@@ -382,8 +374,6 @@ def ya_profile(cfg, code):
     return uid, str(name).strip()
 
 
-# ---------- лимиты ----------
-
 class Rate:
     LIMITS = {'start': (10, 600), 'claim': (200, 600), 'any': (120, 60)}
 
@@ -407,8 +397,6 @@ class Rate:
             return True
 
 
-# ---------- предметная логика ----------
-
 class App:
     def __init__(self, cfg):
         if len(cfg.jwt_secret) < 32:
@@ -420,7 +408,6 @@ class App:
             log.warning('CONFIG WARNING: YANDEX_CLIENT_ID задан без YANDEX_CLIENT_SECRET — вход через Яндекс выключен')
         log.info('CONFIG: vk=%s yandex=%s db=%s callback=%s', cfg.vk_on, cfg.ya_on, cfg.db, cfg.callback)
 
-    # --- аккаунт и сессии ---
 
     def account_json(self, c, acc_id):
         a = c.execute('SELECT id, name FROM accounts WHERE id=?', (acc_id,)).fetchone()
@@ -491,7 +478,6 @@ class App:
         log.info('account delete: acct=%s, платных покупок обезличено: %d', mask(acc_id), paid)
         return 200, {'ok': True}
 
-    # --- вход ---
 
     def start(self, provider, mode, nonce):
         cfg = self.cfg
@@ -600,7 +586,6 @@ class App:
         log.info('auth claim: provider=%s acct=%s выдана сессия', p['provider'], mask(p['account_id']))
         return 200, out
 
-    # --- прогресс ---
 
     def progress_get(self, acc_id):
         r = self.store.conn().execute('SELECT data, rev FROM progress WHERE account_id=?', (acc_id,)).fetchone()
@@ -625,7 +610,6 @@ class App:
                  len(body.encode()) / 1024, rev)
         return 200, {'data': merged, 'rev': rev}
 
-    # --- уборка ---
 
     def sweep(self):
         with self.store.tx() as c:
@@ -635,8 +619,6 @@ class App:
         if p or s:
             log.info('sweep: строк входа %d, сессий %d', p, s)
 
-
-# ---------- HTTP ----------
 
 PAGE = """<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>По зеркалам · вход</title>
@@ -815,8 +797,6 @@ def sweeper(app, every=300):
         except Exception:
             log.exception('sweep упал')
 
-
-# ---------- CLI ----------
 
 def cli_grant(app, a):
     with app.store.tx() as c:

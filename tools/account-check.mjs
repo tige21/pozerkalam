@@ -92,7 +92,6 @@ async function openGame({ rybbit = true, auth = null, rbDelay = 0, api = null, s
 }
 const rbEvents = (page, name) => page.evaluate(n => (window.__rb || []).filter(e => e[0] === 'event' && (!n || e[1] === n)).map(e => e[2]), name);
 
-/* ---------- аналитика ---------- */
 {
   const { ctx, page, errors } = await openGame({ rbDelay: 1500 });
   await page.waitForTimeout(1900);
@@ -133,8 +132,6 @@ const rbEvents = (page, name) => page.evaluate(n => (window.__rb || []).filter(e
     st.rb === 'undefined' && st.buf === 0 && st.rbOn === false && errors.length === 0, JSON.stringify(st));
   await ctx.close();
 }
-
-/* ---------- аккаунт ---------- */
 
 /* мок сервиса: контракт server/account.py; состояние сценария — в объекте st */
 function mockApi(st) {
@@ -361,7 +358,6 @@ const ovText = (page) => page.evaluate(() => document.getElementById('overlay').
   await ctx.close();
 }
 
-/* ---------- пейволл ---------- */
 {
   const { ctx, page, errors } = await openGame({ auth: ['vk', 'yandex'], api: mockApi({}) });
   const r = await page.evaluate(() => {
@@ -399,7 +395,6 @@ const ovText = (page) => page.evaluate(() => document.getElementById('overlay').
   await ctx.close();
 }
 
-/* ---------- вход в уровень ---------- */
 {
   const { ctx, page } = await openGame({ rybbit: false });
   const r = await page.evaluate(() => {

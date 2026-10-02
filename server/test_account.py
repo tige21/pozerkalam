@@ -124,8 +124,6 @@ class AccountTest(unittest.TestCase):
         self.app.store.release()
         self.tmp.cleanup()
 
-    # --- клиент ---
-
     def call(self, method, path, body=None, token=None, ip='10.0.0.1'):
         data = json.dumps(body).encode() if body is not None else None
         h = {'X-Real-IP': ip}
@@ -170,8 +168,6 @@ class AccountTest(unittest.TestCase):
         st, body, _ = self.call('POST', '/auth/claim', {'sid': sid, 'nonce': nonce})
         self.assertEqual((st, body['status']), (200, 'ok'), body)
         return body
-
-    # --- вход ---
 
     def test_vk_redirect_flow(self):
         sid, q, nonce = self.start('vk', 'redirect')
@@ -269,8 +265,6 @@ class AccountTest(unittest.TestCase):
         self.assertEqual(self.call('POST', '/auth/start', {'provider': 'vk', 'mode': 'poll', 'nonce': self.nonce()},
                                    ip='10.9.9.8')[0], 200, 'лимит считается по X-Real-IP, а не на всех')
 
-    # --- сессии ---
-
     def test_refresh_rotation_and_reuse(self):
         s = self.login()
         st, r2, _ = self.call('POST', '/auth/refresh', {'refresh': s['refresh']})
@@ -313,8 +307,6 @@ class AccountTest(unittest.TestCase):
 
     def test_api_prefix_is_accepted(self):
         self.assertEqual(self.call('GET', '/api/v1/health')[1]['vk'], True)
-
-    # --- прогресс ---
 
     def test_progress_sync_merges_and_is_idempotent(self):
         s = self.login()
