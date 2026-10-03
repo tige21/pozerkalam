@@ -2807,8 +2807,10 @@ function circleDec(u,v,R,color,lw,dash){
    Фабрики зебры/стоп-линии возвращают meta-объект: build складывает их в city{...},
    по этой геометрии работают детекторы нарушений — не по пикселям разметки */
 const ASPHALT='#565b62';
+/* road:true — рёбра 0 и 2 прямоугольника (rectPts) это концы дороги: по ним генератор поребрика
+   отличает уход дороги за край площадки от края асфальта (kerbsFromAsphalt, openEnds) */
 function roadDec(dec,u,v,yaw,len,hw){
-  dec.push({pts:rectPts(u,v,hw*2,len,yaw), fill:ASPHALT});
+  dec.push({pts:rectPts(u,v,hw*2,len,yaw), fill:ASPHALT, road:true});
   const f=fuv(yaw), r=ruv(yaw);
   for(const s of [-1,1])
     dec.push({line:true, stroke:'rgba(240,243,245,.75)', lw:2, pts:[
@@ -2838,6 +2840,7 @@ const LANE_W=3.3;                 /* ширина полосы */
 const TRAM_HW=3.2;                /* полуширина трамвайного полотна (два пути посередине) */
 const TRAM_GAUGE=1.524;           /* колея */
 const KERB_OUT=0.30;              /* бордюр — сразу за краем проезжей части */
+const KERB_W=0.5;                 /* ширина поребрика: внутренняя грань на 5 см за краем асфальта */
 /* кварталы общего города (cityBuildings): фасад на BLD_SETBACK от края проезжей части — на 1,3 м
    дальше внешнего края указателя улиц (hw + 3,7); треугольник видимости BLD_SIGHT × BLD_SIGHT у
    каждого угла перекрёстка — СП 42.13330, 40 км/ч; внешний пояс — на BLD_BELT за крайними коридорами
@@ -2886,7 +2889,7 @@ function roadDec2(dec, u, v, yaw, len, r){
   /* куски перекрываются на 6 см: встык антиалиасинг оставлял светлый шов вдоль улицы */
   for(let i=0;i<n;i++){
     const c=at(-len/2+sl*(i+0.5),0);
-    dec.push({pts:rectPts(c.u,c.v,hw*2,sl+0.06,yaw), fill:ASPHALT, far:true});
+    dec.push({pts:rectPts(c.u,c.v,hw*2,sl+0.06,yaw), fill:ASPHALT, far:true, road:true});
   }
   const s0=-len/2, s1=len/2;
   for(const sx of [-1,1]) decLine(dec, at(s0,sx*(hw-0.12)), at(s1,sx*(hw-0.12)), ROAD_EDGE, 2);
@@ -2943,6 +2946,132 @@ function roundDec(dec, u, v, rOut, rIn){
   dec.push(circleDec(u,v,(rIn+rOut)/2,'rgba(240,243,245,.5)',2,[8,7]));
   return {kind:'round', u, v, rOut, rIn};
 }
+function polyHas(pu,pv,P){
+  let c=false;
+  for(let i=0,j=P.length-1;i<P.length;j=i++){
+    const a=P[i], b=P[j];
+    if((a.v>pv)!==(b.v>pv) && pu < (b.u-a.u)*(pv-a.v)/(b.v-a.v)+a.u) c=!c;
+  }
+  return c;
+}
+/* поребрик выводится из нарисованного асфальта, а не ставится руками — асфальт и бордюр не могут
+   разойтись. Край каждого асфальтового многоугольника режется на куски ≤ 0,5 м; кусок, за которым
+   в 10 см снова асфальт (устье улицы, стык кусков полосы, заплатка узла поверх чужой полосы), —
+   внутренний и отбрасывается, граница «свой/внутренний» уточняется делением до сантиметра (иначе
+   бордюр заходил бы на четверть метра в устье). Остальное склеивается в прямые прогоны и встаёт
+   коробкой на KERB_OUT наружу — туда же, где стоял ручной бордюр улицы, поэтому калибровка показов
+   не сдвигается. openEnds — концы дорог 23–26 (рёбра 0 и 2 у road:true) остаются открытыми: дорога
+   уходит за край площадки, поперечный бордюр читался бы как тупик */
+const KERB_STEP=0.5;
+function kerbsFromAsphalt(dec, opts){
+  const openEnds=!!(opts && opts.openEnds), grp0=(opts && opts.grp0)||0;
+  const polys=[];
+  for(const d of dec){
+    if(d.line || d.fill!==ASPHALT || !d.pts || d.pts.length<3) continue;
+    const P=d.pts; let u0=Infinity,u1=-Infinity,v0=Infinity,v1=-Infinity,A=0;
+    for(let i=0;i<P.length;i++){ const p=P[i], q=P[(i+1)%P.length];
+      if(p.u<u0)u0=p.u; if(p.u>u1)u1=p.u; if(p.v<v0)v0=p.v; if(p.v>v1)v1=p.v;
+      A+=p.u*q.v-q.u*p.v; }
+    polys.push({P,u0,u1,v0,v1,s:A>0?1:-1,road:!!d.road});
+  }
+  const inAsphalt=(pu,pv,self)=>{
+    for(const g of polys){
+      if(g===self || pu<g.u0 || pu>g.u1 || pv<g.v0 || pv>g.v1) continue;
+      if(polyHas(pu,pv,g.P)) return true;
+    }
+    return false;
+  };
+  /* 1. свои куски края → прогоны вдоль рёбер */
+  let runs=[];
+  for(const g of polys){
+    const P=g.P, n=P.length;
+    for(let i=0;i<n;i++){
+      if(openEnds && g.road && (i===0 || i===2)) continue;
+      const a=P[i], b=P[(i+1)%n], du=b.u-a.u, dv=b.v-a.v, L=Math.sqrt(du*du+dv*dv);
+      if(L<1e-3) continue;
+      const tu=du/L, tv=dv/L, nu=g.s>0?tv:-tv, nv=g.s>0?-tu:tu;
+      const own=(s)=>!inAsphalt(a.u+tu*s+nu*0.1, a.v+tv*s+nv*0.1, g);
+      const edge=(s0,s1)=>{ /* s0 — свой, s1 — чужой: граница делением */
+        for(let it=0;it<7;it++){ const m=(s0+s1)/2; if(own(m)) s0=m; else s1=m; }
+        return (s0+s1)/2; };
+      const k=Math.max(1,Math.ceil(L/KERB_STEP)), sl=L/k;
+      let start=-1, prev=false;
+      for(let j=0;j<=k;j++){
+        const cur = j<k && own(sl*(j+0.5));
+        if(cur && !prev) start = j===0 ? 0 : edge(sl*(j+0.5), sl*(j-0.5));
+        if(!cur && prev){
+          const end = j===k ? L : edge(sl*(j-0.5), sl*(j+0.5));
+          if(end-start>0.02) runs.push({s0:start, s1:end, ou:a.u, ov:a.v, tu,tv,nu,nv});
+        }
+        prev=cur;
+      }
+    }
+  }
+  /* 2. соседние куски полосы лежат на одной прямой и перекрываются на 6 см — один прогон */
+  for(let merged=true; merged;){
+    merged=false;
+    for(let i=0;i<runs.length && !merged;i++) for(let j=i+1;j<runs.length && !merged;j++){
+      const A=runs[i], B=runs[j];
+      if(A.nu*B.nu+A.nv*B.nv<0.9999) continue;
+      if(Math.abs((B.ou-A.ou)*A.nu+(B.ov-A.ov)*A.nv)>0.01) continue;
+      const pr=(R,s)=>(R.ou+R.tu*s-A.ou)*A.tu+(R.ov+R.tv*s-A.ov)*A.tv;
+      let b0=pr(B,B.s0), b1=pr(B,B.s1); if(b0>b1){ const t=b0; b0=b1; b1=t; }
+      const a0=Math.min(A.s0,A.s1), a1=Math.max(A.s0,A.s1);
+      if(b0>a1+0.05 || b1<a0-0.05) continue;
+      A.s0=Math.min(a0,b0); A.s1=Math.max(a1,b1);
+      runs.splice(j,1); merged=true;
+    }
+  }
+  /* концы прогона: точка на краю асфальта и направление «в стык» */
+  for(const R of runs){
+    R.e=[{u:R.ou+R.tu*R.s0, v:R.ov+R.tv*R.s0, du:-R.tu, dv:-R.tv, cut:false, mate:null},
+         {u:R.ou+R.tu*R.s1, v:R.ov+R.tv*R.s1, du: R.tu, dv: R.tv, cut:false, mate:null}];
+    R.c=[{u:R.e[0].u+R.nu*KERB_OUT, v:R.e[0].v+R.nv*KERB_OUT},
+         {u:R.e[1].u+R.nu*KERB_OUT, v:R.e[1].v+R.nv*KERB_OUT}];
+  }
+  /* 3. стыки: край асфальта — замкнутая линия, у каждого конца прогона есть сосед. Осевые
+     продлеваются или подрезаются до пересечения; почти прямой угол — встык (один бордюр владеет
+     углом, второй кончается на его грани, торец не рисуется), иначе внахлёст клин в сантиметры.
+     Внахлёст на прямом угле — это квадрат 0,25 × 0,25 внутри обоих: художник рисует его вперемешку */
+  const parent=runs.map((_,i)=>i);
+  const root=(i)=>{ while(parent[i]!==i) i=parent[i]=parent[parent[i]]; return i; };
+  for(let i=0;i<runs.length;i++) for(let ei=0;ei<2;ei++){
+    const E=runs[i].e[ei]; if(E.mate) continue;
+    for(let j=i+1;j<runs.length && !E.mate;j++) for(let ej=0;ej<2;ej++){
+      const F=runs[j].e[ej]; if(F.mate) continue;
+      /* концы соседей совпадают не точно: куски полосы заходят на 3 см в заплатку узла (перекрытие
+         против шва), а где край пересекает чужой край под углом (диск кольца и заглушка устья), граница
+         «свой/внутренний» ищется по точке в 10 см снаружи и сдвигается на ~0,1 м. Сам стык строится по
+         пересечению осевых, поэтому допуск на геометрию не влияет */
+      if(Math.abs(E.u-F.u)>0.2 || Math.abs(E.v-F.v)>0.2) continue;
+      E.mate=F; F.mate=E; parent[root(i)]=root(j);
+      const R1=runs[i], R2=runs[j], c1=R1.c[ei], c2=R2.c[ej];
+      const cr=E.du*F.dv-E.dv*F.du;
+      if(Math.abs(cr)<1e-4) break;
+      const t=((c2.u-c1.u)*F.dv-(c2.v-c1.v)*F.du)/cr;      /* c1 + E.d·t — на осевой второго */
+      const qu=c1.u+E.du*t, qv=c1.v+E.dv*t;
+      if(Math.abs(E.du*F.du+E.dv*F.dv)<0.5){
+        const h=KERB_W/2;
+        c1.u=qu-E.du*h; c1.v=qv-E.dv*h; E.cut=true;
+        c2.u=qu+F.du*h; c2.v=qv+F.dv*h;
+      } else { c1.u=c2.u=qu; c1.v=c2.v=qv; }
+      break;
+    }
+  }
+  /* 4. коробки: одна на прогон, цепочка — общий grp (одна цепочка — одно касание) */
+  const list=[], gid={}, openAt=[]; let metres=0, open=0;
+  for(let i=0;i<runs.length;i++){
+    const R=runs[i], a=R.c[0], b=R.c[1], du=b.u-a.u, dv=b.v-a.v, L=Math.sqrt(du*du+dv*dv);
+    if(L<0.05 || du*R.tu+dv*R.tv<=0) continue;
+    for(const E of R.e) if(!E.mate){ open++; if(openAt.length<8) openAt.push({u:+E.u.toFixed(2), v:+E.v.toFixed(2)}); }
+    const r=root(i); if(gid[r]===undefined) gid[r]=grp0+Object.keys(gid).length;
+    const k=kerb((a.u+b.u)/2, (a.v+b.v)/2, KERB_W, L);
+    k.yaw=Math.atan2(R.tu, R.tv); k.grp=gid[r];
+    k.cutB=R.e[0].cut; k.cutF=R.e[1].cut;
+    list.push(k); metres+=L;
+  }
+  return {list, stats:{boxes:list.length, groups:Object.keys(gid).length, metres:Math.round(metres), open, openAt}};
+}
 /* сборка: узлы → лучи, рёбра → полотно + бордюры + мета полос.
    Ребро подрезается радиусом узла с каждого конца, иначе разметка и бордюр
    лезут в перекрёсток и перегораживают проезд */
@@ -2952,6 +3081,7 @@ function cityWorld(spec){
               lanes:[],trams:[],rounds:[],lights:[],pockets:[]};
   const pt=(e)=> Array.isArray(e) ? {u:e[0], v:e[1]} : spec.nodes[e];
   const arms={};
+  let grpN=0;              /* цепочки бордюра: островки колец, затем всё, что выведет kerbsFromAsphalt */
   for(const k in spec.nodes) arms[k]=[];
   for(const r of spec.roads){
     const A=pt(r.a), B=pt(r.b);
@@ -2973,10 +3103,10 @@ function cityWorld(spec){
       /* островок восьмиугольником из бордюров: OBB-столкновения круг не умеют, а без
          преграды демо и игрок просто срезают кольцо насквозь. Бордюр не блокирует —
          он тормозит и считается наездом, ровно как настоящий островок */
-      const ch=2*rIn*Math.sin(Math.PI/8);
+      const ch=2*rIn*Math.sin(Math.PI/8), g=grpN++;
       for(let i=0;i<8;i++){ const a=i*TAU/8;
         const k=kerb(nd.u+Math.cos(a)*rIn, nd.v+Math.sin(a)*rIn, 0.5, ch);
-        k.yaw=Math.atan2(-Math.sin(a), Math.cos(a)); obs.push(k); }
+        k.yaw=Math.atan2(-Math.sin(a), Math.cos(a)); k.grp=g; obs.push(k); }
     }
   }
   /* указатели направлений на подъездах к перекрёсткам: по одному на луч, справа по ходу,
@@ -3018,9 +3148,14 @@ function cityWorld(spec){
     const meta=roadDec2(dec, cu, cv, r._yaw, len, r);
     city.lanes.push(meta);
     if(r.tram) city.trams.push({kind:'tram', u:cu, v:cv, yaw:r._yaw, len, hw:TRAM_HW});
-    if(!r.nokerb) for(const sx of [-1,1]){
-      const ku=cu+rt.u*sx*(r._hw+KERB_OUT), kv=cv+rt.v*sx*(r._hw+KERB_OUT);
-      const k=kerb(ku,kv,0.5,len); k.yaw=r._yaw; obs.push(k);
+    /* у кольца полоса начинается на радиусе кольца по оси, а диск на боковой кромке кончается на
+       √(R² − hw²): между ними лежал клин голой земли (у двухполосной Заводской 1,5 м), и поребрик,
+       выведенный из асфальта, завернул бы в него. Заглушка закрывает клин асфальтом */
+    for(const [e,P,s] of [[r.a,A,1],[r.b,B,-1]]){
+      const nd=Array.isArray(e) ? null : spec.nodes[e];
+      if(!nd || !nd.round) continue;
+      const R=nd.round, a0=Math.sqrt(Math.max(0, R*R-r._hw*r._hw))-0.1, m=(a0+R)/2;
+      dec.push({pts:rectPts(P.u+f.u*s*m, P.v+f.v*s*m, r._hw*2, R-a0+0.06, r._yaw), fill:ASPHALT, far:true});
     }
   }
   /* граф улиц в явном виде — узлы, свободные концы и рёбра с именами. Спек уже описывает
@@ -3042,16 +3177,35 @@ function cityWorld(spec){
   /* тротуары: от бордюра до линии фасада по всей длине улицы, кусками по 42 м с перекрытием, как
      асфальт; кладутся В НАЧАЛО разметки — асфальт перекрёстков, кольцо и разметка рисуются поверх, а
      угол квартала мостят две пересекающиеся полосы, без отдельной геометрии угла */
-  const walks=[];
+  const walks=[], WALK_W=BLD_SETBACK-KERB_OUT-KERB_W/2;
+  const ends={};
+  for(const r of spec.roads) for(const e of [r.a, r.b]) if(Array.isArray(e)){ const k=e.join(); ends[k]=(ends[k]||0)+1; }
   for(const r of spec.roads){
     const A=pt(r.a), f=fuv(r._yaw), rt=ruv(r._yaw), n=Math.max(1, Math.ceil(r._len/42)), sl=r._len/n;
-    const w=BLD_SETBACK-KERB_OUT-0.25, off=r._hw+KERB_OUT+0.25+w/2;
+    const off=r._hw+KERB_OUT+KERB_W/2+WALK_W/2;
     for(const sx of [-1,1]) for(let i=0;i<n;i++){
       const tc=sl*(i+0.5);
-      walks.push({pts:rectPts(A.u+f.u*tc+rt.u*sx*off, A.v+f.v*tc+rt.v*sx*off, w, sl+0.06, r._yaw), fill:SIDEWALK, far:true});
+      walks.push({pts:rectPts(A.u+f.u*tc+rt.u*sx*off, A.v+f.v*tc+rt.v*sx*off, WALK_W, sl+0.06, r._yaw), fill:SIDEWALK, far:true});
+    }
+    /* тупик: поребрик поперёк конца улицы, за ним тротуар во всю ширину до линии фасада — без
+       него бордюр стоял бы на голой земле между двумя полосами тротуара */
+    for(const [e,s] of [[r.a,-1],[r.b,1]]){
+      if(!Array.isArray(e) || ends[e.join()]!==1) continue;
+      const d=KERB_OUT+KERB_W/2+WALK_W/2;
+      walks.push({pts:rectPts(e[0]+f.u*s*d, e[1]+f.v*s*d, (r._hw+BLD_SETBACK)*2, WALK_W, r._yaw), fill:SIDEWALK, far:true});
     }
   }
+  /* вокруг кольца тротуар диском: асфальт кольца ложится сверху, между лучами остаётся кольцо
+     плитки, на котором и стоит внешний поребрик */
+  for(const k in spec.nodes){ const nd=spec.nodes[k]; if(!nd.round) continue;
+    const p=[], R=nd.round+BLD_SETBACK;
+    for(let i=0;i<40;i++){ const a=i/40*TAU; p.push({u:nd.u+Math.cos(a)*R, v:nd.v+Math.sin(a)*R}); }
+    walks.push({pts:p, fill:SIDEWALK, far:true});
+  }
   dec.unshift(...walks);
+  const kb=kerbsFromAsphalt(dec, {grp0:grpN});
+  for(const k of kb.list) obs.push(k);
+  city.kerbs=kb.stats;
   const bl=cityBuildings(spec, pt, radius, arms, obs);
   for(const b of bl.list) obs.push({...b});
   city.buildings=bl.stats; city.beltHull=bl.hull;
@@ -5504,6 +5658,7 @@ const LEVELS = [
     city.oncoming.push({u:18.6, v:10, yaw:0, w:2.8, l:6});
     city.turnZones.push({u:0, v:0, yaw:0, w:8.6, l:8.6, blink:'R'});
     city.turnZones.push({u:20, v:0, yaw:0, w:8.6, l:8.6, blink:'L'});
+    for(const k of kerbsFromAsphalt(dec,{openEnds:true}).list) obs.push(k);
     return { obs, dec, city, start:{u:1.65,v:-17,th:0},
       goal:{u:21.65,v:14.5,w:3.0,l:5.6,th:0,tol:rad(20)} }; },
   marks(){ return {
@@ -5558,14 +5713,14 @@ const LEVELS = [
   steps:[
     'Заранее включи левый поворотник (Q).',
     'Прижмись правее своей полосы — это даст запас на дугу.',
-    'На перекрёстке руль ВЛЕВО до упора, веди по дуге.',
+    'Въезжай до центра перекрёстка, там руль ВЛЕВО до упора и веди по дуге.',
     'Выходи в свою полосу (правую по новому направлению).',
     'Останови машину в зелёной зоне.',
   ],
   refs:'Курс — по «углу к цели»: разворот закончен, когда он у нуля. Осевая после разворота — слева.',
   hacks:[
     'Прижаться правее перед разворотом — не хитрость, а обязанность: иначе круга не хватит.',
-    'Руль влево до упора можно докрутить на месте — стоя у входа в перекрёсток.',
+    'Руль влево до упора можно докрутить на месте — стоя у центра перекрёстка.',
     'Не попал в полосу — не дёргай задний ход на перекрёстке: доверни по дуге шире.',
   ],
   transfer:'Разворот вне перекрёстка — та же геометрия: прижаться правее, полный левый, контроль встречной.',
@@ -5578,6 +5733,7 @@ const LEVELS = [
     obs.push(sign('main', -7.6, -7.4, rad(180)));
     city.oncoming.push({u:-2.6, v:-13, yaw:0, w:5.2, l:18});
     city.turnZones.push({u:0, v:0, yaw:0, w:12, l:10, blink:'L'});
+    for(const k of kerbsFromAsphalt(dec,{openEnds:true}).list) obs.push(k);
     return { obs, dec, city, start:{u:2.6,v:-21,th:0},
       goal:{u:-2.6,v:-14.5,w:3.0,l:5.6,th:rad(180),tol:rad(18)} }; },
   marks(){ return {
@@ -5596,14 +5752,21 @@ const LEVELS = [
      why:'Круг разворота 11,8 м. Из середины полосы дуга не влезает в перекрёсток; каждые полметра вправо — запас на выходе.',
      hint:'Прижмись правее, к жёлтой линии у края.', marks:['edge']},
     {when:s=>s.v<-4.4&&s.gear>=0&&Math.abs(deg(angNorm(s.th)))<45,
-     icon:'⬆', act:'До перекрёстка; можно докрутить руль стоя', move:'fwd', blinker:'L',
+     icon:'⬆', act:'До перекрёстка — у жёлтой линии', move:'fwd', blinker:'L',
      goal:{text:'до входа в перекрёсток'},
-     hint:'Доезжай до входа в перекрёсток; руль влево можно выкрутить на месте.', marks:['edge','ctr']},
+     hint:'Доезжай до перекрёстка у жёлтой линии.', marks:['edge','ctr']},
+    /* дуга — от центра перекрёстка, граница = конец сегмента показа (vGte 1,3): начатая у входа,
+       она уводила правый передний угол на 1,3 м в тротуар юго-западного угла, на поребрик */
+    {when:s=>s.v<1.3&&s.gear>=0&&Math.abs(deg(angNorm(s.th)))<20,
+     icon:'⬆', act:'Въезжай до центра — поравняйся с ним', move:'fwd', blinker:'L',
+     goal:{text:'центр слева, на уровне плеча'},
+     why:'Круг разворота — 11,8 м. Начнёшь у входа — правый передний угол заедет на бордюр угла. От центра дуга ложится в перекрёсток и в устье поперечной улицы.',
+     hint:'Въезжай в перекрёсток, пока голубой центр не окажется слева на уровне плеча; руль влево можно докрутить стоя.', marks:['ctr']},
     /* левый разворот ведёт курс в МИНУС (0 → −180): условие по знаковому курсу, а не по 0…360 —
        старое a<160 не срабатывало ни на одном градусе левого разворота. Чип — угол к оси цели,
        он падает к нулю, поэтому target 0 / dir down */
     /* курс в (−160°, 45°): после −180° angNorm даёт +177°, и одно только «> −160» держало полный левый
-       вечно — ученик наматывал круги по перекрёстку. Дуга R=3,84 от входа v≈-4,4 опускается до -8,2 */
+       вечно — ученик наматывал круги по перекрёстку. Дуга R=3,84 от центра (задняя ось v≈0) */
     {when:s=>{const d=deg(angNorm(s.th)); return d>-160&&d<45&&s.v>-9;},
      icon:'↺', act:'Руль ВЛЕВО до упора — по дуге', wheel:'lockL',
      goal:{metric:'ang',target:0,dir:'down'},
@@ -5644,6 +5807,7 @@ const LEVELS = [
     city.stoplines.push(stoplineDec(dec, 1.65, 2.0, 0, 3.0));
     city.zebras.push(zebraDec(dec, 0, 5.5, 0, 6.6));
     city.zebras.push(zebraDec(dec, 0, 20, 0, 6.6));
+    for(const k of kerbsFromAsphalt(dec,{openEnds:true}).list) obs.push(k);
     return { obs, dec, city, start:{u:1.65,v:-14,th:0},
       goal:{u:1.65,v:28.5,w:3.0,l:5.6,th:0,tol:rad(20)} }; },
   marks(){ return {
@@ -5706,6 +5870,7 @@ const LEVELS = [
     city.oncoming.push({u:-1.65, v:-9, yaw:0, w:3.3, l:9});
     city.turnZones.push({u:0.9, v:-2.6, yaw:0, w:7, l:6.5, blink:'R'});
     city.yieldZones.push({u:0, v:-1.65, yaw:rad(90), w:3.3, l:10, dist:10});
+    for(const k of kerbsFromAsphalt(dec,{openEnds:true}).list) obs.push(k);
     return { obs, dec, city, start:{u:1.65,v:-16,th:0},
       goal:{u:15,v:-1.65,w:3.0,l:5.6,th:rad(90),tol:rad(20)} }; },
   marks(){ return {
@@ -5738,6 +5903,13 @@ const LEVELS = [
      goal:{text:'выезд в это окно'},
      why:'Выезжают в окно целиком: тронулся — разгоняйся до потока, медленный выезд подрезает следующего.',
      hint:'Окно чистое — выезжай направо и сразу разгоняйся.', marks:['look','zone'], mirror:'left'},
+    /* направо — не от стоп-линии: оттуда угол квартала попадает под правый борт. Граница = конец
+       сегмента показа (vGte −3,7): угол поребрика ушёл под правое зеркало */
+    {when:s=>s.v<-3.7&&s.gear>=0&&deg(angNorm(s.th))<15,
+     icon:'⬆', act:'Выкатись прямо — угол бордюра под правое зеркало', move:'fwd', blinker:'R',
+     goal:{text:'угол бордюра ушёл под зеркало'},
+     why:'Повернёшь от линии — правый борт заедет на угол бордюра. Крути, когда угол бордюра ушёл под правое зеркало: дуга обойдёт его.',
+     hint:'Выкатись прямо, пока угол бордюра не уйдёт под правое зеркало, — тогда руль направо.', marks:['zone']},
     {when:s=>s.u<8&&deg(angNorm(s.th))<75,   /* до 75°, а не «пока v<-1.2»: окно в 3 м проскакивалось за секунду */
      icon:'↱', act:'Направо — и сразу разгоняйся', wheel:'right',
      goal:{metric:'ang',target:0,dir:'down'},   /* угол к оси цели (th=90) падает 90→0; «90 вверх» был «достигнут» со старта */
@@ -6575,13 +6747,14 @@ function buildRenderList(obs){
     /* 3,5 м, не 7: у длинного сегмента бордюра центр ближе к камере, чем колесо соседа перед
        ним, и бордюр рисовался поверх колеса */
     const n=Math.max(1,Math.ceil(o.l/3.5)), m=Math.max(1,Math.ceil(o.w/3.5));
-    const f=fuv(o.yaw), r=ruv(o.yaw), sl=o.l/n, sw=o.w/m;
+    const f=fuv(o.yaw), r=ruv(o.yaw), sl=o.l/n, sw=o.w/m, jf=!!o.cutF, jb=!!o.cutB;
     for(let i=0;i<n;i++) for(let j=0;j<m;j++){
       const dv=-o.l/2+sl*(i+0.5), du=-o.w/2+sw*(j+0.5);
-      /* швы сегментации: торцы на них не рисуются и рёбер не несут (см. pushBox) */
+      /* швы сегментации: торцы на них не рисуются и рёбер не несут (см. pushBox). Стык поребрика
+         встык (cutF/cutB из kerbsFromAsphalt) — такой же шов: торец упирается в грань соседа */
       out.push({kind:o.kind, u:o.u+f.u*dv+r.u*du, v:o.v+f.v*dv+r.v*du,
                 w:sw, l:sl, h:o.h, yaw:o.yaw, col:o.col, tex:o.tex||null,
-                cut:(n>1||m>1) ? {f:i<n-1, b:i>0, l:j>0, r:j<m-1} : null});
+                cut:(n>1||m>1||jf||jb) ? {f:i<n-1||jf, b:i>0||jb, l:j>0, r:j<m-1} : null});
     }
   }
   return out;
@@ -6590,6 +6763,7 @@ function loadLevel(i){
   examTeardown();
   game.li = ((i%LEVELS.length)+LEVELS.length)%LEVELS.length;
   const def = LEVELS[game.li], b = def.build();
+  kerbHeld=[];
   for(const o of b.obs){ o.hw=o.w/2; o.hl=o.l/2; o.knocked=false; o._touch=false;
                          o._shadow=shadowPoly(o.u,o.v,o.w,o.l,o.yaw,o.h); o._sr=undefined; }
   /* границы считаем от старта и цели, а не от одних препятствий: площадка без
@@ -6655,6 +6829,7 @@ function restart(){
   setParked(false);
   trails = {fl:[],fr:[],rl:[],rr:[]}; trailT=0;
   for(const o of level.obs){ o.knocked=false; o._touch=false; o._hitByPlayer=false; }
+  kerbHeld=[];
   for(const a of level.actors){ a.u=a.act.u0; a.v=a.act.v0; a.yaw=a.act.yaw0;
     a.act.i=0; a.act.started=!a.act.trig; a.act.done=false; a._vioFired=false;
     a.act.v=a.act.rt ? Math.min(a.act.sp, trafCurveSpeed(a.act.rt, a.act.s0)) : a.act.sp;
@@ -6784,21 +6959,29 @@ function polyMTV(P,np,Q,nq){
   return {u:bu, v:bv, depth:best};
 }
 
+/* цепочка поребрика (kerbsFromAsphalt, grp): сколько её коробок сейчас под кузовом. Скольжение
+   вдоль бордюра через стык двух коробок — один наезд, а не два (и не два штрафа по 3 балла) */
+let kerbHeld=[];
+function untouch(o){
+  if(o._touch && o.grp!==undefined && kerbHeld[o.grp]>0) kerbHeld[o.grp]--;
+  o._touch=false;
+}
 function resolveCollisions(dt){
   const A=carOBB(), f=fuv(car.th); let hard=false, fresh=false, freshObj=null;
   for(const o of level.obs){
     if(o.kind==='cone' && o.knocked) continue;
     /* прямоугольник — только грубый отсев, чтобы не гонять точную проверку по всем
        препятствиям уровня; касание объявляется по настоящему следу кузова */
-    if(!satMTV(A,o)){ o._touch=false; continue; }
+    if(!satMTV(A,o)){ untouch(o); continue; }
     const nq=obsShape(o);
     const m=polyMTV(carHullPts(A.u,A.v,car.th), CAR_HULL.length, obsBuf(o), nq);
     /* касание считаем по НАЧАЛУ контакта: без защёлки машина, стоящая на бордюре,
        набирала новое касание каждые полсекунды */
-    if(!m){ o._touch=false; continue; }
+    if(!m){ untouch(o); continue; }
     /* пока игрок не тронулся, чужая машина ему не «наезд»: защёлка ставится на любом
        пересечении OBB, кто бы ни двигался, и стоящий на старте получал аварийную ошибку
        за то, что поток прошёл вплотную */
+    if(!o._touch && o.grp!==undefined && (kerbHeld[o.grp]=(kerbHeld[o.grp]||0)+1)>1) o._touch=true;
     if(!o._touch){ o._touch=true; fresh=true; freshObj=o; if(o.act && game.moved) o._hitByPlayer=true;
       /* актёра не начисляем здесь: его покроет vio collision-actor из детекторов.
          На демо штраф глушим: показ ведёт машину сам и снял бы попытку игрока */
@@ -10621,15 +10804,23 @@ const DEMOS = {
     {g:'D', s:0, slow:true, vGte:-4.2, max:10},
     {g:'D', s:1, slow:true, th:rad(90), max:14, say:'Направо по малой дуге — держись своего края'},
     {g:'D', aim:{u:14,v:-1.65}, vmax:2.5, uGte:12, max:14},
-    {g:'D', blink:'L', aim:{u:20,v:-1.65}, slow:true, uGte:19.0, max:12,
+    /* левый — с u 18,5, а не 19: полный руль с 19 выводил заднюю ось ровно на ось полосы (21,65), и
+       наружный передний угол, заметая 5,89 м, выходил на 0,3 м за полосу — на дальний поребрик.
+       С 18,5 угол проходит в 0,25 м от него, ось — в 0,6 м левее оси полосы, её выправляет погоня */
+    {g:'D', blink:'L', aim:{u:20,v:-1.65}, slow:true, uGte:18.5, max:12,
      say:'Теперь левый поворотник — и к центру перекрёстка'},
     {g:'D', s:-1, slow:true, th:rad(0), max:14, say:'Налево от центра — и сразу на свою полосу'},
     {g:'D', aim:{u:21.65,v:22}, slow:true, goal:true, max:18, say:'Прямо до зоны и стоп'},
     {g:'P', time:0.9, say:'Правый — коротко к краю; левый — от центра на свою полосу'}
   ]},
-  23: { segs:[   /* разворот: прижаться правее, полный левый */
-    {g:'D', blink:'L', aim:{u:3.4,v:0}, vmax:2.2, vGte:-8.6, max:12, say:'Левый поворотник — и прижмись правее: дуге нужен запас'},
-    {g:'D', s:0, slow:true, vGte:-5.4, max:8},
+  23: { segs:[   /* разворот: прижаться правее, полный левый ОТ ЦЕНТРА перекрёстка. Наружный передний
+                    угол заметает 5,89 м вокруг центра дуги (задняя ось − 3,84 м влево): начатая у входа
+                    (задняя ось v −6,65) дуга уводила угол на 1,3 м в тротуар юго-западного угла. С задней
+                    осью на v 0 западный край дуги (−6,5) ложится в устье поперечной улицы (|v| < 4,2) */
+    /* правый борт — у жёлтой линии (u 4,6), центр кузова на 3,7: из 3,2 дуга кончалась задней осью на
+       −4,5, борт выходил на −5,4 — за край южной улицы, и угол чиркал поребрик устья */
+    {g:'D', blink:'L', aim:{u:3.7,v:0}, vmax:2.2, vGte:-8.6, max:12, say:'Левый поворотник — и прижмись правее: дуге нужен запас'},
+    {g:'D', aim:{u:3.7,v:8}, slow:true, vGte:1.3, max:12},
     {g:'D', s:-1, slow:true, th:rad(-176), thTol:5, max:22, say:'Полный левый: дуга через центр, встречную не цепляем'},
     {g:'D', aim:{u:-2.6,v:-11}, slow:true, vLte:-9.8, max:10},
     {g:'D', aim:{u:-2.6,v:-19}, slow:true, goal:true, max:16, say:'Выходи в свою полосу — и в зону'},
@@ -10648,7 +10839,12 @@ const DEMOS = {
   25: { segs:[   /* уступи дорогу: стоп у края, окно, направо */
     {g:'D', blink:'R', s:0, vmax:2.2, vGte:-6.4, max:12, say:'Поворотник — и к краю главной: знак требует уступить'},
     {g:'P', gap:7, max:45, say:'Стоим у края: пропускаем поток по главной — его преимущество'},
-    {g:'D', aim:{u:5.5,v:-1.65}, slow:true, uGte:2.2, max:14, say:'Окно чистое — направо и разгоняемся'},
+    /* направо — не от стоп-линии: оттуда угол квартала попадал под правый борт. Полный руль с задней
+       осью на v −5,0 (центр кузова −3,7) оставляет угол поребрика внутри дуги правого борта (2,70 м
+       против 2,94) и выводит ось на v −1,16 — в свою полосу. Это и лайфхак уровня 23: крутить, когда
+       угол бордюра ушёл под зеркало */
+    {g:'D', s:0, slow:true, vGte:-3.7, max:10, say:'Окно чистое — направо и разгоняемся'},
+    {g:'D', s:1, slow:true, th:rad(80), max:10},
     {g:'D', aim:{u:8,v:-1.62}, slow:true, uGte:7.0, max:10},
     {g:'D', aim:{u:16.5,v:-1.65}, slow:true, goal:true, max:14, say:'По своей полосе — в зону'},
     {g:'P', time:0.9, say:'Уступить — значит не заставить её даже притормозить'}
@@ -10719,9 +10915,10 @@ const DEMOS = {
        гас до съезда, и детектор штрафовал показ за поворот без поворотника */
     {g:'D', blink:'R', aim:{u:83.75,v:9.96}, slow:true, vGte:6.96, max:12,
      say:'Первый съезд пропустили; поворотник — перед своим'},
-    /* первая «морковка» съезда — ЗАПАДНЕЕ оси полосы (78,5 против 79,65): с целью ровно
-       по оси машина доезжала до неё под −32° и восточным бортом ложилась на бордюр */
-    {g:'D', aim:{u:78.5,v:17},   slow:true, vGte:14, max:12, say:'Выходим на север'},
+    /* первая «морковка» съезда — ЗАПАДНЕЕ оси полосы (78,2 против 79,65): с целью ровно
+       по оси машина доезжала до неё под −32° и восточным бортом ложилась на бордюр. С 78,5 правый
+       задний угол срезал угол устья на 10 см — пока клин у кольца был голой землёй, этого не видели */
+    {g:'D', aim:{u:78.2,v:17},   slow:true, vGte:14, max:12, say:'Выходим на север'},
     {g:'D', aim:{u:79.65,v:30},  slow:true, vGte:26, max:12},
     {g:'D', aim:{u:79.65,v:44},  slow:true, goal:true, max:14, say:'И в зону'},
     {g:'P', time:0.9, say:'Въезд без сигнала, выезд — с правым: на кольце это главное'}
@@ -11190,6 +11387,7 @@ function closeEditor(){
 function edRebuild(){
   const d=editor.data;
   const obs=d.items.map(edMake);
+  kerbHeld=[];
   for(const o of obs){ o.hw=o.w/2; o.hl=o.l/2; o.knocked=false; o._touch=false;
                        o._shadow=shadowPoly(o.u,o.v,o.w,o.l,o.yaw,o.h); o._sr=undefined; }
   const dec=[stripe(d.goal.u,d.goal.v,d.goal.w,d.goal.l,'rgba(80,200,140,.20)',d.goal.th)];
