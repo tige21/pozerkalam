@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /* Гейт фасадов домов из картинок (серия 3; коды render-buildings-facade-img, -sides, -lod, -light,
-   -rhythm, -perspective; сценарии — specs/features/render/fasady.feature). Дом рисуется в одиночку (level.bld = [дом],
+   -rhythm, -perspective, -range; сценарии — specs/features/render/fasady.feature). Дом рисуется в одиночку (level.bld = [дом],
    уличные объекты убраны) с камерой, поставленной точно, и грань меряется по пикселям: по сетке точек на
    самой грани, спроецированных через viewProject, — соседний дом торец не закроет, знак не встанет
    поперёк.
      PW_DIR=/tmp/pw node tools/facade-check.mjs
-     FAULT=facimg|facside|faclod|faclight|facseam|facpersp — сломать нарочно и увидеть красный: страница
-       без картинок фасадов; торцу дана плитка с окнами; дальнему дому оставлен цвет палитры; без накладки
-       света; плитка растянута на 8 % (шаг окна не делит её пополам); ячейки без деления по перспективе
+     FAULT=facimg|facside|faclod|faclight|facseam|facpersp|facrange — сломать нарочно и увидеть красный:
+       страница без картинок фасадов; торцу дана плитка с окнами; дальнему дому оставлен цвет палитры; без
+       накладки света; плитка растянута на 8 % (шаг окна не делит её пополам); ячейки без деления по
+       перспективе; картинка только ближе BLD_NEAR_D
    Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена. */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -116,11 +117,15 @@ const { page } = main;
 /* опорный дом выбирается до поломки: FAULT=facside меняет ему торец, и выбор по торцу его бы потерял */
 await page.evaluate((pick) => { window.__facO = eval(pick); }, pick);
 /* facside — торцу опорного дома плитка с окнами (цвет оси — её же, чтобы краснела только своя проверка);
-   faclod — дефект, найденный при работе: за BLD_NEAR_D весь дом одного цвета, и торец на границе
-   дальностей меняет цвет на цвет фасада */
+   faclod — дефект, найденный при работе: за BLD_NEAR_D (одна коробка вместо нарезки) у дома все оси цвета
+   фасада, и торец на границе меняет цвет */
 if (FAULT === 'facside') await page.evaluate(() => { const o = __facO, m = FAC[o.facW].mean; o.facE = o.facW; o.cols = { r: m, f: m }; o._fu = o._fs = o._far = null; });
-if (FAULT === 'faclod') await page.evaluate(() => { for (const o of level.bld) o._far = { bld: true, cols: { r: o.col, f: o.col } }; });
+if (FAULT === 'faclod') await page.evaluate(() => { const orig = emitBuilding;
+  window.emitBuilding = function (o, d) { if (d < BLD_NEAR_D) return orig.apply(this, arguments);
+    const k = o.cols; o.cols = { r: o.col, f: o.col }; o._fu = o._fs = o._far = null;
+    try { return orig.apply(this, arguments); } finally { o.cols = k; o._fu = o._fs = o._far = null; } }; });
 if (FAULT === 'faclight') await page.evaluate(() => { window.facOverlay = () => 'rgba(0,0,0,0)'; });
+if (FAULT === 'facrange') await page.evaluate(() => { window.facRange = (d) => d < BLD_NEAR_D; });
 
 /* ---- картинка на ближнем доме; без картинки — прежняя плитка и одно предупреждение ---- */
 const img = await page.evaluate(() => {
@@ -288,6 +293,26 @@ const persp = await page.evaluate((fault) => {
 }, FAULT);
 check('картинка на большой косой стене стоит на стене: метка плитки там же, где её точка, ± 2 px с пяти близких камер (@render-buildings-facade-perspective)',
   persp.every((r) => r.err >= 0 && r.err <= 2 && r.dark < 200), JSON.stringify(persp));
+
+/* ---- картинка видна не только вблизи ---- */
+/* картинка рисовалась только ближе BLD_NEAR_D (45 м) и гасла уже с 35 м: вдоль длинной улицы почти все
+   дома впереди были ровного цвета, и фасады «подгружались» у самого дома (владелец: «текстуры домов очень
+   долго подгружаются»). Дом в 60 м обязан быть нарисован картинкой, а на её дальней границе цвет стены не
+   меняется скачком */
+const range = await page.evaluate(() => {
+  const o = __facO; if (!o) return { err: 'нет опорного дома' };
+  /* камера сбоку под ~35° к стене: прямо напротив торец ребром и в замер не попадает */
+  const at = (d) => {
+    const along = d * 0.55, s = __facShot(o, o.front, 1, Math.sqrt(Math.max(1, d * d - along * along)), along, 12);
+    return { d: +s.d.toFixed(1), facCalls: s.facCalls, mean: __facStats(s.main).mean, end: __facStats(s.side).mean };
+  };
+  const far = typeof FAC_FAR_D === 'number' ? FAC_FAR_D : BLD_NEAR_D;
+  const mid = at(60), a = at(far - 0.5), b = at(far + 0.5);
+  const dd = (x, y) => +(Math.max(...x.map((v, i) => Math.abs(v - y[i]))) / 255 * 100).toFixed(1);
+  return { mid, edge: { far, inside: a.mean, outside: b.mean, diff: dd(a.mean, b.mean), diffEnd: dd(a.end, b.end) } };
+});
+check('дом в 60 м — дальше нарезки домов — нарисован картинкой фасада, на её дальней границе цвет стены и торца меняется не больше чем на 2 % (@render-buildings-facade-range)',
+  !range.err && range.mid.facCalls > 0 && range.edge.diff <= 2 && range.edge.diffEnd <= 2, JSON.stringify(range));
 
 check('страница без исключений', !main.errors.length, main.errors.slice(0, 3).join(' | '));
 fs.unlinkSync(noFac);
