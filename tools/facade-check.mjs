@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /* Гейт фасадов домов из картинок (серия 3; коды render-buildings-facade-img, -sides, -lod, -light,
-   -rhythm; сценарии — specs/features/render/fasady.feature). Дом рисуется в одиночку (level.bld = [дом],
+   -rhythm, -perspective; сценарии — specs/features/render/fasady.feature). Дом рисуется в одиночку (level.bld = [дом],
    уличные объекты убраны) с камерой, поставленной точно, и грань меряется по пикселям: по сетке точек на
    самой грани, спроецированных через viewProject, — соседний дом торец не закроет, знак не встанет
    поперёк.
      PW_DIR=/tmp/pw node tools/facade-check.mjs
-     FAULT=facimg|facside|faclod|faclight|facseam — сломать нарочно и увидеть красный: страница без
-       картинок фасадов; торцу дана плитка с окнами; дальнему дому оставлен цвет палитры; без накладки
-       света; плитка растянута на 8 % (шаг окна не делит её пополам)
+     FAULT=facimg|facside|faclod|faclight|facseam|facpersp — сломать нарочно и увидеть красный: страница
+       без картинок фасадов; торцу дана плитка с окнами; дальнему дому оставлен цвет палитры; без накладки
+       света; плитка растянута на 8 % (шаг окна не делит её пополам); ячейки без деления по перспективе
    Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена. */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -233,6 +233,61 @@ const jointOk = !rhythm.missing && ['fac-panel-a', 'fac-panel-b', 'fac-panel-end
 const shopOk = !rhythm.missing && ['fac-shop-a', 'fac-shop-b'].every((k) => rhythm[k].seam <= rhythm[k].p95);
 check('плитки встают встык: два окна на плитку через полширины (±4 %), швы панелей через полширины (±3 %), край витрины не резче её крупных перепадов (@render-buildings-facade-rhythm)',
   winOk && jointOk && shopOk, JSON.stringify(rhythm));
+
+/* ---- картинка стоит на стене под перспективой ---- */
+/* аффинная карта ячейки по трём углам не знает перспективы: у большой косой грани вблизи (8 м × до
+   50 м высоты) при потолке ячеек картинка съезжала с грани на несколько пикселей и «ехала» при повороте
+   камеры, как борт трамвая (#256). На стену опорного дома кладётся плитка с одной тёмной полосой на
+   четверти ширины; её место на экране сверяется с честной проекцией той же точки стены */
+const persp = await page.evaluate((fault) => {
+  const o = __facO; if (!o) return [{ err: 99, why: 'нет опорного дома' }];
+  const t = FAC[o.facW]; if (!t || !t.img) return [{ err: 99, why: 'нет плитки ' + o.facW }];
+  const saved = { img: t.img, pats: t.pats, ks: t.ks };
+  const W0 = t.img.naturalWidth || t.img.width, H0 = t.img.naturalHeight || t.img.height, U = 0.25;
+  const c = document.createElement('canvas'); c.width = W0; c.height = H0;
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W0, H0); g.fillStyle = '#000'; g.fillRect(Math.round(U * W0) - 12, 0, 24, H0);
+  t.img = c; t.pats = t.ks = null; o._fu = o._fs = null;
+  const keepB = level.bld, keepR = level.rend, ru = car.ru, out = [];
+  try {
+    level.bld = [o]; level.rend = []; car.ru += 2000;
+    const ax = o.front, N = ax === 'r' ? rgt(o.yaw) : fwd(o.yaw), half = ax === 'r' ? o.w / 2 : o.l / 2, L = ax === 'r' ? o.l : o.w;
+    const C = { x: -o.u, z: o.v }, rx = N.z, rz = -N.x;
+    const d = facOf(o, false)[ax];
+    /* FAULT=facpersp — ячейки без деления по ошибке перспективы */
+    if (fault === 'facpersp') d.depth = 0;
+    const tw = W0 / d.sx;
+    const P = (sv, y, off) => ({ x: C.x + N.x * (half + off) + rx * (sv - L / 2), y, z: C.z + N.z * (half + off) + rz * (sv - L / 2) });
+    for (const [dist, along, look] of [[8, 12, 6], [8, -12, 6], [12, 20, 9], [6, 4, 10], [10, -2, 3]]) {
+      ctx.setTransform(pxScale, 0, 0, pxScale, 0, 0); setVP(0, 0, W, H);
+      setCam(P(L / 2 + along, 1.6, dist), P(L / 2 + along * 0.3, look, 0), null, 58);
+      drawSceneInto({ grid: false, trails: false, guides: false, maxD: 60, labels: false });
+      let worst = { err: -1 };
+      for (const y of [2.2, 6.5, 11, 15]) { if (y > o.h - 0.5) continue;
+        for (let k = 0; (k + U) * tw < L; k++) {
+          const sp = toScreen(toCam(P((k + U) * tw, y, 0.004)));
+          if (!(sp.x > 70 && sp.x < W - 70 && sp.y > 10 && sp.y < H - 10)) continue;
+          /* окно поиска — до середины к соседним полосам и к углам стены: на косом виде в окно ±60 px
+             попадала соседняя полоса или край силуэта, и детектор мерил чужое */
+          const nb = [(k - 1 + U) * tw, (k + 1 + U) * tw, 0, L].map((sv) => Math.abs(toScreen(toCam(P(sv, y, 0.004))).x - sp.x));
+          const half = Math.min(60, 0.45 * Math.min(...nb));
+          if (half < 12) continue;
+          const row = Math.round(sp.y * pxScale), x0 = Math.max(0, Math.round((sp.x - half) * pxScale)), w = Math.round(2 * half * pxScale);
+          const px = ctx.getImageData(x0, row, w, 1).data;
+          /* полоса на уменьшенном мип-уровне сереет: её края — по середине между её дном и фоном стены */
+          let best = -1, bl = 1e9, hi = 0;
+          for (let i = 0; i < w; i++) { const l = px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2]; if (l < bl) { bl = l; best = i; } if (l > hi) hi = l; }
+          const mid = (bl + hi) / 2, lum = (i) => px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2];
+          let a = best, b = best; while (a > 0 && lum(a - 1) < mid) a--; while (b < w - 1 && lum(b + 1) < mid) b++;
+          const err = Math.abs((x0 + (a + b + 1) / 2) / pxScale - sp.x);
+          if (err > worst.err) worst = { err: +err.toFixed(1), y, k, dark: bl };
+        } }
+      out.push({ cam: [dist, along, look], ...worst });
+    }
+  } finally { t.img = saved.img; t.pats = saved.pats; t.ks = saved.ks; o._fu = o._fs = null; level.bld = keepB; level.rend = keepR; car.ru = ru; }
+  return out;
+}, FAULT);
+check('картинка на большой косой стене стоит на стене: метка плитки там же, где её точка, ± 2 px с пяти близких камер (@render-buildings-facade-perspective)',
+  persp.every((r) => r.err >= 0 && r.err <= 2 && r.dark < 200), JSON.stringify(persp));
 
 check('страница без исключений', !main.errors.length, main.errors.slice(0, 3).join(' | '));
 fs.unlinkSync(noFac);
