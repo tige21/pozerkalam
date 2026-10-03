@@ -1222,7 +1222,7 @@ function texPattern(kind, lvl){
    углом, и при 1,8 зерно пропадало уже на середине двери — «у двери пропадает текстура рядом с
    зеркалом» (владелец, 24.09); до 3,4 плитка ещё читается как материал, а не как рябь */
 const GRAD_MIN_PX=40, GRAIN_AREA0=400, GRAIN_AREA1=800, GRAIN_MINIF0=2.2, GRAIN_MINIF1=3.4;
-const TEX_AREA_MIN=400, TEX_MINIF_MAX=24;
+const TEX_AREA_MIN=400, TEX_MINIF_MAX=24, FAC_MINIF_MAX=48;
 /* режим заливки грани — чистая функция от грани и её экранных точек; по ней же прогон --sweep
    ловит переключения режима при повороте головы. Правила: в зеркалах всё плоское; градиент — если
    его концы дальше 1,5 px (вырожденный градиент Canvas не рисует НИЧЕГО — грань ребром пропадала
@@ -1249,9 +1249,11 @@ function faceMode(f, s0, s1, s2, s3){
     const du = f.tex.fac ? Math.sqrt((f.ga1-f.ga0)**2+(f.gb1-f.gb0)**2) : f.lu*TEX_PX,
           dv = f.tex.fac ? Math.sqrt((f.ga3-f.ga0)**2+(f.gb3-f.gb0)**2) : f.lv*TEX_PX;
     const minif=Math.max(du/((Math.sqrt(ux*ux+uy*uy)||1e-6)*DPR), dv/((Math.sqrt(vx*vx+vy*vy)||1e-6)*DPR));
-    f.tw=clamp((area-TEX_AREA_MIN)/(2*TEX_AREA_MIN),0,1)*clamp((TEX_MINIF_MAX-minif)/8,0,1);
-    /* у фасада-картинки пять мип-уровней: она видна до FAC_FAR_D, и окна дома в 80 м на уровне 2 рябили */
-    if(f.tw>0){ f.gk = minif<=1.5 ? 0 : minif<=3 ? 1 : (!f.tex.fac || minif<=6) ? 2 : minif<=12 ? 3 : 4; return mode+'+tex'; }
+    /* картинка фасада гаснет по уменьшению позже шумовой плитки: у неё есть мелкие мип-уровни, и окна
+       дома в 150 м (тайл 6 м — 26 px) при прежнем пороге 24 проступали вполовину */
+    f.tw=clamp((area-TEX_AREA_MIN)/(2*TEX_AREA_MIN),0,1)*(f.tex.fac ? clamp((FAC_MINIF_MAX-minif)/16,0,1) : clamp((TEX_MINIF_MAX-minif)/8,0,1));
+    /* у фасада-картинки шесть мип-уровней: она видна на всех домах, и окна дома в 80 м на уровне 2 рябили */
+    if(f.tw>0){ f.gk = minif<=1.5 ? 0 : minif<=3 ? 1 : (!f.tex.fac || minif<=6) ? 2 : minif<=12 ? 3 : minif<=24 ? 4 : 5; return mode+'+tex'; }
     return mode;
   }
   if(f.grain && q.grain){
@@ -1424,7 +1426,7 @@ function facFace(f, s0, s1, s3, lvl){
   const c0=f.cp[0], c1=f.cp[1], c2=f.cp[2], c3=f.cp[3], s2=toScreenClamped(c2);
   const a0=f.ga0*kx, b0=f.gb0*ky, d1a=(f.ga1-f.ga0)*kx, d1b=(f.gb1-f.gb0)*ky, d3a=(f.ga3-f.ga0)*kx, d3b=(f.gb3-f.gb0)*ky;
   if(Math.abs(d1a*d3b-d1b*d3a)<1e-6) return false;
-  const cell=f.tex.cell||TEX_CELL, ext=f.ext, maxDep=f.tex.depth, ovl=FAC_OVL/pxScale, err2=FAC_PERSP_PX*FAC_PERSP_PX;
+  const cell=f.tex.cell||TEX_CELL, ext=f.ext, maxDep=f.tex.depth, ovl=FAC_OVL/pxScale, err2=FAC_PERSP_PX*FAC_PERSP_PX, farD=facFarD();
   const nu=clamp(Math.ceil(Math.max(Math.hypot(s1.x-s0.x,s1.y-s0.y), Math.hypot(s2.x-s3.x,s2.y-s3.y))/cell),1,8);
   const nv=clamp(Math.ceil(Math.max(Math.hypot(s3.x-s0.x,s3.y-s0.y), Math.hypot(s2.x-s1.x,s2.y-s1.y))/cell),1,8);
   /* очередь, не стек: делятся по уровням, и потолок FAC_CELLS_MAX срабатывает ровно по всей грани — стеком
@@ -1462,7 +1464,7 @@ function facFace(f, s0, s1, s3, lvl){
     if(facCorners(c0,c1,c2,c3,te0,te1,re0,re1)){ te0=t0; te1=t1; re0=r0; re1=r1; facCorners(c0,c1,c2,c3,t0,t1,r0,r1); }
     /* картинка фасада гаснет к BLD_NEAR_D до нуля по глубине ячейки: дальше дом — ровный средний цвет */
     const dc=(FC[0].d+FC[1].d+FC[2].d+FC[3].d)*0.25;
-    ctx.globalAlpha=f.tw*clamp((FAC_FAR_D-dc)/FAC_FADE, 0, 1);
+    ctx.globalAlpha=f.tw*clamp((farD-dc)/FAC_FADE, 0, 1);
     ctx.setTransform(pxScale,0,0,pxScale,0,0);
     ctx.beginPath(); ctx.moveTo(FPX[0],FPY[0]); ctx.lineTo(FPX[1],FPY[1]); ctx.lineTo(FPX[2],FPY[2]); ctx.lineTo(FPX[3],FPY[3]); ctx.closePath();
     /* карта ячейки — симметричная: средние рёбра и центр, а не точная в трёх углах. Скрутка ячейки
@@ -2886,7 +2888,7 @@ facLoad();
 function facPattern(t, lvl){
   if(!t.pats){
     const lv=[t.img], w0=t.img.naturalWidth||t.img.width, h0=t.img.naturalHeight||t.img.height;
-    for(let l=1;l<5;l++){ const p=lv[l-1], q=document.createElement('canvas');
+    for(let l=1;l<6;l++){ const p=lv[l-1], q=document.createElement('canvas');
       q.width=Math.max(1,(p.naturalWidth||p.width)>>1); q.height=Math.max(1,(p.naturalHeight||p.height)>>1);
       const g=q.getContext('2d'); g.imageSmoothingEnabled=true; g.imageSmoothingQuality='high';
       g.drawImage(p,0,0,q.width,q.height); lv.push(q); }
@@ -6910,17 +6912,17 @@ let dprCap = 2;
    зерна салона — они структура сцены, зерно — деталь. Текстура — вторая заливка всей грани, и на
    программном Canvas 80-метровая стена уровня 1 стоила 51 → 40 fps на q3; рёбра там в пределах
    шума замера (46 и 47 fps с ними и без) */
-const QUALITY=[ {dpr:2,    grain:true,  grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true},
-                {dpr:1.5,  grain:true,  grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true},
-                {dpr:1.5,  grain:false, grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true},
-                {dpr:1.25, grain:false, grad:false, cars:true,  detail:true,  maxD:70, edges:true,  tex:false},
-                {dpr:1,    grain:false, grad:false, cars:false, detail:true,  maxD:70, edges:false, tex:false},
-                {dpr:1,    grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false},
+const QUALITY=[ {dpr:2,    grain:true,  grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true, facD:Infinity},
+                {dpr:1.5,  grain:true,  grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true, facD:Infinity},
+                {dpr:1.5,  grain:false, grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true, facD:150},
+                {dpr:1.25, grain:false, grad:false, cars:true,  detail:true,  maxD:70, edges:true,  tex:false, facD:0},
+                {dpr:1,    grain:false, grad:false, cars:false, detail:true,  maxD:70, edges:false, tex:false, facD:0},
+                {dpr:1,    grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false, facD:0},
                 /* ниже 1,0 — рендер в меньшем разрешении с растяжением браузером: на большом мониторе
                    с программным Canvas и DPR 1,0 (2560×1440) выходило 16 fps */
-                {dpr:0.8,  grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false},
-                {dpr:0.65, grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false},
-                {dpr:0.5,  grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false} ];
+                {dpr:0.8,  grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false, facD:0},
+                {dpr:0.65, grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false, facD:0},
+                {dpr:0.5,  grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false, facD:0} ];
 function qDetail(){ return QUALITY[qLevel].detail; }
 const Q_SLOW_MIRRORS=5;    /* с этого уровня зеркала обновляются через кадр */
 /* первые секунды после загрузки кадры рваные (уровень, ресайз, прогрев) — регулятор молчит,
@@ -8929,16 +8931,17 @@ function camSees(u, y, v, rad){
    дальше дом — одна коробка без рёбер и плитки: на телефоне кадр упирается в число граней (нарезка и
    рёбра до 100 м стоили +1,5 мс JS на уровне 29), а туман (fogFar) растворяет дальние дома к границе */
 const BLD_MAXD=250, BLD_NEAR_D=45, BLD_SEG=8;
-/* FAC_FADE — на последних метрах до FAC_FAR_D картинка фасада гаснет до своего среднего цвета;
+/* FAC_FADE — на последних метрах до дальности картинки (facFarD) она гаснет до своего среднего цвета;
    FAC_TINT — доля оттенка торца без своей плитки; торец длиннее FAC_END_MAX — с окнами: у такой
    стены глухой торец выглядел бы складом */
 const FAC_FADE=15, FAC_TINT=0.5, FAC_END_MAX=16, FAC_T0=[0,0,0], FAC_OVL=1.5;
-/* картинка фасада видна до FAC_FAR_D — дальше, чем нарезка и рёбра (BLD_NEAR_D): с картинкой только ближе
-   45 м и гаснущей уже с 35 м почти все дома впереди по улице стояли ровного цвета и фасады «подгружались»
-   у самого дома. Дальше 75 м общая дымка и так съедает 60 % цвета, поэтому граница — 90 м, гаснет на
-   последних FAC_FADE */
-const FAC_FAR_D=70;
-function facRange(d){ return d<FAC_FAR_D; }
+/* дальность картинки фасада — своя у каждого уровня качества (QUALITY[q].facD), не дальность нарезки и
+   рёбер (BLD_NEAR_D): с картинкой только ближе 45 м, а потом 70 м дома впереди по улице стояли ровного
+   цвета, и фасады «подгружались» у самого дома (владелец: «я хочу видеть все»). На верхних уровнях —
+   Infinity, то есть все дома, что рисуются (до BLD_MAXD; таблица QUALITY стоит раньше его объявления); регулятор на слабой машине сперва сокращает дальность (уровень 2), потом выключает
+   картинки вместе с текстурами стен */
+function facFarD(){ return QUALITY[qLevel].facD; }
+function facRange(d){ return d<facFarD(); }
 /* FAC_PERSP_PX — допуск скрутки ячейки: при симметричной карте сдвиг картинки — её четверть, ≤ 1 px, как
    IMG_PERSP_PX у трамвая; FAC_DEPTH — сколько
    раз ячейка может поделиться вчетверо, FAC_CELLS_MAX — потолок ячеек на грань, FAC_MIN_PX — ячейку
