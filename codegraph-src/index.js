@@ -753,6 +753,9 @@ function screenToGround(sx,sy){
   return { u: -(viewCam.pos.x+d.x*t), v: viewCam.pos.z+d.z*t };
 }
 function clipNear(poly){
+  /* грань целиком перед камерой — без нового массива: pathCam зовёт это на каждую грань и ячейку */
+  let all=true; for(let i=0;i<poly.length;i++) if(poly[i].d<NEAR){ all=false; break; }
+  if(all) return poly;
   const out=[];
   for(let i=0;i<poly.length;i++){
     const a=poly[i], b=poly[(i+1)%poly.length];
@@ -1284,8 +1287,9 @@ function flushFaces(){
          грани (facOverlay); без ячеек (зеркало, мелкая грань, дальше) — обычный освещённый цвет */
       const facT = f.ov!==null && mode.length>5;
       ctx.fillStyle = facT ? f.colMid : fill; ctx.fill();
-      if(mode.length>5){ if(f.img) imgFace(f, s0, s1, s2, s3); else if(f.tex) texFace(f, s0, s1, s3); else grainFace(f, s0, s1, s3); }
-      if(facT && pathCam(f.cp)){ ctx.fillStyle=f.ov; ctx.fill(); }
+      let ovDone=false;
+      if(mode.length>5){ if(f.img) imgFace(f, s0, s1, s2, s3); else if(f.tex) ovDone=texFace(f, s0, s1, s3); else grainFace(f, s0, s1, s3); }
+      if(facT && !ovDone && pathCam(f.cp)){ ctx.fillStyle=f.ov; ctx.fill(); }
     } else { ctx.fillStyle=f.col; ctx.fill(); }
     if(f.em && edgesQ && edgeW>=3) strokeEdges(f);
   }
@@ -1346,7 +1350,7 @@ function texAt(c0,c1,c2,c3,t,r,o){
   o.x=ax+(bx-ax)*r; o.y=ay+(by-ay)*r; o.d=ad+(bd-ad)*r;
 }
 function texFace(f, s0, s1, s3){
-  const lvl=f.gk, fac=f.tex.fac, pat = fac ? facPattern(fac, lvl) : texPattern(f.tex.kind, lvl); if(!pat) return;
+  const lvl=f.gk, fac=f.tex.fac, pat = fac ? facPattern(fac, lvl) : texPattern(f.tex.kind, lvl); if(!pat) return false;
   const kx = fac ? fac.ks[lvl][0] : 1/(1<<lvl), ky = fac ? fac.ks[lvl][1] : kx;
   const c0=f.cp[0], c1=f.cp[1], c2=f.cp[2], c3=f.cp[3], s2=toScreenClamped(c2);
   const cell=f.tex.cell||TEX_CELL;
@@ -1355,6 +1359,8 @@ function texFace(f, s0, s1, s3){
   /* у фасада-картинки ячеек ещё и по ошибке перспективы (четвёртый угол аффинной карты против
      настоящего, как в imgFace): шов панели — контрастная прямая, и на ячейке 260 px под углом она
      ломалась ступенькой на границе ячеек */
+  /* ошибка ячейки — перекрёстный член, доля по одной оси на долю по другой: полоса во всю высоту её не
+     снимает (ряд ячеек на стене, видной сверху, сдвигал переплёты окон на 4 px), поэтому делим обе оси */
   let np=1;
   if(fac){ const ex=s1.x+s3.x-s0.x-s2.x, ey=s1.y+s3.y-s0.y-s2.y; np=Math.ceil(Math.sqrt(Math.sqrt(ex*ex+ey*ey)/FAC_PERSP_PX)); }
   const nu=clamp(Math.max(Math.ceil(lenU/cell), Math.min(np, Math.ceil(lenU/24))),1,8), nv=clamp(Math.max(Math.ceil(lenV/cell), Math.min(np, Math.ceil(lenV/24))),1,8);
@@ -1362,9 +1368,13 @@ function texFace(f, s0, s1, s3){
      раздвижки pathCam (≈0,64 px по нормали к ребру) на косом стыке не хватает, сквозь сглаживание
      просвечивала подложка — на тёмном стекле светлым волосом. Внешний контур дома не раздвигается:
      картинка вылезла бы за силуэт */
-  const ot = fac ? FAC_OVL/pxScale/(lenU||1) : 0, or = fac ? FAC_OVL/pxScale/(lenV||1) : 0, ext = f.ext;
+  /* перекрытие — по КОРОТКОМУ ребру: под перспективой у дальнего ребра доля в 1,5 px от длинного
+     сжималась до 0,9 px, и у дальнего края стыки снова просвечивали */
+  const lenUm=Math.max(1, Math.min(Math.hypot(s1.x-s0.x,s1.y-s0.y), Math.hypot(s2.x-s3.x,s2.y-s3.y)));
+  const lenVm=Math.max(1, Math.min(Math.hypot(s3.x-s0.x,s3.y-s0.y), Math.hypot(s2.x-s1.x,s2.y-s1.y)));
+  const ot = fac ? FAC_OVL/pxScale/lenUm : 0, or = fac ? FAC_OVL/pxScale/lenVm : 0, ext = f.ext;
   const a0=f.ga0*kx, b0=f.gb0*ky, d1a=(f.ga1-f.ga0)*kx, d1b=(f.gb1-f.gb0)*ky, d3a=(f.ga3-f.ga0)*kx, d3b=(f.gb3-f.gb0)*ky;
-  const det=d1a*d3b-d1b*d3a; if(Math.abs(det)<1e-6) return;
+  const det=d1a*d3b-d1b*d3a; if(Math.abs(det)<1e-6) return false;
   ctx.save();
   ctx.fillStyle=pat;
   const aBase=f.tex.a*f.tw;
@@ -1383,17 +1393,42 @@ function texFace(f, s0, s1, s3){
     /* контур строится под БАЗОВОЙ матрицей: точки пути фиксируются в момент lineTo текущей CTM,
        и под матрицей предыдущей ячейки контур улетал в сторону — заливались только первые ячейки */
     ctx.setTransform(pxScale,0,0,pxScale,0,0);  /* базовая матрица канваса — DPR, без сдвига (см. resize и renderMirrorInto) */
-    if((nu>1||nv>1||ext) && !pathCam(TC)) continue;   /* одна ячейка — путь грани уже построен */
-    const p0=toScreenClamped(TC[0]), p1=toScreenClamped(TC[1]), p3=toScreenClamped(TC[3]);
+    /* экранные углы ячейки — те, что pathCam только что спроецировал (углы перед камерой, отсечения
+       нет); у единственной ячейки без продления путь — грани, и её углы — s0, s1, s3. Ячейка фасада —
+       прямо по четырём углам, без раздвижки pathCam (восемь корней на ячейку): стыки уже перекрыты на
+       FAC_OVL, край дома закрывает подложка */
+    const own = nu>1||nv>1||ext;
+    if(own){
+      /* ячейка целиком вне кадра не заливается: высокий дом из салона на телефоне — грань 800 px при
+         кадре 390, и больше половины её ячеек уходило вызовами в пустоту */
+      let x0=1e9, x1=-1e9, y0=1e9, y1=-1e9;
+      for(let q=0;q<4;q++){ const k=cam.scale/TC[q].d, x=VP.cx+TC[q].x*k, y=VP.cy-TC[q].y*k; SPX[q]=x; SPY[q]=y;
+        if(x<x0) x0=x; if(x>x1) x1=x; if(y<y0) y0=y; if(y>y1) y1=y; }
+      if(x1<VP.x || x0>VP.x+VP.w || y1<VP.y || y0>VP.y+VP.h) continue;
+      if(fac){ ctx.beginPath(); ctx.moveTo(SPX[0],SPY[0]); ctx.lineTo(SPX[1],SPY[1]); ctx.lineTo(SPX[2],SPY[2]); ctx.lineTo(SPX[3],SPY[3]); ctx.closePath(); }
+      else if(!pathCam(TC)) continue;   /* одна ячейка — путь грани уже построен */
+    }
+    const p0x=own?SPX[0]:s0.x, p0y=own?SPY[0]:s0.y;
     const ua=a0+d1a*t0+d3a*r0, ub=b0+d1b*t0+d3b*r0;
     const e1a=d1a*(t1-t0), e1b=d1b*(t1-t0), e3a=d3a*(r1-r0), e3b=d3b*(r1-r0), dt=e1a*e3b-e1b*e3a; if(Math.abs(dt)<1e-9) continue;
-    const e1x=p1.x-p0.x, e1y=p1.y-p0.y, e3x=p3.x-p0.x, e3y=p3.y-p0.y;
+    const e1x=(own?SPX[1]:s1.x)-p0x, e1y=(own?SPY[1]:s1.y)-p0y, e3x=(own?SPX[3]:s3.x)-p0x, e3y=(own?SPY[3]:s3.y)-p0y;
     const m11=( e1x*e3b-e3x*e1b)/dt, m12=( e1y*e3b-e3y*e1b)/dt;
     const m21=(-e1x*e3a+e3x*e1a)/dt, m22=(-e1y*e3a+e3y*e1a)/dt;
-    ctx.transform(m11, m12, m21, m22, p0.x-(m11*ua+m21*ub), p0.y-(m12*ua+m22*ub));
+    ctx.transform(m11, m12, m21, m22, p0x-(m11*ua+m21*ub), p0y-(m12*ua+m22*ub));
     ctx.fill();
   }
+  /* накладка света фасада — по контуру, продлённому за шов сегмента так же, как ячейки: продлённая
+     полоса картинки без накладки оставалась бы неосвещённой — светлой линией на каждом шве */
+  let ov=false;
+  if(fac && f.ov!==null){
+    ctx.setTransform(pxScale,0,0,pxScale,0,0); ctx.globalAlpha=1;
+    const e0 = ext&1 ? -ot : 0, e1 = ext&2 ? 1+ot : 1;
+    texAt(c0,c1,c2,c3,e0,0,TC[0]); texAt(c0,c1,c2,c3,e1,0,TC[1]); texAt(c0,c1,c2,c3,e1,1,TC[2]); texAt(c0,c1,c2,c3,e0,1,TC[3]);
+    if(pathCam(TC)){ ctx.fillStyle=f.ov; ctx.fill(); }
+    ov=true;
+  }
   ctx.restore();
+  return ov;
 }
 /* картинка — тем же приёмом: паттерн без повтора, натянутый по трём углам грани:
    (0,0) → v0, (w,0) → v1, (0,h) → v3 */
@@ -8826,7 +8861,7 @@ const BLD_MAXD=250, BLD_NEAR_D=45, BLD_SEG=8;
 /* FAC_FADE — на последних метрах до BLD_NEAR_D картинка фасада гаснет до своего среднего цвета;
    FAC_TINT — доля оттенка торца без своей плитки; торец длиннее FAC_END_MAX — с окнами: у такой
    стены глухой торец выглядел бы складом */
-const FAC_FADE=10, FAC_TINT=0.5, FAC_END_MAX=16, FAC_T0=[0,0,0], FAC_OVL=1.5, FAC_PERSP_PX=1.5;
+const FAC_FADE=10, FAC_TINT=0.5, FAC_END_MAX=16, FAC_T0=[0,0,0], FAC_OVL=1.5, FAC_PERSP_PX=2;
 function emitBuildings(){
   const cu=-cam.pos.x, cv=cam.pos.z;
   fogFar=true;
