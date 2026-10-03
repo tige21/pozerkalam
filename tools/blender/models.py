@@ -215,8 +215,7 @@ def build(C, body):
         y0, y1 = min(p[1] for p in pts), max(p[1] for p in pts)
         z = sum(p[2] for p in pts) / len(pts)
         a, b = (lo, hi) if end > 0 else (hi, lo)
-        m.face([(a, y1, z), (b, y1, z), (b, y0, z), (a, y0, z)], 'plate', n=(0.0, 0.0, float(end)), b=DECAL_B,
-               img='plate', uv=[0, 0, 1, 1])
+        m.face([(a, y1, z), (b, y1, z), (b, y0, z), (a, y0, z)], 'plate', n=(0.0, 0.0, float(end)), b=DECAL_B)
     for cap, _ in caps:
         ring = [tr(mathutils.Vector((x, 0.0, z))) for x, z in cap]
         lat_c = sum(q[0] for q in ring) / len(ring)
@@ -280,7 +279,7 @@ def build(C, body):
     wz = glass_front - 0.03
     wy = min(p[1] for p in front_glass) + 0.006 if front_glass else 1.0
     lamp_ids = sorted({f['lamp'] for f in m.f if f.get('lamp')})
-    n_plates = sum(1 for f in m.f if f.get('img') == 'plate')
+    n_plates = sum(1 for f in m.f if f['m'] == 'plate')
     max_n = max(len(f['i']) for f in m.f)
     if max_n > MAX_POLY:
         fails.append(f'грань из {max_n} вершин — у игры заготовки до {MAX_POLY}')

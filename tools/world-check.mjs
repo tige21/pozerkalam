@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /* Гейт мира из картинок (коды render-car-styles, render-car-style-fallback, render-car-models,
-   render-car-lights, render-wheel-spin, render-tram-texture, render-img-perspective, render-tram-fallback, render-sky-pano; сценарии —
+   render-car-lights, render-wheel-spin, render-cull-exact, render-tram-texture, render-img-perspective, render-tram-fallback, render-sky-pano; сценарии —
    specs/features/render/car.feature и world.feature): у чужих машин разные стили и кузова, а без
    картинки стиля — деталь стиля A; кузова — модели набора RgsDev с фарами, фонарями и номерами, стоп
    и поворотник горят на фонарях; трамвай нарисован
    картинками, а без них — прежними коробками; небо — панорама, низ которой стоит на линии горизонта,
    шов копий не виден, а на нижних уровнях качества — градиент.
      PW_DIR=/tmp/pw node tools/world-check.mjs
-     FAULT=styles|stylefallback|models|lights|spin|tram|persp|tramfallback|sky — сломать нарочно и увидеть красный: один стиль у
+     FAULT=styles|stylefallback|models|lights|spin|cull|tram|persp|tramfallback|sky — сломать нарочно и увидеть красный: один стиль у
        всех машин, картинка стиля на месте при проверке отказа, у хэтчбека нет левой фары, у фонарей
-       своей машины нет меток стороны, колёса без угла качения, нет картинок трамвая, картинка на грани одной аффинной картой,
+       своей машины нет меток стороны, колёса без угла качения, отсечение с радиусом 0,2 от нужного, нет картинок трамвая, картинка на грани одной аффинной картой,
        картинки трамвая на месте при проверке отказа, нет картинки неба
    Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена. */
 import { createRequire } from 'node:module';
@@ -101,6 +101,55 @@ const spin = await page.evaluate((fault) => {
 check('колёса крутятся: диск своей машины и машины потока поворачивается на пройденный путь / R, верхом вперёд (@render-wheel-spin)',
   ['own', 'flow'].every((k) => spin[k].got !== null && Math.abs(spin[k].got - spin[k].want) < 0.02 && Math.abs(spin[k].want) > 0.3), JSON.stringify(spin));
 
+/* отсечение по пирамиде взгляда (camSees) обязано выкидывать только невидимое: каждый отсечённый
+   объект рисуется отдельно без отсечения, и ни одна его грань (видимая часть перед ближней плоскостью)
+   не попадает в кадр. Геометрией, а не пикселями: попиксельно кадры совпадают в Chrome, а в headless
+   shell строка горизонта дрожит от числа операций рисования в кадре, и это не отсечение */
+const cull = await page.evaluate((fault) => {
+  const oS = camSees, tight = (u, y, v, rd) => oS(u, y, v, rd * 0.2), out = [];
+  const sees = fault === 'cull' ? tight : oS;
+  const rend0 = () => level.rend;
+  try {
+    for (const lvl of [0, 21, 29]) {
+      opt.traffic = 'normal'; loadLevel(lvl); doAct('start'); paused = true;
+      if (level.actors.length) for (let i = 0; i < 100; i++) actorsTick(0.05);
+      const c = bodyPos(), all = rend0();
+      for (let a = 0; a < 360; a += 45) for (const [r, h] of [[8, 3], [4, 1.4]]) {
+        const pos = { x: -(c.u + Math.sin(rad(a)) * r), y: h, z: c.v + Math.cos(rad(a)) * r }, tgt = { x: -c.u, y: 0.8, z: c.v };
+        setVP(0, 0, W, H); setCam(pos, tgt, null, 58);
+        const culled = all.filter((o) => !sees(o.u, (o.kind === 'car' ? 1.9 : o.kind === 'tram' ? 3.4 : o.h) * 0.5, o.v, o._crad || cullRad(o)));
+        window.camSees = () => true;
+        let leak = 0, worst = null;
+        for (const o of culled) {
+          level.rend = [o]; faces.length = 0; emitObstacles(60);
+          for (const f of faces) {
+            const behind = f.cp.some((q) => q.d <= NEAR), cc = behind ? clipNear(f.cp) : f.cp;
+            let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+            for (const q of cc) { const sp = toScreen(q); x0 = Math.min(x0, sp.x); x1 = Math.max(x1, sp.x); y0 = Math.min(y0, sp.y); y1 = Math.max(y1, sp.y); }
+            if (cc.length && x1 >= VP.x - 1 && x0 <= VP.x + VP.w + 1 && y1 >= VP.y - 1 && y0 <= VP.y + VP.h + 1) { leak++; worst = worst || { kind: o.kind, u: +o.u.toFixed(1), v: +o.v.toFixed(1) }; }
+          }
+        }
+        level.rend = all; faces.length = 0; window.camSees = oS;
+        /* разметка: отсечённый многоугольник целиком вне кадра (с запасом 3 px на линию) */
+        let decCulled = 0;
+        if (!RAMP_ON) for (const d of level.dec) {
+          if (d._r === undefined || sees(d._u, 0, d._v, d._r + 0.3)) continue;
+          decCulled++;
+          const cp = d.pts.map((q) => toCam({ x: -q.u, y: 0.02, z: q.v })), cc = cp.some((q) => q.d <= NEAR) ? clipNear(cp) : cp;
+          let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+          for (const q of cc) { const sp = toScreen(q); x0 = Math.min(x0, sp.x); x1 = Math.max(x1, sp.x); y0 = Math.min(y0, sp.y); y1 = Math.max(y1, sp.y); }
+          if (cc.length && x1 >= VP.x - 3 && x0 <= VP.x + VP.w + 3 && y1 >= VP.y - 3 && y0 <= VP.y + VP.h + 3) { leak++; worst = worst || { kind: 'decal', u: +d._u.toFixed(1), v: +d._v.toFixed(1) }; }
+        }
+        out.push({ lvl: lvl + 1, a, r, culled: culled.length + decCulled, leak, worst });
+      }
+    }
+  } finally { window.camSees = oS; opt.traffic = 'normal'; }
+  return out;
+}, FAULT);
+check('отсечение по пирамиде взгляда выкидывает только невидимое: ни одна грань отсечённого объекта и ни один кусок разметки не попадает в кадр (@render-cull-exact)',
+  cull.every((r) => r.leak === 0) && cull.reduce((s, r) => s + r.culled, 0) > 0,
+  JSON.stringify({ views: cull.length, culled: cull.reduce((s, r) => s + r.culled, 0), leaks: cull.filter((r) => r.leak).slice(0, 4) }));
+
 /* ---- стили чужих машин ---- */
 const styles = await page.evaluate((fault) => {
   loadLevel(0); doAct('start'); paused = true;
@@ -141,7 +190,7 @@ const mdl = await page.evaluate((fault) => {
   for (const [name, B] of Object.entries(carModel.bodies)) {
     const F = fault === 'models' && name === 'hatch' ? B.F.filter((f) => f.lamp !== 'head-L') : B.F;
     out[name] = { faces: F.length, lamps: [...new Set(F.filter((f) => f.lamp).map((f) => f.lamp))].sort().join(','),
-      plates: F.filter((f) => f.img === 'plate').length };
+      plates: F.filter((f) => f.m === 'plate').length };
   }
   return out;
 }, FAULT);

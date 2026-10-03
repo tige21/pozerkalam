@@ -27,7 +27,7 @@ OUT = ROOT / 'build' / 'assets' / 'clean'
 TARGET = {
     'mat-seat-fabric': '3A3C40', 'mat-seat-leather': '2B2C2F', 'mat-dash-soft': '34363A',
     'mat-plastic-hard': '2F3134', 'mat-headliner': 'B9B6B0', 'mat-carpet': '26272A',
-    'mat-wheel-leather': '1D1E20', 'mat-trim-satin': '8D9096',
+    'mat-trim-satin': '8D9096',
 }
 # штрихи отделки должны идти строго по горизонтали: наклон 1,6° даёт ступеньку ~35 px на стыке плиток
 DESKEW = {'mat-trim-satin'}
