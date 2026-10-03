@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /* Гейт мира из картинок (коды render-car-styles, render-car-style-fallback, render-car-models,
-   render-car-lights, render-tram-texture, render-tram-fallback, render-sky-pano; сценарии —
+   render-car-lights, render-tram-texture, render-img-perspective, render-tram-fallback, render-sky-pano; сценарии —
    specs/features/render/car.feature и world.feature): у чужих машин разные стили и кузова, а без
    картинки стиля — деталь стиля A; кузова — модели набора RgsDev с фарами, фонарями и номерами, стоп
    и поворотник горят на фонарях; трамвай нарисован
    картинками, а без них — прежними коробками; небо — панорама, низ которой стоит на линии горизонта,
    шов копий не виден, а на нижних уровнях качества — градиент.
      PW_DIR=/tmp/pw node tools/world-check.mjs
-     FAULT=styles|stylefallback|models|lights|tram|tramfallback|sky — сломать нарочно и увидеть красный: один стиль у
+     FAULT=styles|stylefallback|models|lights|tram|persp|tramfallback|sky — сломать нарочно и увидеть красный: один стиль у
        всех машин, картинка стиля на месте при проверке отказа, у хэтчбека нет левой фары, у фонарей
-       своей машины нет меток стороны, нет картинок трамвая, картинки трамвая на месте при проверке
-       отказа, нет картинки неба
+       своей машины нет меток стороны, нет картинок трамвая, картинка на грани одной аффинной картой,
+       картинки трамвая на месте при проверке отказа, нет картинки неба
    Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена. */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -151,6 +151,46 @@ const tramRun = (drop) => page.evaluate((drop) => {
 const tram = await tramRun(FAULT === 'tram');
 check('трамвай нарисован картинками: по три куска на борт и наклонный перёд на оба торца (@render-tram-texture)',
   tram.img >= 6, JSON.stringify(tram));
+/* картинка на большой грани под углом: аффинная карта по трём углам не знает перспективы, и борт
+   трамвая «ехал» при повороте камеры — картинка съезжала с грани. На средний кусок борта кладётся
+   метка-полоса на 0,3 длины; её место на экране сверяется с честной проекцией той же точки борта */
+const persp = await page.evaluate((fault) => {
+  opt.traffic = 'off'; loadLevel(28); doAct('start'); paused = true;
+  const tr = level.rend.find((o) => o.kind === 'tram');
+  const saved = worldImg['tram-side-mid'], W0 = 400, H0 = 200, U = 0.3;
+  const t = document.createElement('canvas'); t.width = W0; t.height = H0;
+  const g = t.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W0, H0); g.fillStyle = '#000'; g.fillRect(U * W0 - 3, 0, 6, H0);
+  worldImg['tram-side-mid'] = t;
+  const origI = imgFace;
+  if (fault === 'persp') window.imgFace = (f, s0, s1, s2, s3) => { const pat = imgPattern(f.img); if (!pat) return;
+    ctx.save(); ctx.transform((s1.x - s0.x) / f.img.width, (s1.y - s0.y) / f.img.width, (s3.x - s0.x) / f.img.height, (s3.y - s0.y) / f.img.height, s0.x, s0.y);
+    ctx.fillStyle = pat; ctx.fill(); ctx.restore(); };
+  const out = [];
+  try {
+    car.ru = tr.u + 300; car.rv = tr.v + 300;
+    const R = rgt(tr.yaw), F = fwd(tr.yaw), HW = TRAM_W / 2, HL = TRAM_L / 2, tt = HL / 3, ym = (TRAM_SIDE_Y[0] + TRAM_SIDE_Y[1]) / 2;
+    const P = (lat, y, z) => ({ x: -tr.u + R.x * lat + F.x * z, y, z: tr.v + R.z * lat + F.z * z });
+    /* правый борт (sd = 1): кусок идёт от z = t к z = −t, левый край картинки — у z = t */
+    const lat = HW + 0.004, zU = tt + (-tt - tt) * U;
+    for (const [along, off] of [[9, 4], [-9, 4], [7, 2.5], [0, 6]]) {
+      const cpos = P(lat + off, 1.6, along), tgt = P(lat, ym, 0);
+      ctx.setTransform(pxScale, 0, 0, pxScale, 0, 0); setVP(0, 0, W, H);
+      setCam(cpos, tgt, null, 50);
+      drawSceneInto({ grid: false, trails: false, guides: false, maxD: 60, labels: false });
+      const sp = toScreen(toCam(P(lat, ym, zU)));
+      const row = Math.round(sp.y * pxScale), x0 = Math.max(0, Math.round(sp.x * pxScale) - 120), w = 240;
+      const px = ctx.getImageData(x0, row, w, 1).data;
+      let best = -1, bl = 1e9;
+      for (let i = 0; i < w; i++) { const l = px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2]; if (l < bl) { bl = l; best = i; } }
+      let a = best, b = best; while (a > 0 && px[(a - 1) * 4] < 60) a--; while (b < w - 1 && px[(b + 1) * 4] < 60) b++;
+      const xs = (x0 + (a + b) / 2) / pxScale;
+      out.push({ cam: [along, off], err: +Math.abs(xs - sp.x).toFixed(1), dark: bl });
+    }
+  } finally { worldImg['tram-side-mid'] = saved; window.imgFace = origI; opt.traffic = 'normal'; }
+  return out;
+}, FAULT);
+check('картинка на большой грани под углом стоит на грани: метка борта трамвая там же, где её точка, ± 2 px (@render-img-perspective)',
+  persp.every((r) => r.err <= 2 && r.dark < 120), JSON.stringify(persp));
 const tramFb = await tramRun(FAULT !== 'tramfallback');
 check('без картинок трамвая — прежние коробки поясов, ни одной грани-картинки (@render-tram-fallback)',
   tramFb.img === 0 && tramFb.boxes >= 6, JSON.stringify(tramFb));

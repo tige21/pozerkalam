@@ -1194,7 +1194,7 @@ function flushFaces(){
         else fill=f.colMid;
       }
       ctx.fillStyle=fill; ctx.fill();
-      if(mode.length>5){ if(f.img) imgFace(f, s0, s1, s3); else if(f.tex) texFace(f, s0, s1, s3); else grainFace(f, s0, s1, s3); }
+      if(mode.length>5){ if(f.img) imgFace(f, s0, s1, s2, s3); else if(f.tex) texFace(f, s0, s1, s3); else grainFace(f, s0, s1, s3); }
     } else { ctx.fillStyle=f.col; ctx.fill(); }
     if(f.em && edgesQ && edgeW>=3) strokeEdges(f);
   }
@@ -1320,14 +1320,47 @@ function mirrorGlassRect(kind){
   for(const q of w){ const s=viewProject(q); if(!s) return null; x0=Math.min(x0,s.x); y0=Math.min(y0,s.y); x1=Math.max(x1,s.x); y1=Math.max(y1,s.y); }
   return {x:x0, y:y0, w:x1-x0, h:y1-y0};
 }
-function imgFace(f, s0, s1, s3){
+/* аффинная карта по трём углам ставит четвёртый угол в s1+s3−s0 и не знает перспективы: на
+   большой грани под углом (борт трамвая 4,7 × 2,4 м) картинка съезжала с грани на 14–25 px и
+   «ехала» при повороте камеры. Когда четвёртый угол уходит дальше IMG_PERSP_PX, грань кладётся
+   ячейками, как текстура стен в texFace: углы каждой ячейки проецируются честно, а её доля картинки
+   натягивается по трём из них. Ошибка ячейки падает с квадратом их числа, поэтому n ≈ √(ошибка);
+   мелкие грани (диски, номера, приборы) остаются одной заливкой */
+const IMG_PERSP_PX=1, IMG_CELL_MAX=8;
+function imgFace(f, s0, s1, s2, s3){
   const ux=s1.x-s0.x, uy=s1.y-s0.y, vx=s3.x-s0.x, vy=s3.y-s0.y;
   if(Math.abs(ux*vy-uy*vx) < 12) return;
   const pat=imgPattern(f.img); if(!pat) return;
   const W=f.img.width, H=f.img.height;
+  const ex=s1.x+s3.x-s0.x-s2.x, ey=s1.y+s3.y-s0.y-s2.y, err=Math.sqrt(ex*ex+ey*ey);
+  if(err<=IMG_PERSP_PX || f.cp.length!==4){
+    ctx.save();
+    ctx.transform(ux/W, uy/W, vx/H, vy/H, s0.x, s0.y);
+    ctx.fillStyle=pat; ctx.fill();
+    ctx.restore();
+    return;
+  }
+  const n=Math.ceil(Math.sqrt(err/IMG_PERSP_PX));
+  const ax=s2.x-s3.x, ay=s2.y-s3.y, bx=s2.x-s1.x, by=s2.y-s1.y;
+  const lu=Math.sqrt(Math.max(ux*ux+uy*uy, ax*ax+ay*ay)), lv=Math.sqrt(Math.max(vx*vx+vy*vy, bx*bx+by*by));
+  const nu=clamp(Math.min(n, Math.ceil(lu/12)),1,IMG_CELL_MAX), nv=clamp(Math.min(n, Math.ceil(lv/12)),1,IMG_CELL_MAX);
+  const c0=f.cp[0], c1=f.cp[1], c2=f.cp[2], c3=f.cp[3];
+  /* контур ячейки строится под той матрицей, под которой построен путь грани (в зеркале — своей) */
+  const base=ctx.getTransform();
   ctx.save();
-  ctx.transform(ux/W, uy/W, vx/H, vy/H, s0.x, s0.y);
-  ctx.fillStyle=pat; ctx.fill();
+  ctx.fillStyle=pat;
+  for(let i=0;i<nu;i++) for(let j=0;j<nv;j++){
+    const t0=i/nu, t1=(i+1)/nu, r0=j/nv, r1=(j+1)/nv;
+    texAt(c0,c1,c2,c3,t0,r0,TC[0]); texAt(c0,c1,c2,c3,t1,r0,TC[1]); texAt(c0,c1,c2,c3,t1,r1,TC[2]); texAt(c0,c1,c2,c3,t0,r1,TC[3]);
+    if(TC[0].d<NEAR||TC[1].d<NEAR||TC[2].d<NEAR||TC[3].d<NEAR) continue;
+    ctx.setTransform(base);
+    if(!pathCam(TC)) continue;
+    const p0=toScreenClamped(TC[0]), p1=toScreenClamped(TC[1]), p3=toScreenClamped(TC[3]);
+    const cw=(t1-t0)*W, ch=(r1-r0)*H;
+    const m11=(p1.x-p0.x)/cw, m12=(p1.y-p0.y)/cw, m21=(p3.x-p0.x)/ch, m22=(p3.y-p0.y)/ch;
+    ctx.transform(m11, m12, m21, m22, p0.x-m11*t0*W-m21*r0*H, p0.y-m12*t0*W-m22*r0*H);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
