@@ -607,6 +607,15 @@
 
 
 
+
+
+
+
+
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -744,6 +753,9 @@ function screenToGround(sx,sy){
   return { u: -(viewCam.pos.x+d.x*t), v: viewCam.pos.z+d.z*t };
 }
 function clipNear(poly){
+  /* грань целиком перед камерой — без нового массива: pathCam зовёт это на каждую грань и ячейку */
+  let all=true; for(let i=0;i<poly.length;i++) if(poly[i].d<NEAR){ all=false; break; }
+  if(all) return poly;
   const out=[];
   for(let i=0;i<poly.length;i++){
     const a=poly[i], b=poly[(i+1)%poly.length];
@@ -873,6 +885,13 @@ function matOf(name){
   return MAT.matte;
 }
 const SPEC_TINT=[226,234,244];
+/* дымка: общая — до 62 % к 104 м; у домов (fogFar) ещё своя, до 95 % к BLD_MAXD, чтобы дальний дом
+   растворялся, а не выскакивал. Отдельной функцией — ею же считается накладка фасадов-картинок */
+const FOG_COL=[154,172,192];
+function fogAt(d){
+  return fogFar ? Math.max(clamp((d-26)/78, 0, 0.62), clamp((d-60)/(BLD_MAXD-60), 0, 1)*0.95)
+                : clamp((d-26)/78, 0, 0.62);
+}
 /* sh — затенение салонной грани: mat, ao (множитель рассеянного света в нише), view (орт к камере) */
 function shadeCol(col, n, d, y, sh){
   const A = col.length>3 ? ','+col[3] : '', fn = A ? 'rgba(' : 'rgb(';
@@ -904,9 +923,8 @@ function shadeCol(col, n, d, y, sh){
       r+=(255-r)*sp; g+=(255-g)*sp; b+=(255-b)*sp;
     }
   }
-  const fog = fogFar ? Math.max(clamp((d-26)/78, 0, 0.62), clamp((d-60)/(BLD_MAXD-60), 0, 1)*0.95)
-                     : clamp((d-26)/78, 0, 0.62);
-  r=lerp(r,154,fog); g=lerp(g,172,fog); b=lerp(b,192,fog);
+  const fog = fogAt(d);
+  r=lerp(r,FOG_COL[0],fog); g=lerp(g,FOG_COL[1],fog); b=lerp(b,FOG_COL[2],fog);
   return fn+(r|0)+','+(g|0)+','+(b|0)+A+')';
 }
 /* bias — «накладка на поверхность» (ручка двери, шов): грань сортируется на bias метров ближе,
@@ -940,7 +958,7 @@ function pushFace(v, n, col, bias, o){
   /* все поля грани заведены сразу: добавленные позже (col2, grain, img, ga*) давали десяток скрытых
      классов, и цикл flushFaces читал их полиморфно — на телефоне это была главная строка профиля (#69) */
   const f={cp, d:dist-(bias||0), col:null, col2:null, colMid:null, grain:null, img:null,
-           lu:0, lv:0, ga0:0, gb0:0, ga1:0, gb1:0, ga3:0, gb3:0, gk:0, em:0, ecol:null, tex:null, tw:0};
+           lu:0, lv:0, ga0:0, gb0:0, ga1:0, gb1:0, ga3:0, gb3:0, gk:0, em:0, ecol:null, tex:null, tw:0, ov:null, ext:0};
   const m = o && o.mat ? matOf(o.mat) : null;
   let sh=null;
   if(o && (m || o.ao!==undefined || o.emit)){
@@ -975,8 +993,30 @@ function pushFace(v, n, col, bias, o){
     f.tex=tex; f.ga0=TEX_UV[0]; f.gb0=TEX_UV[1]; f.ga1=TEX_UV[2]; f.gb1=TEX_UV[3]; f.ga3=TEX_UV[4]; f.gb3=TEX_UV[5];
     f.lu=Math.sqrt((v[1].x-v[0].x)**2+(v[1].y-v[0].y)**2+(v[1].z-v[0].z)**2);
     f.lv=Math.sqrt((v[3].x-v[0].x)**2+(v[3].y-v[0].y)**2+(v[3].z-v[0].z)**2);
+    if(tex.fac){ f.colMid=tex.raw; f.ov=facOverlay(tex, n, dd); f.ext=TEX_UV[6]; }
   }
   faces.push(f);
+}
+/* фасад-картинка несёт свой цвет, а свет и дымку shadeCol считает для цвета грани. Поверх ячеек
+   картинки (под ними — её средний цвет без света) кладётся одна заливка цветом C с альфой a:
+   1 − a = k(1 − fog)(1 − t), C·a = k(1 − fog)·t·T + fog·FOG — итог ровно «картинка, сведённая к T на
+   долю t (оттенок торца), × ламберт, затем дымка». Ячейки, пропущенные у ближней плоскости, светятся
+   под той же накладкой тем же средним цветом, что и вся грань */
+function facOverlay(dsc, n, d){
+  const fog=fogAt(d), nl=Math.max(0, n.x*LIGHT.x + n.y*LIGHT.y + n.z*LIGHT.z), k=(0.42+0.58*nl)*(1-fog);
+  const a=1-k*(1-dsc.tint);
+  if(a<0.004) return 'rgba(0,0,0,0)';
+  const kt=k*dsc.tint, T=dsc.T;
+  return 'rgba('+((kt*T[0]+fog*FOG_COL[0])/a|0)+','+((kt*T[1]+fog*FOG_COL[1])/a|0)+','+((kt*T[2]+fog*FOG_COL[2])/a|0)+','+a.toFixed(3)+')';
+}
+/* координаты плитки-картинки трёх углов грани: по горизонтали — от левого (для смотрящего снаружи)
+   угла всей стены дома, не сегмента, по высоте — вниз от пола этажа yb: в картинке y растёт вниз */
+function facUV(dsc, p0, p1, p3, n, ext){
+  const rx=n.z, rz=-n.x, s0=dsc.cx*rx+dsc.cz*rz-dsc.L*0.5;
+  TEX_UV[0]=(p0.x*rx+p0.z*rz-s0)*dsc.sx; TEX_UV[2]=(p1.x*rx+p1.z*rz-s0)*dsc.sx; TEX_UV[4]=(p3.x*rx+p3.z*rz-s0)*dsc.sx;
+  TEX_UV[1]=(dsc.yb-p0.y)*dsc.sy; TEX_UV[3]=(dsc.yb-p1.y)*dsc.sy; TEX_UV[5]=(dsc.yb-p3.y)*dsc.sy;
+  TEX_UV[6]=ext||0;
+  texNext=dsc;
 }
 /* центр в (u, y, v); hw — полуширина поперёк, hl — полудлина вдоль, hh — полувысота */
 /* o.cut — {f,b,l,r}: с какой стороны коробка отрезана швом сегментации (buildRenderList режет
@@ -994,13 +1034,17 @@ function pushBox(u, y, v, hw, hh, hl, yaw, col, bias, o){
   const cf = cut ? cut.f : false, cb = cut ? cut.b : false, cl = cut ? cut.l : false, cr = cut ? cut.r : false;
   /* текстура: координаты плитки — проекции точки на оси КОРОБКИ, абсолютные (не от центра),
      поэтому узор сплошной через швы сегментов; ряды кирпича всегда по y */
-  const tex = o && o.tex && QUALITY[qLevel].tex ? texOf(o.tex) : null;
-  if(!cf){ emNext = 0xF & ~((cr?2:0)|(cl?8:0)); if(tex) texUV(tex,a,b,dd, R,null); pushFace([a,b,cc,dd], nF, col, bias, o); }
-  if(!cb){ emNext = 0xF & ~((cl?2:0)|(cr?8:0)); if(tex) texUV(tex,f2,e,g, R,null); pushFace([f2,e,h,g],  nB, col, bias, o); }
-  if(!cr){ emNext = 0xF & ~((cb?2:0)|(cf?8:0)); if(tex) texUV(tex,b,f2,cc, F,null); pushFace([b,f2,g,cc], nR, col, bias, o); }
-  if(!cl){ emNext = 0xF & ~((cf?2:0)|(cb?8:0)); if(tex) texUV(tex,e,a,h, F,null);  pushFace([e,a,dd,h],  nL, col, bias, o); }
+  const texQ = QUALITY[qLevel].tex, tex = o && o.tex && texQ ? texOf(o.tex) : null;
+  /* дом с фасадом-картинкой: у граней вдоль F (торцы ±F) и вдоль R (±R) плитка и цвет свои — окна или
+     глухая стена; крыша дома — без плитки (окна на крыше видны с камеры сверху) */
+  const fc = o && o.fac && texQ ? o.fac : null, sf = fc && fc.f, sr = fc && fc.r;
+  const cs = o && o.cols, colF = cs ? cs.f : col, colR = cs ? cs.r : col;
+  if(!cf){ emNext = 0xF & ~((cr?2:0)|(cl?8:0)); if(sf) facUV(sf,a,b,dd,nF); else if(tex) texUV(tex,a,b,dd, R,null); pushFace([a,b,cc,dd], nF, colF, bias, o); }
+  if(!cb){ emNext = 0xF & ~((cl?2:0)|(cr?8:0)); if(sf) facUV(sf,f2,e,g,nB); else if(tex) texUV(tex,f2,e,g, R,null); pushFace([f2,e,h,g],  nB, colF, bias, o); }
+  if(!cr){ emNext = 0xF & ~((cb?2:0)|(cf?8:0)); if(sr) facUV(sr,b,f2,cc,nR,(cf?1:0)|(cb?2:0)); else if(tex) texUV(tex,b,f2,cc, F,null); pushFace([b,f2,g,cc], nR, colR, bias, o); }
+  if(!cl){ emNext = 0xF & ~((cf?2:0)|(cb?8:0)); if(sr) facUV(sr,e,a,h,nL,(cb?1:0)|(cf?2:0)); else if(tex) texUV(tex,e,a,h, F,null);  pushFace([e,a,dd,h],  nL, colR, bias, o); }
   emNext = 0xF & ~((cf?1:0)|(cr?2:0)|(cb?4:0)|(cl?8:0));
-  if(tex) texUV(tex,dd,cc,h, F,R);
+  if(tex && !(o && o.bld)) texUV(tex,dd,cc,h, F,R);
   pushFace([dd,cc,g,h], {x:0,y:1,z:0}, col, bias, o);
 }
 /* координаты плитки трёх углов грани: A — проекция на ось A (вдоль/поперёк коробки), B — на ось B
@@ -1084,7 +1128,7 @@ const TEX={ brick:   {kind:'brick',    a:0.62, w:2.08, h:0.75},
             panel:   {kind:'panel',    a:0.85, w:6.0,  h:2.8},
             brickwin:{kind:'brickwin', a:0.85, w:6.0,  h:3.2},
             shop:    {kind:'shop',     a:0.85, w:6.0,  h:3.2} };
-const TEX_UV=[0,0,0,0,0,0];
+const TEX_UV=[0,0,0,0,0,0,0];   /* [6] — у фасада-картинки: на каких концах t грань стоит на шве сегмента */
 let texNext=null;
 const texWarned=new Set();
 function texOf(name){
@@ -1178,7 +1222,7 @@ function texPattern(kind, lvl){
    углом, и при 1,8 зерно пропадало уже на середине двери — «у двери пропадает текстура рядом с
    зеркалом» (владелец, 24.09); до 3,4 плитка ещё читается как материал, а не как рябь */
 const GRAD_MIN_PX=40, GRAIN_AREA0=400, GRAIN_AREA1=800, GRAIN_MINIF0=2.2, GRAIN_MINIF1=3.4;
-const TEX_AREA_MIN=400, TEX_MINIF_MAX=24;
+const TEX_AREA_MIN=400, TEX_MINIF_MAX=24, FAC_MINIF_MAX=48;
 /* режим заливки грани — чистая функция от грани и её экранных точек; по ней же прогон --sweep
    ловит переключения режима при повороте головы. Правила: в зеркалах всё плоское; градиент — если
    его концы дальше 1,5 px (вырожденный градиент Canvas не рисует НИЧЕГО — грань ребром пропадала
@@ -1200,9 +1244,16 @@ function faceMode(f, s0, s1, s2, s3){
     const area=Math.abs(ux*vy-uy*vx);
     /* вес — плавный по площади и по минификации, не порог: узкая грань бордюра ходит около
        400 px² и текстура на ней мигала */
-    const minif=Math.max(f.lu*TEX_PX/((Math.sqrt(ux*ux+uy*uy)||1e-6)*DPR), f.lv*TEX_PX/((Math.sqrt(vx*vx+vy*vy)||1e-6)*DPR));
-    f.tw=clamp((area-TEX_AREA_MIN)/(2*TEX_AREA_MIN),0,1)*clamp((TEX_MINIF_MAX-minif)/8,0,1);
-    if(f.tw>0){ f.gk = minif<=1.5 ? 0 : (minif<=3 ? 1 : 2); return mode+'+tex'; }
+    /* у фасада-картинки пикселей на метр своё число по каждой оси (шаг окна подогнан под стену) —
+       уменьшение считается по размаху координат плитки, а не по TEX_PX */
+    const du = f.tex.fac ? Math.sqrt((f.ga1-f.ga0)**2+(f.gb1-f.gb0)**2) : f.lu*TEX_PX,
+          dv = f.tex.fac ? Math.sqrt((f.ga3-f.ga0)**2+(f.gb3-f.gb0)**2) : f.lv*TEX_PX;
+    const minif=Math.max(du/((Math.sqrt(ux*ux+uy*uy)||1e-6)*DPR), dv/((Math.sqrt(vx*vx+vy*vy)||1e-6)*DPR));
+    /* картинка фасада гаснет по уменьшению позже шумовой плитки: у неё есть мелкие мип-уровни, и окна
+       дома в 150 м (тайл 6 м — 26 px) при прежнем пороге 24 проступали вполовину */
+    f.tw=clamp((area-TEX_AREA_MIN)/(2*TEX_AREA_MIN),0,1)*(f.tex.fac ? clamp((FAC_MINIF_MAX-minif)/16,0,1) : clamp((TEX_MINIF_MAX-minif)/8,0,1));
+    /* у фасада-картинки шесть мип-уровней: она видна на всех домах, и окна дома в 80 м на уровне 2 рябили */
+    if(f.tw>0){ f.gk = minif<=1.5 ? 0 : minif<=3 ? 1 : (!f.tex.fac || minif<=6) ? 2 : minif<=12 ? 3 : minif<=24 ? 4 : 5; return mode+'+tex'; }
     return mode;
   }
   if(f.grain && q.grain){
@@ -1235,8 +1286,13 @@ function flushFaces(){
           g.addColorStop(0,f.col); g.addColorStop(1,f.col2); fill=g; }
         else fill=f.colMid;
       }
-      ctx.fillStyle=fill; ctx.fill();
-      if(mode.length>5){ if(f.img) imgFace(f, s0, s1, s2, s3); else if(f.tex) texFace(f, s0, s1, s3); else grainFace(f, s0, s1, s3); }
+      /* фасад-картинка: средний цвет без света → ячейки картинки → накладка света и дымки (facFace); без
+         ячеек (зеркало, мелкая грань, дальше) — обычный освещённый цвет */
+      const facT = f.ov!==null && mode.length>5;
+      ctx.fillStyle = facT ? f.colMid : fill; ctx.fill();
+      let ovDone=false;
+      if(mode.length>5){ if(f.img) imgFace(f, s0, s1, s2, s3); else if(f.tex) ovDone=texFace(f, s0, s1, s3); else grainFace(f, s0, s1, s3); }
+      if(facT && !ovDone && pathCam(f.cp)){ ctx.fillStyle=f.ov; ctx.fill(); }
     } else { ctx.fillStyle=f.col; ctx.fill(); }
     if(f.em && edgesQ && edgeW>=3) strokeEdges(f);
   }
@@ -1373,16 +1429,122 @@ function texCell(t0,t1,r0,r1,du,dv){
   if(texCellHook){ C[0].t=t0; C[0].r=r0; C[1].t=t1; C[1].r=r0; C[2].t=t1; C[2].r=r1; C[3].t=t0; C[3].r=r1; texCellHook(C); }
 }
 function texFace(f, s0, s1, s3){
-  const lvl=f.gk, sc=1/(1<<lvl), pat=texPattern(f.tex.kind, lvl); if(!pat) return;
+  const lvl=f.gk;
+  if(f.tex.fac) return facFace(f, s0, s1, s3, lvl);
+  const sc=1/(1<<lvl), pat=texPattern(f.tex.kind, lvl); if(!pat) return false;
   TXS.f=f; TXS.a0=f.ga0*sc; TXS.b0=f.gb0*sc;
   TXS.d1a=(f.ga1-f.ga0)*sc; TXS.d1b=(f.gb1-f.gb0)*sc; TXS.d3a=(f.ga3-f.ga0)*sc; TXS.d3b=(f.gb3-f.gb0)*sc;
-  if(Math.abs(TXS.d1a*TXS.d3b-TXS.d1b*TXS.d3a)<1e-6){ TXS.f=null; return; }
+  if(Math.abs(TXS.d1a*TXS.d3b-TXS.d1b*TXS.d3a)<1e-6){ TXS.f=null; return false; }
   TXS.aBase=f.tex.a*f.tw;
   ctx.save();
   ctx.fillStyle=pat;
   texCell(0,1,0,1,0,0);
   ctx.restore();
   TXS.f=null;
+  return false;
+}
+/* начальная сетка ячеек фасада-картинки (facFace): дальше её делит ошибка перспективы */
+const TEX_CELL=140;
+/* фасад-картинка кладётся ячейками, и каждая делится вчетверо, пока её СОБСТВЕННАЯ ошибка перспективы
+   (четвёртый угол аффинной карты по трём углам против честной проекции) больше FAC_PERSP_PX — как борт
+   трамвая (#256), но адаптивно. Сетка с потолком 8 × 8 на грань 23 × 45 м вблизи оставляла по 5–20 px:
+   полосы плитки шли лесенкой, и картинка «ехала» при повороте камеры. Ошибка ячейки — перекрёстный член
+   её долей по двум осям, поэтому делятся обе. Ячейка целиком вне кадра отбрасывается до деления —
+   делится только видимая часть стены (высокий дом с телефона — грань 800 px при кадре 390); ячейка,
+   задевшая ближнюю плоскость, тоже делится — плоский клин у края кадра сжимается.
+   Ячейки заходят друг на друга и за шов сегмента (f.ext) на FAC_OVL px устройства по своему короткому
+   ребру: раздвижки pathCam (≈0,64 px по нормали к ребру) на косом стыке не хватало, сквозь сглаживание
+   просвечивала подложка — светлым волосом на тёмном стекле. Внешний контур дома не раздвигается:
+   картинка вылезла бы за силуэт */
+const FAC_ST=[], FC=[{x:0,y:0,d:0},{x:0,y:0,d:0},{x:0,y:0,d:0},{x:0,y:0,d:0}], FPX=[0,0,0,0], FPY=[0,0,0,0];
+function facCorners(c0,c1,c2,c3,t0,t1,r0,r1){
+  texAt(c0,c1,c2,c3,t0,r0,FC[0]); texAt(c0,c1,c2,c3,t1,r0,FC[1]); texAt(c0,c1,c2,c3,t1,r1,FC[2]); texAt(c0,c1,c2,c3,t0,r1,FC[3]);
+  let behind=0;
+  for(let q=0;q<4;q++){ const c=FC[q]; if(c.d<NEAR){ behind++; continue; } const k=cam.scale/c.d; FPX[q]=VP.cx+c.x*k; FPY[q]=VP.cy-c.y*k; }
+  return behind;
+}
+function facFace(f, s0, s1, s3, lvl){
+  const fac=f.tex.fac, pat=facPattern(fac, lvl); if(!pat) return false;
+  const kx=fac.ks[lvl][0], ky=fac.ks[lvl][1];
+  const c0=f.cp[0], c1=f.cp[1], c2=f.cp[2], c3=f.cp[3], s2=toScreenClamped(c2);
+  const a0=f.ga0*kx, b0=f.gb0*ky, d1a=(f.ga1-f.ga0)*kx, d1b=(f.gb1-f.gb0)*ky, d3a=(f.ga3-f.ga0)*kx, d3b=(f.gb3-f.gb0)*ky;
+  if(Math.abs(d1a*d3b-d1b*d3a)<1e-6) return false;
+  const cell=f.tex.cell||TEX_CELL, ext=f.ext, maxDep=f.tex.depth, ovl=FAC_OVL/pxScale, err2=FAC_PERSP_PX*FAC_PERSP_PX, farD=facFarD();
+  const nu=clamp(Math.ceil(Math.max(Math.hypot(s1.x-s0.x,s1.y-s0.y), Math.hypot(s2.x-s3.x,s2.y-s3.y))/cell),1,8);
+  const nv=clamp(Math.ceil(Math.max(Math.hypot(s3.x-s0.x,s3.y-s0.y), Math.hypot(s2.x-s1.x,s2.y-s1.y))/cell),1,8);
+  /* очередь, не стек: делятся по уровням, и потолок FAC_CELLS_MAX срабатывает ровно по всей грани — стеком
+     первые ячейки делились до конца, а низ стены оставался крупными ячейками со сдвигом в десятки px */
+  /* продление за шов сегмента — одно на грань и для ячеек, и для накладки: по ячейке оно выходило короче,
+     и накладка ложилась на уже освещённый соседний сегмент второй раз — тёмной линией на шве */
+  const otF=ovl/Math.max(1, Math.min(Math.hypot(s1.x-s0.x,s1.y-s0.y), Math.hypot(s2.x-s3.x,s2.y-s3.y)));
+  const st=FAC_ST; st.length=0; let head=0;
+  for(let i=0;i<nu;i++) for(let j=0;j<nv;j++) st.push(i/nu, (i+1)/nu, j/nv, (j+1)/nv, 0);
+  const vx0=VP.x, vx1=VP.x+VP.w, vy0=VP.y, vy1=VP.y+VP.h;
+  ctx.save();
+  ctx.fillStyle=pat;
+  let drawn=0;
+  while(head<st.length){
+    const t0=st[head], t1=st[head+1], r0=st[head+2], r1=st[head+3], dep=st[head+4]; head+=5;
+    const can = dep<maxDep && drawn+(st.length-head)/5+4 <= FAC_CELLS_MAX;
+    const behind=facCorners(c0,c1,c2,c3,t0,t1,r0,r1);
+    if(behind){
+      if(behind<4 && can){ const tm=(t0+t1)*0.5, rm=(r0+r1)*0.5; st.push(t0,tm,r0,rm,dep+1, tm,t1,r0,rm,dep+1, t0,tm,rm,r1,dep+1, tm,t1,rm,r1,dep+1); }
+      continue;
+    }
+    let x0=FPX[0], x1=x0, y0=FPY[0], y1=y0;
+    for(let q=1;q<4;q++){ const x=FPX[q], y=FPY[q]; if(x<x0) x0=x; if(x>x1) x1=x; if(y<y0) y0=y; if(y>y1) y1=y; }
+    if(x1<vx0 || x0>vx1 || y1<vy0 || y0>vy1) continue;
+    const ex=FPX[1]+FPX[3]-FPX[0]-FPX[2], ey=FPY[1]+FPY[3]-FPY[0]-FPY[2];
+    if(can && ex*ex+ey*ey>err2 && (x1-x0>2*FAC_MIN_PX || y1-y0>2*FAC_MIN_PX)){
+      const tm=(t0+t1)*0.5, rm=(r0+r1)*0.5;
+      st.push(t0,tm,r0,rm,dep+1, tm,t1,r0,rm,dep+1, t0,tm,rm,r1,dep+1, tm,t1,rm,r1,dep+1);
+      continue;
+    }
+    const lu=Math.max(1, Math.min(Math.hypot(FPX[1]-FPX[0],FPY[1]-FPY[0]), Math.hypot(FPX[2]-FPX[3],FPY[2]-FPY[3])));
+    const lv=Math.max(1, Math.min(Math.hypot(FPX[3]-FPX[0],FPY[3]-FPY[0]), Math.hypot(FPX[2]-FPX[1],FPY[2]-FPY[1])));
+    const ou=(t1-t0)*ovl/lu, ov=(r1-r0)*ovl/lv;
+    let te0 = t0>0 ? t0-ou : ext&1 ? -otF : 0, te1 = t1<1 ? t1+ou : ext&2 ? 1+otF : 1, re0 = r0>0 ? r0-ov : r0, re1 = r1<1 ? r1+ov : r1;
+    if(facCorners(c0,c1,c2,c3,te0,te1,re0,re1)){ te0=t0; te1=t1; re0=r0; re1=r1; facCorners(c0,c1,c2,c3,t0,t1,r0,r1); }
+    /* картинка фасада гаснет к BLD_NEAR_D до нуля по глубине ячейки: дальше дом — ровный средний цвет */
+    const dc=(FC[0].d+FC[1].d+FC[2].d+FC[3].d)*0.25;
+    ctx.globalAlpha=f.tw*clamp((farD-dc)/FAC_FADE, 0, 1);
+    ctx.setTransform(pxScale,0,0,pxScale,0,0);
+    ctx.beginPath(); ctx.moveTo(FPX[0],FPY[0]); ctx.lineTo(FPX[1],FPY[1]); ctx.lineTo(FPX[2],FPY[2]); ctx.lineTo(FPX[3],FPY[3]); ctx.closePath();
+    /* карта ячейки — симметричная: средние рёбра и центр, а не точная в трёх углах. Скрутка ячейки
+       (|p1 + p3 − p0 − p2|) делится поровну, по четверти на угол, вместо целиком в четвёртый угол —
+       при том же сдвиге картинки ячеек вчетверо меньше */
+    const e1a=d1a*(te1-te0), e1b=d1b*(te1-te0), e3a=d3a*(re1-re0), e3b=d3b*(re1-re0), dt=e1a*e3b-e1b*e3a; if(Math.abs(dt)<1e-9) continue;
+    const uc=a0+d1a*(te0+te1)*0.5+d3a*(re0+re1)*0.5, vc=b0+d1b*(te0+te1)*0.5+d3b*(re0+re1)*0.5;
+    const e1x=(FPX[1]-FPX[0]+FPX[2]-FPX[3])*0.5, e1y=(FPY[1]-FPY[0]+FPY[2]-FPY[3])*0.5;
+    const e3x=(FPX[3]-FPX[0]+FPX[2]-FPX[1])*0.5, e3y=(FPY[3]-FPY[0]+FPY[2]-FPY[1])*0.5;
+    const cx=(FPX[0]+FPX[1]+FPX[2]+FPX[3])*0.25, cy=(FPY[0]+FPY[1]+FPY[2]+FPY[3])*0.25;
+    const m11=( e1x*e3b-e3x*e1b)/dt, m12=( e1y*e3b-e3y*e1b)/dt;
+    const m21=(-e1x*e3a+e3x*e1a)/dt, m22=(-e1y*e3a+e3y*e1a)/dt;
+    ctx.transform(m11, m12, m21, m22, cx-(m11*uc+m21*vc), cy-(m12*uc+m22*vc));
+    ctx.fill();
+    drawn++;
+  }
+  /* накладка света — по голым углам прямоугольника грани: на шве сегмента — продлённого на то же otF, что
+     ячейки, на внешних рёбрах — на раздвижку подложки (EXPAND_DEV). Накладка шире ячеек на шве (раздвижка
+     pathCam ≈0,64 px) ложилась на освещённый соседний сегмент второй раз — тёмной линией, уже ячеек —
+     оставляла полосу картинки без света; без расширения на внешних рёбрах светлел край силуэта —
+     неосвещённая подложка */
+  if(f.ov!==null){
+    ctx.setTransform(pxScale,0,0,pxScale,0,0); ctx.globalAlpha=1;
+    const xe=EXPAND_DEV/pxScale;
+    const exT=xe/Math.max(1, Math.min(Math.hypot(s1.x-s0.x,s1.y-s0.y), Math.hypot(s2.x-s3.x,s2.y-s3.y)));
+    const exR=xe/Math.max(1, Math.min(Math.hypot(s3.x-s0.x,s3.y-s0.y), Math.hypot(s2.x-s1.x,s2.y-s1.y)));
+    const e0 = ext&1 ? -otF : -exT, e1 = ext&2 ? 1+otF : 1+exT;
+    texAt(c0,c1,c2,c3,e0,-exR,TC[0]); texAt(c0,c1,c2,c3,e1,-exR,TC[1]); texAt(c0,c1,c2,c3,e1,1+exR,TC[2]); texAt(c0,c1,c2,c3,e0,1+exR,TC[3]);
+    const cl=clipNear(TC);
+    if(cl.length>2){
+      ctx.beginPath();
+      for(let q=0;q<cl.length;q++){ const k=cam.scale/cl[q].d, x=VP.cx+cl[q].x*k, y=VP.cy-cl[q].y*k; if(q) ctx.lineTo(x,y); else ctx.moveTo(x,y); }
+      ctx.closePath(); ctx.fillStyle=f.ov; ctx.fill();
+    }
+  }
+  ctx.restore();
+  return true;
 }
 /* картинка — тем же приёмом: паттерн без повтора, натянутый по трём углам грани:
    (0,0) → v0, (w,0) → v1, (0,h) → v3 */
@@ -2745,6 +2907,39 @@ function worldImgLoad(){
   }
 }
 worldImgLoad();
+/* фасады домов (серия 3): плитка — два шага окна на этаж. Размер в метрах и средний цвет читаются из
+   атрибутов сразу, до распаковки: генератор кварталов красит ими дома, и дальний дом (ровный цвет за
+   BLD_NEAR_D) того же цвета, что ближний с картинкой. Ссылки на картинки берутся здесь, до того как
+   телефон удаляет #assets после куба салона. Без картинки — рисованная плитка facadeLum */
+const FAC_KEYS=['panel-a','panel-b','panel-end','brick-red','brick-yellow','brick-end','plaster','shop-a','shop-b'].map(k=>'fac-'+k);
+const FAC={};
+function facLoad(){
+  const root=document.getElementById('assets'); if(!root) return;
+  for(const k of FAC_KEYS){
+    const img=root.querySelector('img[data-asset="'+k+'"]');
+    const m=img ? (img.dataset.m||'').split('x').map(Number) : [], c=img ? (img.dataset.mean||'').split(',').map(Number) : [];
+    if(!img || m.length!==2 || !(m[0]>0 && m[1]>0) || c.length!==3 || c.some(x=>!(x>=0 && x<=255))){
+      console.warn('[assets] '+k+': нет картинки или её размера — рисованная плитка'); continue; }
+    const t=FAC[k]={key:k, w:m[0], h:m[1], mean:c, img:null, pats:null, ks:null};
+    img.decode().then(()=>{ t.img=img; }).catch(()=>{ delete FAC[k]; console.warn('[assets] '+k+': не распаковалась — рисованная плитка'); });
+  }
+}
+facLoad();
+/* мип-уровни — уменьшением картинки, как у texPattern: без них окна вдали рябят муаром. Масштаб
+   уровня берётся из его настоящего размера, а не 1/2ᴸ: высота 239 даёт уровень 119, и на шестнадцатом
+   этаже окна уровня 1 разошлись бы с окнами уровня 0 на полэтажа */
+function facPattern(t, lvl){
+  if(!t.pats){
+    const lv=[t.img], w0=t.img.naturalWidth||t.img.width, h0=t.img.naturalHeight||t.img.height;
+    for(let l=1;l<6;l++){ const p=lv[l-1], q=document.createElement('canvas');
+      q.width=Math.max(1,(p.naturalWidth||p.width)>>1); q.height=Math.max(1,(p.naturalHeight||p.height)>>1);
+      const g=q.getContext('2d'); g.imageSmoothingEnabled=true; g.imageSmoothingQuality='high';
+      g.drawImage(p,0,0,q.width,q.height); lv.push(q); }
+    t.ks=lv.map(c=>[(c.naturalWidth||c.width)/w0, (c.naturalHeight||c.height)/h0]);
+    t.pats=lv.map(c=>ctx.createPattern(c,'repeat'));
+  }
+  return t.pats[lvl];
+}
 function emitCarMesh(u, v, th, col, st, lights, look){
   const f=fuv(th), r=ruv(th), a=ackermann(st||0), t=CAR.track/2;
   const at=(du,dz)=>({u:u+f.u*dz+r.u*du, v:v+f.v*dz+r.v*du});
@@ -2903,6 +3098,34 @@ const BLD_SETBACK=5.0, BLD_SIGHT=25, BLD_BELT=34, BLD_LOT=22;
 const SIDEWALK='#8e8f8a';
 const BLD_PAL={panel:[[200,196,186],[184,188,190],[210,202,182],[176,178,172]],
                brick:[[156,94,74],[142,104,84],[192,166,118],[168,120,92]]};
+/* плитки фасада дома (серия 3): facW — грани лица, с окнами; facE — торцы, глухая стена; facS — первый
+   этаж дома с магазином. Лицо (front) — ось граней с окнами: у рядов и пояса грани вдоль улицы (±R),
+   у тупиков и концов перспективы — грани поперёк своей оси (±F), у дворов — длинная сторона. Выбор — от
+   хэша дома, не от общего rnd(): сдвинулись бы расстановка и этажность, на которых стоит гейт края мира.
+   У бежевой панели и жёлтого кирпича своего торца в наборе нет — торцу даётся оттенок к цвету фасада;
+   у башен и штукатурки окна со всех сторон */
+const FAC_PLASTER=0.35;
+function facPick(b){
+  const r=bldRng('fac|'+b.u.toFixed(2)+'|'+b.v.toFixed(2));
+  b.front = b.layer==='ends' ? 'f' : b.layer==='yard' ? (b.l>=b.w ? 'r' : 'f') : 'r';
+  let wall, end;
+  if(b.style==='panel'){ wall = r()<0.5 ? 'fac-panel-a' : 'fac-panel-b'; end='fac-panel-end'; }
+  else if(!b.shop && b.floors>=3 && b.floors<=6 && r()<FAC_PLASTER){ wall='fac-plaster'; end=wall; }
+  else { wall = r()<0.5 ? 'fac-brick-red' : 'fac-brick-yellow'; end='fac-brick-end'; }
+  if(b.floors>=18) end=wall;
+  b.facW=wall; b.facE=end; b.facS = b.shop ? (r()<0.5 ? 'fac-shop-a' : 'fac-shop-b') : null;
+  b.facTint = end!==wall && (wall==='fac-panel-b' || wall==='fac-brick-yellow');
+  /* цвет каждой оси — средний цвет её плитки, и вблизи, и за BLD_NEAR_D: иначе на границе дальностей
+     торец менял бы цвет на цвет фасада. Торец с оттенком — цвета фасада */
+  const W=FAC[wall], E=FAC[end], Le = b.front==='r' ? b.w : b.l;
+  if(!W) return;
+  b.col=W.mean;
+  if(!E) return;
+  const axes=(wc)=>{ const ec = Le>FAC_END_MAX ? wc : end===wall || b.facTint ? W.mean : E.mean;
+    return b.front==='r' ? {r:wc, f:ec} : {r:ec, f:wc}; };
+  b.cols=axes(W.mean);
+  if(b.facS && FAC[b.facS]) b.colsS=axes(FAC[b.facS].mean);
+}
 /* длинную дорогу режем на куски: отсечение декалей по дальности работает по кускам,
    а один прямоугольник в 200 м заливался бы целиком на каждом кадре */
 const ROAD_CHUNK=42;
@@ -3346,8 +3569,10 @@ function cityBuildings(spec, pt, radius, arms, obs){
   };
   const add=(u,v,w,l,yaw,style,floors,shop,layer,rnd)=>{
     const pal=BLD_PAL[style], h=floors*(style==='panel'?2.8:3.2)+0.6;
-    list.push({kind:'bld', u, v, w, l, h, yaw, style, floors, shop:!!shop, layer, solid:true,
-               col:pal[Math.floor(rnd()*pal.length)], _pad:rectPts(u,v,w+0.8,l+0.8,yaw), _r:Math.hypot(w,l)/2+0.6});
+    const b={kind:'bld', u, v, w, l, h, yaw, style, floors, shop:!!shop, layer, solid:true,
+             col:pal[Math.floor(rnd()*pal.length)], _pad:rectPts(u,v,w+0.8,l+0.8,yaw), _r:Math.hypot(w,l)/2+0.6};
+    facPick(b);
+    list.push(b);
   };
   /* этажность — типовые серии, а не равномерный разброс: ровный ряд 5–9 этажей читался одной стеной
      (владелец: «здания можешь сделать разной высоты»). Соседи в ряду высоту не повторяют, изредка —
@@ -6753,17 +6978,17 @@ let dprCap = 2;
    зерна салона — они структура сцены, зерно — деталь. Текстура — вторая заливка всей грани, и на
    программном Canvas 80-метровая стена уровня 1 стоила 51 → 40 fps на q3; рёбра там в пределах
    шума замера (46 и 47 fps с ними и без) */
-const QUALITY=[ {dpr:2,    grain:true,  grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true},
-                {dpr:1.5,  grain:true,  grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true},
-                {dpr:1.5,  grain:false, grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true},
-                {dpr:1.25, grain:false, grad:false, cars:true,  detail:true,  maxD:70, edges:true,  tex:false},
-                {dpr:1,    grain:false, grad:false, cars:false, detail:true,  maxD:70, edges:false, tex:false},
-                {dpr:1,    grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false},
+const QUALITY=[ {dpr:2,    grain:true,  grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true, facD:Infinity},
+                {dpr:1.5,  grain:true,  grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true, facD:Infinity},
+                {dpr:1.5,  grain:false, grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true, facD:150},
+                {dpr:1.25, grain:false, grad:false, cars:true,  detail:true,  maxD:70, edges:true,  tex:false, facD:0},
+                {dpr:1,    grain:false, grad:false, cars:false, detail:true,  maxD:70, edges:false, tex:false, facD:0},
+                {dpr:1,    grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false, facD:0},
                 /* ниже 1,0 — рендер в меньшем разрешении с растяжением браузером: на большом мониторе
                    с программным Canvas и DPR 1,0 (2560×1440) выходило 16 fps */
-                {dpr:0.8,  grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false},
-                {dpr:0.65, grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false},
-                {dpr:0.5,  grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false} ];
+                {dpr:0.8,  grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false, facD:0},
+                {dpr:0.65, grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false, facD:0},
+                {dpr:0.5,  grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false, facD:0} ];
 function qDetail(){ return QUALITY[qLevel].detail; }
 const Q_SLOW_MIRRORS=5;    /* с этого уровня зеркала обновляются через кадр */
 /* первые секунды после загрузки кадры рваные (уровень, ресайз, прогрев) — регулятор молчит,
@@ -8772,6 +8997,22 @@ function camSees(u, y, v, rad){
    дальше дом — одна коробка без рёбер и плитки: на телефоне кадр упирается в число граней (нарезка и
    рёбра до 100 м стоили +1,5 мс JS на уровне 29), а туман (fogFar) растворяет дальние дома к границе */
 const BLD_MAXD=250, BLD_NEAR_D=45, BLD_SEG=8;
+/* FAC_FADE — на последних метрах до дальности картинки (facFarD) она гаснет до своего среднего цвета;
+   FAC_TINT — доля оттенка торца без своей плитки; торец длиннее FAC_END_MAX — с окнами: у такой
+   стены глухой торец выглядел бы складом */
+const FAC_FADE=15, FAC_TINT=0.5, FAC_END_MAX=16, FAC_T0=[0,0,0], FAC_OVL=1.5;
+/* дальность картинки фасада — своя у каждого уровня качества (QUALITY[q].facD), не дальность нарезки и
+   рёбер (BLD_NEAR_D): с картинкой только ближе 45 м, а потом 70 м дома впереди по улице стояли ровного
+   цвета, и фасады «подгружались» у самого дома (владелец: «я хочу видеть все»). На верхних уровнях —
+   Infinity, то есть все дома, что рисуются (до BLD_MAXD; таблица QUALITY стоит раньше его объявления); регулятор на слабой машине сперва сокращает дальность (уровень 2), потом выключает
+   картинки вместе с текстурами стен */
+function facFarD(){ return QUALITY[qLevel].facD; }
+function facRange(d){ return d<facFarD(); }
+/* FAC_PERSP_PX — допуск скрутки ячейки: при симметричной карте сдвиг картинки — её четверть, ≤ 1 px, как
+   IMG_PERSP_PX у трамвая; FAC_DEPTH — сколько
+   раз ячейка может поделиться вчетверо, FAC_CELLS_MAX — потолок ячеек на грань, FAC_MIN_PX — ячейку
+   мельче вдвое не делим */
+const FAC_PERSP_PX=4, FAC_DEPTH=6, FAC_CELLS_MAX=512, FAC_MIN_PX=6;
 function emitBuildings(){
   const cu=-cam.pos.x, cv=cam.pos.z;
   fogFar=true;
@@ -8787,13 +9028,37 @@ function emitBuilding(o, d){
   const near=d<BLD_NEAR_D, k=near ? Math.max(1, Math.ceil(o.l/BLD_SEG)) : 1, sl=o.l/k, f=fuv(o.yaw);
   const tex = near ? (o.style==='panel' ? 'panel' : 'brickwin') : null;
   const y0 = o.shop ? 3.2 : 0;                       /* первый этаж с магазином — своя коробка с витринами */
+  const pic = facRange(d), fu = pic ? facOf(o, false) : null, fs = pic && o.shop ? facOf(o, true) : null;
   edgeOn=near;
   for(let i=0;i<k;i++){
     const t=-o.l/2+sl*(i+0.5), u=o.u+f.u*t, v=o.v+f.v*t;
     const cut = k>1 ? {f:i<k-1, b:i>0, l:false, r:false} : null;
-    if(o.shop) pushBox(u, y0/2, v, o.w/2, y0/2, sl/2, o.yaw, o.col, 0, {cut, tex: tex ? 'shop' : null});
-    pushBox(u, y0+(o.h-y0)/2, v, o.w/2, (o.h-y0)/2, sl/2, o.yaw, o.col, 0, cut||tex ? {cut, tex} : null);
+    if(o.shop) pushBox(u, y0/2, v, o.w/2, y0/2, sl/2, o.yaw, o.col, 0, {cut, tex: tex ? 'shop' : null, fac:fs, bld:true, cols:o.colsS});
+    pushBox(u, y0+(o.h-y0)/2, v, o.w/2, (o.h-y0)/2, sl/2, o.yaw, o.col, 0,
+            cut||tex||fu ? {cut, tex, fac:fu, bld:true, cols:o.cols} : (o._far || (o._far={bld:true, cols:o.cols})));
   }
+}
+/* плитки граней дома по осям: r — грани ±R (длина стены l), f — грани ±F (длина w). Лицо дома
+   (o.front) — окна, другая ось — торец. По длине стены — целое число полуплиток (шаг окна), начиная с
+   угла: окно не режется углом дома. Готовится, когда распакованы обе картинки; до того — рисованная
+   плитка. Кэш — на доме: стена и шаг у дома не меняются */
+function facOf(o, shop){
+  const key = shop ? '_fs' : '_fu';
+  if(o[key]) return o[key];
+  const wall=FAC[shop ? o.facS : o.facW], end0=FAC[o.facE], cs = shop ? o.colsS : o.cols;
+  if(!cs || !wall || !wall.img || !end0 || !end0.img) return null;
+  const yb = shop ? 0 : (o.shop ? 3.2 : 0);
+  /* оттенок: T подобран так, что средний цвет плитки, сведённый к T на долю FAC_TINT, равен цвету оси */
+  const mk=(t, L, col)=>{
+    const nb=Math.max(1, Math.round(L/(t.w/2))), tw=2*L/nb, tint = col===t.mean ? 0 : FAC_TINT;
+    const T = tint ? t.mean.map((m,i)=>clamp((col[i]-(1-tint)*m)/tint, 0, 255)) : FAC_T0;
+    return {fac:t, raw:'rgb('+t.mean.join(',')+')', col, tint, T, cell:260, a:1, depth:FAC_DEPTH,
+            sx:(t.img.naturalWidth||t.img.width)/tw, sy:(t.img.naturalHeight||t.img.height)/t.h, yb, L, cx:-o.u, cz:o.v};
+  };
+  const wa=o.front, ea = wa==='r' ? 'f' : 'r', Lw = wa==='r' ? o.l : o.w, Le = wa==='r' ? o.w : o.l;
+  const endT = Le>FAC_END_MAX ? wall : end0;
+  const d={}; d[wa]=mk(wall, Lw, cs[wa]); d[ea]=mk(endT, Le, cs[ea]);
+  return o[key]=d;
 }
 function emitObstacles(maxD){
   const cu=-cam.pos.x, cv=cam.pos.z;
