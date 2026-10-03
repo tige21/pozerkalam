@@ -173,7 +173,8 @@ function routeCheck(runs){
    demo-vio (показа у экзамена нет): этап, к которому не строится путь; точку линии вне
    асфальта или на островке кольца; линию по встречной половине; нерезолвящуюся зону
    манёвра; карман, нарисованный не там, где засчитывается; улицу из команды, которой
-   нет в городе; указатель, вставший на проезжей части. */
+   нет в городе; указатель, вставший на проезжей части; линию, прижатую к поребрику ближе
+   полуширины машины (@city-kerb-exam-line). */
 function navCheck(runs){
   const N=runs||8, bad=[];
   const say=(ok,txt)=>{ if(!ok){ bad.push(txt); console.log('FAIL · '+txt); } };
@@ -242,7 +243,8 @@ function navCheck(runs){
       say(!!exam.leg, tag+': маршрут не строится');
       if(!exam.leg) continue;
       const pts=exam.leg.pts;
-      let off=0, isle=0, onCome=0;
+      let off=0, isle=0, onCome=0, kerbAt=null;
+      const KB=level.obs.filter(o=>o.kind==='kerb');
       for(let j=1;j<pts.length;j++){
         const a=pts[j-1], q=pts[j];
         if(!onRoad(q)) off++;
@@ -250,7 +252,18 @@ function navCheck(runs){
         const du=q.u-a.u, dv=q.v-a.v, L=Math.hypot(du,dv)||1, d={u:du/L, v:dv/L};
         for(const zz of onc){ const f=fuv(zz.yaw);
           if(inRect(q,zz) && d.u*f.u+d.v*f.v>0.4) onCome++; }
+        /* машина центром на линии не задевает поребрик бортом: от точки линии до бордюра не меньше
+           полуширины кузова + 5 см. Кузов по касательной не годится как модель: линия — путь центра,
+           и на развороте с путей она шире настоящей дуги, а развёрнутый поперёк кузов «вылетал» на 2 м.
+           Первые 6 м пропускаются: начало отрезка — машина, поставленная проверкой в точку команды */
+        if(!kerbAt && Math.hypot(q.u-pts[0].u, q.v-pts[0].v)>6) for(const o of KB){
+          if(Math.hypot(o.u-q.u,o.v-q.v)>o.l/2+3) continue;
+          const f=fuv(o.yaw), r=ruv(o.yaw), du=q.u-o.u, dv=q.v-o.v;
+          const lat=Math.abs(du*r.u+dv*r.v)-o.w/2, lon=Math.abs(du*f.u+dv*f.v)-o.l/2;
+          const dist=Math.hypot(Math.max(0,lat),Math.max(0,lon));
+          if(dist<HALF_W+0.05){ kerbAt=q.u.toFixed(1)+','+q.v.toFixed(1)+' ('+dist.toFixed(2)+' м)'; break; } }
       }
+      say(!kerbAt, tag+': линия маршрута ближе полуширины машины к поребрику у '+kerbAt+' (@city-kerb-exam-line)');
       say(off===0, tag+': '+off+' точек линии вне асфальта');
       say(isle===0, tag+': линия заходит на островок кольца');
       say(onCome===0, tag+': линия идёт по встречной половине');

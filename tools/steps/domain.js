@@ -75,11 +75,13 @@
     }],
 
     /* ---------- Когда ---------- */
+    /* касание — это засчитанный наезд (hitPenalty), а не число препятствий под кузовом: угол поребрика
+       из двух коробок одной цепочки держит обе, а наезд один (kerbHeld) */
     [/^проверяется касание$/, () => {
-      const before = level.obs.filter((o) => o._touch).length;
-      resolveCollisions(1 / 60);
-      const after = level.obs.filter((o) => o._touch).length;
-      if (after > before) ctx.touches += after - before;
+      const orig = window.hitPenalty; let n = 0;
+      window.hitPenalty = function () { n++; return orig.apply(this, arguments); };
+      try { resolveCollisions(1 / 60); } finally { window.hitPenalty = orig; }
+      ctx.touches += n;
     }],
     [/^измеряются зазоры$/, () => { ctx.clear = clearances(); }],
     [new RegExp('^игрок открывает уровень ' + N + '$'), (n) => {

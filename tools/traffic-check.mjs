@@ -5,7 +5,8 @@
    Валит прогон (код 1) на: машине вне проезжей части, машине на встречной половине, проезде
    на красный, наложении двух машин, застрявшей без причины и пустом потоке там, где он объявлен.
      PW_DIR=/tmp/pw node tools/traffic-check.mjs            # все уровни с traffic
-     PW_DIR=/tmp/pw node tools/traffic-check.mjs 29 31      # индексы уровней, 0-based */
+     PW_DIR=/tmp/pw node tools/traffic-check.mjs 29 31      # индексы уровней, 0-based
+     FAULT=kerbflow — поребрик поперёк пути первой машины: @city-kerb-flow-clear обязан покраснеть */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -84,7 +85,7 @@ let bad = 0;
   if (pageErr) { console.log('     PAGEERR ' + pageErr); pageErr = null; }
 }
 for (const li of levels) {
-  const r = await page.evaluate(({ li, secs }) => {
+  const r = await page.evaluate(({ li, secs, fault }) => {
     loadLevel(li); hideOv(); paused = true;
     const flow = level.actors.filter(a => a.act.flow);
     if (!flow.length) return { name: level.def.name, err: ['поток объявлен, но машин нет'] };
@@ -95,7 +96,10 @@ for (const li of levels) {
       /* отрицательное значение — «чем меньше, тем хуже»: храним худший замер */
       if (p === undefined || (val < 0 ? val > p : val > p)) seen[k] = val;
       if (p !== undefined && val < 0 && val < p) seen[k] = p; };
-    const stuck = new Map(), crossed = new Map(), prevYaw = new Map(); let maxJump = 0, firstHit = null;
+    const stuck = new Map(), crossed = new Map(), prevYaw = new Map(); let maxJump = 0, firstHit = null, kerbHit = null;
+    /* поребрик: поток едет по своей линии и о бордюр не тормозит — наезд был бы виден только глазом */
+    const KB = level.obs.filter(o => o.kind === 'kerb').map(o => ({ o, r: Math.hypot(o.w, o.l) / 2 + 2.6 }));
+    if (fault === 'kerbflow' && flow.length) { const a = flow[0], o = { kind: 'kerb', u: a.u, v: a.v, w: 0.5, l: 3, yaw: a.yaw + Math.PI / 2, hw: 0.25, hl: 1.5 }; KB.push({ o, r: 4.1 }); }
     const dt = 1 / 30, n = Math.round(secs / dt);
     let minGap = 99, vsum = 0, vn = 0, windows = 0;
     for (let k = 0; k < n; k++) {
@@ -165,6 +169,13 @@ for (const li of levels) {
             if (!firstHit) firstHit = { t: +(k * dt).toFixed(1), u: +a.u.toFixed(1), v: +a.v.toFixed(1), i, j,
               va: +a.act.v.toFixed(1), vb: +b.act.v.toFixed(1), ya: Math.round(deg(a.yaw)), yb: Math.round(deg(b.yaw)) }; }
         }
+        for (const q of KB) {
+          if (Math.hypot(q.o.u - a.u, q.o.v - a.v) > q.r) continue;
+          if (!satMTV({ u: a.u, v: a.v, hw: HALF_W, hl: HALF_L, yaw: a.yaw }, q.o)) continue;
+          const m = polyMTV(carHullPts(a.u, a.v, a.yaw), CAR_HULL.length, obsBuf(q.o), obsShape(q.o));
+          if (m && m.depth > 0.02) { note('машина потока на поребрике, м (@city-kerb-flow-clear)', +m.depth.toFixed(2));
+            if (!kerbHit) kerbHit = { t: +(k * dt).toFixed(1), u: +a.u.toFixed(1), v: +a.v.toFixed(1), yaw: Math.round(deg(a.yaw)), kerb: [+q.o.u.toFixed(1), +q.o.v.toFixed(1)] }; }
+        }
         /* застряла без причины */
         const blocked = trafBlock(a, level.actors.indexOf(a)) < TRAF.see || trafLight(a) < TRAF.see;
         const st = (a.act.v < 0.2 && !blocked) ? (stuck.get(i) || 0) + dt * 3 : 0;
@@ -177,9 +188,10 @@ for (const li of levels) {
     }
     return { name: level.def.name, cars: flow.length,
       err: err.concat(Object.keys(seen).map(k => k + ': ' + Math.abs(seen[k])))
-        .concat(firstHit ? ['первое наложение: ' + JSON.stringify(firstHit)] : []),
+        .concat(firstHit ? ['первое наложение: ' + JSON.stringify(firstHit)] : [])
+        .concat(kerbHit ? ['первый наезд на поребрик: ' + JSON.stringify(kerbHit)] : []),
       vavg: +(vsum / vn).toFixed(2), minGap: +minGap.toFixed(1), windows };
-  }, { li, secs: SECS });
+  }, { li, secs: SECS, fault: process.env.FAULT || '' });
 
   const ok = !r.err.length && !pageErr;
   if (!ok) bad++;

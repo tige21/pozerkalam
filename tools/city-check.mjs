@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 /* Гейт города без края (коды city-world-edge-hidden, city-buildings-clear, city-buildings-sight,
    render-buildings-under-street, render-buildings-fade, render-buildings-sort; сценарии —
-   specs/features/city/zdaniya.feature). Главное — край мира не виден: из точек вдоль всех улиц общей карты
+   specs/features/city/zdaniya.feature) и поребрика (city-kerb-continuous, city-kerb-off-carriageway,
+   city-kerb-furniture-clear — specs/features/city/borduyr.feature; поток и линия экзамена проверяются в
+   traffic-check и exam-check). Главное — край мира не виден: из точек вдоль всех улиц общей карты
    и со стартов и целей уровней 27–32 горизонтальный луч в любую сторону упирается в дом не дальше
    BLD_MAXD. Дома при этом не стоят на улицах, перекрёстках, кольце, эстакаде, в карманах, на знаках и
    светофорах и не заходят в треугольники видимости; проход домов рисуется раньше уличного, дальний дом
    растворён в дымке, а внутри прохода нет перевёрнутых пар граней.
      PW_DIR=/tmp/pw node tools/city-check.mjs
-     FAULT=edge|bldclear|bldsight|bldpass|fade — сломать нарочно и увидеть красный: без внешнего пояса,
-       тупиков и концов перспективы; дом на улице; дом в треугольнике видимости; дома в общем проходе;
-       общий туман у дальних домов
+     FAULT=edge|bldclear|bldsight|bldpass|fade|kerbgap|kerbin|kerbpole — сломать нарочно и увидеть красный:
+       без внешнего пояса, тупиков и концов перспективы; дом на улице; дом в треугольнике видимости; дома в
+       общем проходе; общий туман у дальних домов; каждая пятая коробка поребрика выкинута; поребрик шире на
+       0,7 м внутрь; стойка поставлена на поребрик
    Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена. */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -215,6 +218,91 @@ const sort = await page.evaluate((CITY) => {
 }, CITY);
 check('внутри прохода домов нет перевёрнутых пар граней — сзади и из салона (@render-buildings-sort)',
   sort.length && sort.every((r) => r.errors === 0), JSON.stringify(sort.filter((r) => r.errors !== 0).slice(0, 6)) + ` из ${sort.length} кадров`);
+
+/* ---- поребрик: уровни, где его ставит kerbsFromAsphalt (23–32); общий город — один раз ---- */
+/* KALL — все уровни с поребриком из генератора (столбы у каждого уровня свои: светофоры экзамена есть
+   только на 32); KL — без повторов общего города для проверок самого поребрика */
+const KALL = await page.evaluate(() => LEVELS.map((d, i) => i).filter((i) => !LEVELS[i].custom)
+  .filter((i) => { loadLevel(i); return level.obs.some((o) => o.kind === 'kerb' && o.grp !== undefined); }));
+const KL = KALL.filter((i) => i === CITY[0] || !CITY.includes(i));
+const ASPH = `(() => level.dec.filter((d) => !d.line && d.fill === ASPHALT && d.pts && d.pts.length >= 3).map((d) => {
+  let A = 0; for (let i = 0; i < d.pts.length; i++) { const p = d.pts[i], q = d.pts[(i + 1) % d.pts.length]; A += p.u * q.v - q.u * p.v; }
+  return { P: d.pts, road: !!d.road, s: A > 0 ? 1 : -1 }; }))()`;
+
+/* край асфальта каждые 0,25 м: снаружи на KERB_OUT стоит поребрик. Пропускаются концы рёбер и места, где
+   граница переходит в устье (соседи в ±0,3 м тоже должны быть краем) — там стык решает геометрия, а не выборка */
+const cont = await page.evaluate(([KL, fault, ASPH]) => {
+  const out = { levels: 0, samples: 0, miss: 0, worst: [] };
+  for (const li of KL) {
+    loadLevel(li); out.levels++;
+    const open = !(level.city && level.city.graph), A = eval(ASPH);
+    let K = level.obs.filter((o) => o.kind === 'kerb');
+    if (fault === 'kerbgap') K = K.filter((o, i) => i % 5 !== 2);
+    const KR = K.map((o) => rectPts(o.u, o.v, o.w + 0.04, o.l + 0.04, o.yaw));
+    const inA = (u, v, self) => A.some((g) => g !== self && polyHas(u, v, g.P));
+    for (const g of A) for (let i = 0; i < g.P.length; i++) {
+      if (open && g.road && (i === 0 || i === 2)) continue;
+      const a = g.P[i], b = g.P[(i + 1) % g.P.length], L = Math.hypot(b.u - a.u, b.v - a.v);
+      if (L < 0.7) continue;
+      const tu = (b.u - a.u) / L, tv = (b.v - a.v) / L, nu = g.s > 0 ? tv : -tv, nv = g.s > 0 ? -tu : tu;
+      const edge = (s) => !inA(a.u + tu * s + nu * 0.1, a.v + tv * s + nv * 0.1, g);
+      for (let s = 0.3; s <= L - 0.3; s += 0.25) {
+        if (!edge(s) || !edge(s - 0.3) || !edge(s + 0.3)) continue;
+        out.samples++;
+        const ku = a.u + tu * s + nu * KERB_OUT, kv = a.v + tv * s + nv * KERB_OUT;
+        if (!KR.some((p) => polyHas(ku, kv, p))) { out.miss++; if (out.worst.length < 6) out.worst.push({ lvl: li + 1, u: +ku.toFixed(1), v: +kv.toFixed(1) }); }
+      }
+    }
+  }
+  return out;
+}, [KL, FAULT, ASPH]);
+check('каждый край асфальта города и уровней 23–26 закрыт поребриком, кроме устьев и открытых концов дорог 23–26 (@city-kerb-continuous)',
+  cont.levels >= 5 && cont.samples > 3000 && cont.miss === 0, JSON.stringify(cont));
+
+/* след поребрика (сжатый на 2 см) не лежит на асфальте; островок кольца — бордюр на газоне поверх диска, не в счёт */
+const offc = await page.evaluate(([KL, fault, ASPH]) => {
+  const out = { kerbs: 0, bad: [] };
+  for (const li of KL) {
+    loadLevel(li);
+    const A = eval(ASPH), R = (level.city && level.city.rounds) || [];
+    for (const o of level.obs) {
+      if (o.kind !== 'kerb' || R.some((r) => Math.hypot(o.u - r.u, o.v - r.v) < r.rIn + 1)) continue;
+      out.kerbs++;
+      const w = (fault === 'kerbin' ? 1.2 : o.w) - 0.04, P = rectPts(o.u, o.v, w, o.l - 0.04, o.yaw);
+      let hit = null;
+      for (let i = 0; i < 4 && !hit; i++) { const a = P[i], b = P[(i + 1) % 4], L = Math.hypot(b.u - a.u, b.v - a.v), n = Math.max(1, Math.ceil(L / 0.1));
+        for (let k = 0; k <= n && !hit; k++) { const u = a.u + (b.u - a.u) * k / n, v = a.v + (b.v - a.v) * k / n; if (A.some((g) => polyHas(u, v, g.P))) hit = { u: +u.toFixed(2), v: +v.toFixed(2) }; } }
+      if (hit && out.bad.length < 6) out.bad.push({ lvl: li + 1, kerb: [+o.u.toFixed(1), +o.v.toFixed(1)], at: hit });
+      else if (hit) out.bad.push(0);
+    }
+  }
+  return { kerbs: out.kerbs, n: out.bad.length, bad: out.bad.slice(0, 6) };
+}, [KL, FAULT, ASPH]);
+check('поребрик не заходит на проезжую часть: след каждой коробки (минус 2 см) вне асфальта (@city-kerb-off-carriageway)',
+  offc.kerbs > 100 && offc.n === 0, JSON.stringify(offc));
+
+/* стойки светофоров, знаков и указателей — в 0,4 м за наружной гранью поребрика (lightKerbClear), не на нём */
+const pole = await page.evaluate(([KL, fault]) => {
+  const out = { poles: 0, min: 1e9, bad: [] };
+  for (const li of KL) {
+    loadLevel(li);
+    const K = level.obs.filter((o) => o.kind === 'kerb');
+    const P = level.obs.filter((o) => o.kind === 'light' || o.kind === 'sign' || o.kind === 'guide');
+    if (fault === 'kerbpole' && P.length && K.length) { P[0] = { kind: P[0].kind, u: K[0].u, v: K[0].v }; }
+    for (const o of P) {
+      out.poles++;
+      let best = 1e9;
+      for (const k of K) { const f = fuv(k.yaw), r = ruv(k.yaw), du = o.u - k.u, dv = o.v - k.v;
+        const lat = Math.abs(du * r.u + dv * r.v) - k.w / 2, lon = Math.abs(du * f.u + dv * f.v) - k.l / 2;
+        best = Math.min(best, Math.hypot(Math.max(0, lat), Math.max(0, lon))); }
+      out.min = Math.min(out.min, best);
+      if (best < 0.39) out.bad.push({ lvl: li + 1, kind: o.kind, u: +o.u.toFixed(2), v: +o.v.toFixed(2), d: +best.toFixed(2) });
+    }
+  }
+  return { poles: out.poles, min: +out.min.toFixed(2), n: out.bad.length, bad: out.bad.slice(0, 6) };
+}, [KALL, FAULT]);
+check('стойки светофоров, знаков и указателей стоят не ближе 0,4 м за поребриком (@city-kerb-furniture-clear)',
+  pole.poles > 20 && pole.n === 0, JSON.stringify(pole));
 
 check('страница без исключений', !errors.length, errors.slice(0, 3).join(' | '));
 await browser.close();
