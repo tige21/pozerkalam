@@ -2933,6 +2933,17 @@ function nodeDec(dec, nu, nv, arms){
     for(const sx of [-1,1])
       pts.push({u:nu+f.u*R+rt.u*sx*a.hw, v:nv+f.v*R+rt.v*sx*a.hw});
   }
+  /* излом из двух улиц: оболочка устьев срезала наружный угол диагональю в 1,1 м от центра узла, и
+     поребрик по ней сужал поворот на пару метров. Наружный угол — пересечение наружных кромок */
+  if(arms.length===2){
+    const [a,b]=arms, fa=fuv(a.yaw), fb=fuv(b.yaw), cr=fa.u*fb.v-fa.v*fb.u;
+    if(Math.abs(cr)>0.3){
+      const sa=cr>0?1:-1, ra=ruv(a.yaw), rb=ruv(b.yaw);
+      const pa={u:nu+ra.u*sa*a.hw, v:nv+ra.v*sa*a.hw}, pb={u:nu-rb.u*sa*b.hw, v:nv-rb.v*sa*b.hw};
+      const t=((pb.u-pa.u)*fb.v-(pb.v-pa.v)*fb.u)/cr;
+      pts.push({u:pa.u+fa.u*t, v:pa.v+fa.v*t});
+    }
+  }
   dec.push({pts:hull2(pts), fill:ASPHALT, far:true});
   return R;
 }
@@ -3030,9 +3041,11 @@ function kerbsFromAsphalt(dec, opts){
          {u:R.e[1].u+R.nu*KERB_OUT, v:R.e[1].v+R.nv*KERB_OUT}];
   }
   /* 3. стыки: край асфальта — замкнутая линия, у каждого конца прогона есть сосед. Осевые
-     продлеваются или подрезаются до пересечения; почти прямой угол — встык (один бордюр владеет
-     углом, второй кончается на его грани, торец не рисуется), иначе внахлёст клин в сантиметры.
-     Внахлёст на прямом угле — это квадрат 0,25 × 0,25 внутри обоих: художник рисует его вперемешку */
+     продлеваются или подрезаются до пересечения; прямой угол (80…100°) — встык: один бордюр владеет
+     углом, второй кончается на его грани, торец не рисуется. Внахлёст на прямом угле — квадрат
+     0,25 × 0,25 внутри обоих, художник рисует его вперемешку. Встык на косом угле не годится: у
+     улицы, входящей в кольцо под 63°, продлённый на полширины «хозяин» залезал в асфальт кольца на
+     3 см (@city-kerb-off-carriageway); на косых углах — внахлёст до пересечения осевых, клин в сантиметры */
   const parent=runs.map((_,i)=>i);
   const root=(i)=>{ while(parent[i]!==i) i=parent[i]=parent[parent[i]]; return i; };
   for(let i=0;i<runs.length;i++) for(let ei=0;ei<2;ei++){
@@ -3050,7 +3063,7 @@ function kerbsFromAsphalt(dec, opts){
       if(Math.abs(cr)<1e-4) break;
       const t=((c2.u-c1.u)*F.dv-(c2.v-c1.v)*F.du)/cr;      /* c1 + E.d·t — на осевой второго */
       const qu=c1.u+E.du*t, qv=c1.v+E.dv*t;
-      if(Math.abs(E.du*F.du+E.dv*F.dv)<0.5){
+      if(Math.abs(E.du*F.du+E.dv*F.dv)<0.17){
         const h=KERB_W/2;
         c1.u=qu-E.du*h; c1.v=qv-E.dv*h; E.cut=true;
         c2.u=qu+F.du*h; c2.v=qv+F.dv*h;
@@ -3180,11 +3193,16 @@ function cityWorld(spec){
   const walks=[], WALK_W=BLD_SETBACK-KERB_OUT-KERB_W/2;
   const ends={};
   for(const r of spec.roads) for(const e of [r.a, r.b]) if(Array.isArray(e)){ const k=e.join(); ends[k]=(ends[k]||0)+1; }
+  /* на изломе из двух улиц полосы тротуара, идущие от центра узла, не доходили до наружного угла —
+     за прямым углом поребрика оставалась земля. Там полоса продлевается за центр до линии фасада */
+  const bendExt=(e)=>{ if(Array.isArray(e) || arms[e].length!==2) return 0;
+    return Math.max(arms[e][0].hw, arms[e][1].hw)+BLD_SETBACK; };
   for(const r of spec.roads){
-    const A=pt(r.a), f=fuv(r._yaw), rt=ruv(r._yaw), n=Math.max(1, Math.ceil(r._len/42)), sl=r._len/n;
+    const A=pt(r.a), f=fuv(r._yaw), rt=ruv(r._yaw), e0=bendExt(r.a), e1=bendExt(r.b), L=r._len+e0+e1;
+    const n=Math.max(1, Math.ceil(L/42)), sl=L/n;
     const off=r._hw+KERB_OUT+KERB_W/2+WALK_W/2;
     for(const sx of [-1,1]) for(let i=0;i<n;i++){
-      const tc=sl*(i+0.5);
+      const tc=sl*(i+0.5)-e0;
       walks.push({pts:rectPts(A.u+f.u*tc+rt.u*sx*off, A.v+f.v*tc+rt.v*sx*off, WALK_W, sl+0.06, r._yaw), fill:SIDEWALK, far:true});
     }
     /* тупик: поребрик поперёк конца улицы, за ним тротуар во всю ширину до линии фасада — без
@@ -3655,9 +3673,11 @@ function lightStops(o){ const p=lightPhase(o); return p==='R'||p==='Y'; }
    перекрёстках (ГОСТ Р 52289), сигнал повторяет дублёр на противоположной стороне узла: от
    стоп-линии он в ~27 м, 6° вправо и 2–3° вверх — в лобовом стекле. Дублёр — только картинка:
    в city.lights его нет, детекторы и поток живут по основному */
-/* стойка светофора — за бордюром с запасом 0,4 м. Проекция на рёбра графа строящегося города:
-   citySnap в build() смотрел бы на граф ПРОШЛОГО уровня. Экзаменационный светофор на Садовой
-   (полуширина 3,3) стоял в 3,4 м от оси — стойка 0,28 заходила на проезжую часть на 4 см */
+/* стойка светофора — в 0,4 м за НАРУЖНОЙ гранью поребрика. Проекция на рёбра графа строящегося
+   города: citySnap в build() смотрел бы на граф ПРОШЛОГО уровня. Экзаменационный светофор на
+   Садовой (полуширина 3,3) стоял в 3,4 м от оси — стойка 0,28 заходила на проезжую часть на 4 см;
+   правка на hw + 0,4 поставила его прямо на поребрик (0,05…0,55 от кромки), это нашёл гейт
+   @city-kerb-furniture-clear */
 function lightKerbClear(o, g){
   if(!g) return;
   let best=null;
@@ -3665,7 +3685,7 @@ function lightKerbClear(o, g){
     if(L2<1e-6) continue;
     const t=clamp(((o.u-A.u)*du+(o.v-A.v)*dv)/L2, 0, 1), pu=A.u+du*t, pv=A.v+dv*t, d=Math.hypot(o.u-pu, o.v-pv);
     if(!best || d<best.d) best={d, pu, pv, hw:e.hw}; }
-  const need = best ? best.hw+0.4 : 0;
+  const need = best ? best.hw+KERB_OUT+KERB_W/2+0.4 : 0;
   if(best && best.d>1e-3 && best.d<need){ const k=need/best.d;
     o.u=best.pu+(o.u-best.pu)*k; o.v=best.pv+(o.v-best.pv)*k; }
 }
@@ -6251,7 +6271,8 @@ const LEVELS = [
   transfer:'Перекрёстки редко бывают квадратными. Читай приоритет по знакам и форме, а не по привычке.',
   build(){
     const b=cityBase();
-    b.obs.push(sign('yield', -74.4, -11.0, rad(180)));
+    /* u −73,6 — hw + 1,1, как светофоры: на −74,4 стойка стояла на поребрике Западной */
+    b.obs.push(sign('yield', -73.6, -11.0, rad(180)));
     b.obs.push(sign('main',  -70.0,   5.6, rad(-90)));
     b.city.yieldZones.push({u:-78, v:-11, yaw:0, w:6.6, l:7, dist:14});
     b.city.turnZones.push({u:-78, v:0, yaw:0, w:15, l:13, blink:'L', dir:0});
@@ -6425,7 +6446,7 @@ const LEVELS = [
     b.obs.push(sign('main', -4.4,-77.0, rad(180)));
     b.obs.push(sign('circle', 62,-8.6, rad(-90)));
     b.obs.push(sign('yield',  59,-8.6, rad(-90)));
-    b.obs.push(sign('yield', -74.4,-11.0, rad(180)));
+    b.obs.push(sign('yield', -73.6,-11.0, rad(180)));
     /* эстакада на Восточной между кольцом и Садовой: подъём с обеих сторон, настил посередине —
        маршрут может идти по ней и на север, и на юг */
     const ramps=[ rampZone(78,-52.8,0,6.6,5.5,0.17),
@@ -7302,11 +7323,11 @@ const PENALTIES={
   'stop-sign':       {pts:3, fatal:false, hard:true, txt:'Проезд знака STOP без остановки'},
   'tram-turn':       {pts:3, fatal:false, txt:'Разворот не с трамвайных путей'},
   'lane-blinker':    {pts:1, fatal:false, txt:'Перестроение без поворотника'},
-  /* кода нет в экзаменационном начислении: там любой наезд идёт как 'collision'.
-     Он существует только для строгих городских уровней — см. hitPenalty. НЕ hard:
-     городская улица 6,6 м оставляет метр до бордюра с каждой стороны, и новичок
-     чиркнёт по нему обязательно. Отменять за это поездку — прогонять ровно того,
-     ради кого всё сделано; нарушение считается и показывается, но не валит */
+  /* НЕ hard и не авария: городская улица 6,6 м оставляет метр до бордюра с каждой стороны, и
+     новичок чиркнёт по нему обязательно. Отменять за это поездку — прогонять ровно того, ради кого
+     всё сделано; нарушение считается и показывается, но не валит. На экзамене — 3 балла (решение
+     владельца 03.10.2026): с поребриком на каждом углу перекрёстка авария за чирок валила бы маршрут
+     на первом же правом повороте */
   'kerb':            {pts:3, fatal:false, txt:'Наезд на бордюр'}
 };
 let exam=null;   /* {score, log:[], done, failed, rollFired, handFired} — живёт только на экзамен-уровне */
@@ -7478,11 +7499,11 @@ function failAttempt(code, why){
   tone(220,0.4,0.1,'sawtooth');
   showOv(levelFailHTML());
 }
-/* наезд на препятствие: на экзамене — баллы (там любое касание = 'collision'),
-   на строгом городском уровне бордюр отделён от остального — цель стоит вплотную
-   к тротуару, и один чирк колесом не должен отменять поездку; второй отменяет */
+/* наезд на препятствие: бордюр отделён от остального и на экзамене (3 балла), и на строгом
+   городском уровне — цель стоит вплотную к тротуару, и чирок колесом не отменяет поездку;
+   машина, стена, столб — авария */
 function hitPenalty(o){
-  if(examActive()){ examPenalty('collision'); return; }
+  if(examActive()){ examPenalty(o.kind==='kerb' ? 'kerb' : 'collision'); return; }
   if(attemptOn()) attemptVio(o.kind==='kerb' ? 'kerb' : 'collision', '');
 }
 /* экран провала обязан учить, а не только сообщать: к причине — правило */
@@ -7492,7 +7513,7 @@ const FAIL_RULE={
   'yield':           'Уступить — значит не заставить другого тормозить или менять полосу. Не понял, кто первый, — стой.',
   'oncoming':        'Встречная полоса чужая всегда, кроме разрешённого обгона. Выход из любого поворота — на свою полосу.',
   'stopline':        'У стоп-линии нужна ПОЛНАЯ остановка: колёса встали, потом смотришь и едешь.',
-  'kerb':            'Бордюр — граница проезжей части: на экзамене наезд на него стоит баллов.',
+  'kerb':            'Бордюр — граница проезжей части: на экзамене наезд на него стоит 3 балла.',
   'redlight':        'Жёлтый — тоже запрещающий: на него тормозят, а не «успевают проскочить».',
   'solid-line':      'Сплошную не пересекают ни на сантиметр. Перестраиваться надо ДО того, как разметка станет сплошной.',
   'stop-sign':       'Под знаком STOP останавливаются всегда — даже когда дорога пустая и видно на километр.'
