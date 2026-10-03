@@ -5,13 +5,18 @@
 приведение среднего цвета к цели из брифа docs/prompts/car-cabin-assets.md.
 Детали (dec-*): снятие зелёного фона с восстановлением цвета края, обрезка по детали;
 у колеса окна между спицами заливаются тёмным (за ними тормозной диск, а не дорога).
+Фасады (fac-*): обрезка по швам панелей, рядам кладки и ритму окон, наплыв на шве, размер плитки
+в метрах и средний цвет — в build/assets/fac.json для embed.mjs.
 
     python3 tools/assets/clean.py            → build/assets/clean/*.png + отчёт в stdout
     python3 tools/assets/clean.py --only mat-trim-satin
+    python3 tools/assets/clean.py --only fac → вся серия по префиксу
 
 Только Pillow и numpy: scipy на машине нет.
 """
 import argparse
+import hashlib
+import json
 import math
 import pathlib
 import sys
@@ -215,14 +220,143 @@ def clean_sky(name, path):
     log(f'{name}: {w}×{h} → {w - k}×{h}, разница краёв {before:.1f} → {after:.1f} (из 255), {time.time() - t0:.1f} с')
 
 
+# make_seamless фасаду не годится: он сдвигает плитку на полпериода и смешивает по всей площади — у края
+# оказалось бы окно из середины. Фасад сводится обрезкой по швам панелей, рядам кладки и ритму окон
+# (замеры — assets/src/SOURCES.md, «Серия 3»), остаток шва — наплывом, как у неба. Обрезка мерена на
+# конкретной картинке: ChatGPT отдаёт переделку того же размера, поэтому сверяется отпечаток WebP-исходника
+# (sha256, 12 знаков), а не размер. Шов по пикселям не проверяется: он стоит на растворе и пазе панели,
+# где шаг яркости и в исходнике выше любого среднего; ритм окон и швов меряет гейт по готовым плиткам
+FAC_W = 1024          # ширина выхода; в страницу embed.mjs кладёт 512
+FAC_BLEND = 24        # наплыв не шире: дальше поля за линией обрезки у части картинок нет
+# тот же кирпич на торце должен быть того же размера, что на фасаде: ряд fac-brick-red — 28,0 px
+# (30 рядов на этаж 3,2 м), у торца — 34,35 px, поэтому торец меряется кирпичом, а не этажом
+BRICK_PXM_RED = 840 / 3.2
+FAC = {
+    'fac-panel-a':      dict(sha='fab3907b55f7', src=(1835, 857), crop=(69, 75, 1756, 785), m=(6.0, 2.8)),
+    'fac-panel-b':      dict(sha='59c8142a42f3', src=(1834, 858), crop=(76, 109, 1757, 852), m=(6.0, 2.8)),
+    # вертикальный шов один, посередине: без его половинок на краях две панели при повторе слились бы в одну
+    'fac-panel-end':    dict(sha='afe2fe6e0f1b', src=(1836, 857), crop=(0, 53, 1836, 817), m=(6.0, 2.8), joint=(910, 916, 921)),
+    'fac-brick-red':    dict(sha='73ce63e4b672', src=(1717, 916), crop=(9, 21, 1702, 861), m=(6.0, 3.2)),
+    'fac-brick-yellow': dict(sha='ca13b7f98aec', src=(1717, 916), crop=(8, 80, 1713, 894), m=(6.0, 3.2)),
+    'fac-brick-end':    dict(sha='c82a7c4d0ff1', src=(1717, 916), crop=(4, 24, 1653, 788), pxm=BRICK_PXM_RED * 34.35 / 28.0, like='fac-brick-red'),
+    'fac-plaster':      dict(sha='28d1e47e65d3', src=(1717, 916), crop=(39, 0, 1677, 916), m=(6.0, 3.2)),
+    'fac-shop-a':       dict(sha='2239e05a8185', src=(1717, 916), crop=(0, 0, 1717, 916), m=(6.0, 3.2), wrap_y=False),
+    'fac-shop-b':       dict(sha='e34bbe8c02b4', src=(1717, 916), crop=(0, 0, 1717, 916), m=(6.0, 3.2), wrap_y=False),
+}
+FAC_JSON = ROOT / 'build' / 'assets' / 'fac.json'
+
+
+def fac_crop(a, lo, hi, axis):
+    """Обрезка [lo, hi) по оси с наплывом: поле исходника за hi ложится на начало плитки с весом, растущим
+    к её краю, и последний столбец результата становится соседом первого, как в исходнике."""
+    t = np.take(a, np.arange(lo, hi), axis=axis).copy()
+    k = min(FAC_BLEND, a.shape[axis] - hi)
+    if k <= 0:
+        return t, 0
+    shape = [1, 1, 1]
+    shape[axis] = k
+    w = (np.arange(k) / k).reshape(shape)
+    head = np.take(a, np.arange(lo, lo + k), axis=axis)
+    tail = np.take(a, np.arange(hi, hi + k), axis=axis)
+    idx = [slice(None)] * 3
+    idx[axis] = slice(0, k)
+    t[tuple(idx)] = head * w + tail * (1 - w)
+    return t, k
+
+
+def fac_seam(a, axis):
+    """Шаг через шов к 95-му перцентилю шагов между соседними строками (столбцами) — для лога."""
+    L = a.mean(2)
+    steps = np.abs(np.diff(L, axis=axis)).mean(1 - axis)
+    edge = np.abs(L[:, 0] - L[:, -1]).mean() if axis == 1 else np.abs(L[0] - L[-1]).mean()
+    return edge / max(np.percentile(steps, 95), 1e-6)
+
+
+def brick_mean(a):
+    """Средний цвет тела кирпича, без швов, окон и перемычек: у них насыщенность R−B низкая."""
+    px = a.reshape(-1, 3)
+    return px[(px[:, 0] - px[:, 2]) > 50].mean(0)
+
+
+_fac_cache = {}
+
+
+def fac_tile(name):
+    if name in _fac_cache:
+        return _fac_cache[name]
+    t0 = time.time()
+    spec = FAC[name]
+    path = source(name)
+    a = np.asarray(Image.open(path).convert('RGB')).astype(float)
+    h, w, _ = a.shape
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()[:12] if path.suffix == '.webp' else None
+    if sha is None:
+        log(f'WARN {name}: нет WebP-исходника, отпечаток не сверен — читается {path.name}')
+    elif sha != spec['sha']:
+        raise SystemExit(f'[clean] ПРОВАЛ {name}: отпечаток исходника {sha}, а обрезка мерена на {spec["sha"]} — '
+                         'картинку переделали, обрезку надо мерить заново (assets/src/SOURCES.md, «Серия 3»)')
+    if (w, h) != spec['src']:
+        raise SystemExit(f'[clean] ПРОВАЛ {name}: исходник {w}×{h}, а обрезка мерена на {spec["src"][0]}×{spec["src"][1]} — '
+                         'картинку переделали, обрезку надо мерить заново (assets/src/SOURCES.md, «Серия 3»)')
+    x0, y0, x1, y1 = spec['crop']
+    if 'joint' in spec:
+        jl, jc, jr = spec['joint']
+        a = a.copy()
+        a[:, 0:jr - jc] = a[:, jc:jr]
+        a[:, w - (jc - jl):w] = a[:, jl:jc]
+    wrap_y = spec.get('wrap_y', True)
+    raw = a[y0:y1, x0:x1]
+    s0 = (fac_seam(raw, 1), fac_seam(raw, 0))
+    t, kx = fac_crop(a, x0, x1, 1)
+    ky = 0
+    if wrap_y:
+        t, ky = fac_crop(t, y0, y1, 0)
+    else:
+        t = t[y0:y1]
+    note = ''
+    if 'like' in spec:
+        ref, _ = fac_tile(spec['like'])
+        m0, m1 = brick_mean(t), brick_mean(ref)
+        t = t * (m1 / np.maximum(m0, 1.0))
+        note = f', кирпич {rgb(m0)} → {rgb(m1)} как у {spec["like"]}'
+    t = np.clip(t, 0, 255)
+    s1 = (fac_seam(t, 1), fac_seam(t, 0))
+    if 'pxm' in spec:
+        mw, mh = t.shape[1] / spec['pxm'], t.shape[0] / spec['pxm']
+    else:
+        mw, mh = spec['m']
+    out = Image.fromarray(t.astype(np.uint8), 'RGB').resize((FAC_W, round(FAC_W * mh / mw)), Image.LANCZOS)
+    o = np.asarray(out).astype(float)
+    info = {'w': round(mw, 3), 'h': round(mh, 3), 'mean': list(rgb(o.reshape(-1, 3).mean(0))), 'wrapY': wrap_y}
+    log(f'{name}: {w}×{h} → обрезка ({x0},{y0},{x1},{y1}) {x1 - x0}×{y1 - y0} → {out.width}×{out.height} '
+        f'({mw:.2f} × {mh:.2f} м), наплыв {kx}/{ky} px, шов по ширине {s0[0]:.2f}×→{s1[0]:.2f}×'
+        + (f', по высоте {s0[1]:.2f}×→{s1[1]:.2f}×' if wrap_y else ', по высоте не повторяется')
+        + f', цвет {tuple(info["mean"])}{note}, {time.time() - t0:.1f} с')
+    _fac_cache[name] = (t, (out, info))
+    return _fac_cache[name]
+
+
+def clean_facades(names):
+    meta = json.loads(FAC_JSON.read_text()) if FAC_JSON.exists() else {}
+    for n in names:
+        if n not in FAC:
+            log(f'WARN {n}: нет в таблице FAC — пропущен')
+            continue
+        _, (out, info) = fac_tile(n)
+        out.save(OUT / (n + '.png'))
+        meta[n] = info
+    FAC_JSON.write_text(json.dumps(meta, ensure_ascii=False, indent=1, sort_keys=True) + '\n')
+    log(f'фасады: {len([n for n in names if n in FAC])} плиток, описание — {FAC_JSON.relative_to(ROOT)}')
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--only')
+    ap.add_argument('--only', help='имя картинки или серия по префиксу: mat, dec, tram, sky, fac')
     args = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
-    names = sorted({p.stem for p in SRC.iterdir() if p.suffix in ('.png', '.webp') and p.stem.split('-')[0] in ('mat', 'dec', 'tram', 'sky')})
+    names = sorted({p.stem for p in SRC.iterdir() if p.suffix in ('.png', '.webp') and p.stem.split('-')[0] in ('mat', 'dec', 'tram', 'sky', 'fac')})
     if args.only:
-        names = [n for n in names if n == args.only]
+        names = [n for n in names if n == args.only or n.split('-')[0] == args.only]
     missing = [n for n in TARGET if n not in names and not args.only]
     if missing:
         log('WARN нет материалов: ' + ', '.join(missing))
@@ -236,8 +370,13 @@ def main():
             clean_material(n, p)
         elif n.startswith('sky-'):
             clean_sky(n, p)
+        elif n.startswith('fac-'):
+            continue
         else:
             clean_decal(n, p)
+    facs = [n for n in names if n.startswith('fac-')]
+    if facs:
+        clean_facades(facs)
     log(f'готово: {len(names)} файлов в {OUT.relative_to(ROOT)}, {time.time() - t0:.1f} с')
     return 0
 

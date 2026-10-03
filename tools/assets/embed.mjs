@@ -22,6 +22,9 @@ const BUDGET = (+process.env.EMBED_BUDGET_MB || 2.2) * 1024 * 1024;
 const BEGIN = '<!-- assets:begin — генерат tools/assets/embed.mjs, руками не править -->';
 const END = '<!-- assets:end -->';
 
+const FAC_KEYS = ['panel-a', 'panel-b', 'panel-end', 'brick-red', 'brick-yellow', 'brick-end', 'plaster', 'shop-a', 'shop-b'].map((k) => 'fac-' + k);
+const FAC_JSON = path.join(SRC, 'fac.json');
+const FAC_MAX = 30 * 1024;
 /* q 80 для граней салона: на 2048 px разница с q 90 не видна, а вес меньше на треть */
 const ASSETS = [
   ...['pz', 'nz', 'px', 'nx', 'py', 'ny'].map((f) => ({ key: 'cabin-' + f, file: `cabin-${f}.png`, q: 80, required: true })),
@@ -39,6 +42,10 @@ const ASSETS = [
   { key: 'tram-side-mid', file: 'clean/tram-side-mid.png', q: 82, required: true, width: 1024 },
   /* небо — вся ширина: панорама 360° на экране растягивается втрое и без того */
   { key: 'sky-pano', file: 'clean/sky-pano.png', q: 80, required: true },
+  /* фасады домов: 512 px на плитку 6 м — 85 px/м, ближе 45 м этого хватает, все девять ≈110 КБ.
+     Размер в метрах и средний цвет — из build/assets/fac.json: игра читает их из атрибутов до
+     распаковки картинки, и дальний дом сразу того цвета, что ближний */
+  ...FAC_KEYS.map((key) => ({ key, file: `clean/${key}.png`, q: 80, required: true, width: 512, fac: true })),
 ];
 /* модель кузова (tools/blender/models.py) — JSON в <template>: шаблон не исполняется и не
    попадает ни в скрипты страницы, ни в зеркало codegraph */
@@ -72,6 +79,7 @@ function check() {
     if (!m) { fails.push(`нет картинки ${a.key}`); continue; }
     const head = Buffer.from(m[1].slice(0, 24), 'base64');
     if (head.toString('ascii', 0, 4) !== 'RIFF' || head.toString('ascii', 8, 12) !== 'WEBP') fails.push(`${a.key}: не WebP`);
+    if (a.fac && !new RegExp(`data-asset="${a.key}" data-m="[0-9.]+x[0-9.]+" data-mean="\\d+,\\d+,\\d+"`).test(block)) fails.push(`${a.key}: нет data-m или data-mean`);
   }
   if (!/data-fingerprint="[0-9a-f]{64}"/.test(block)) fails.push('у блока нет data-fingerprint');
   const tpl = block.match(/<template id="car-mesh">([^<]*)<\/template>/);
@@ -94,6 +102,7 @@ function build() {
   const cube = { eye: stamp.eye, faces: axes(stamp.faces), cmir: { eye: stamp.cmir.eye, faces: axes(stamp.cmir.faces) } };
   const lines = [];
   let total = 0;
+  const fac = fs.existsSync(FAC_JSON) ? JSON.parse(fs.readFileSync(FAC_JSON, 'utf8')) : {};
   for (const a of ASSETS) {
     const file = path.join(SRC, a.file);
     if (!fs.existsSync(file)) {
@@ -103,7 +112,14 @@ function build() {
     }
     const buf = webp(file, a.q, a.width);
     total += buf.length;
-    lines.push(`<img data-asset="${a.key}" alt="" src="data:image/webp;base64,${buf.toString('base64')}">`);
+    let attrs = '';
+    if (a.fac) {
+      const m = fac[a.key];
+      if (!m) throw new Error(`нет ${a.key} в build/assets/fac.json — сначала clean.py --only fac`);
+      if (buf.length > FAC_MAX) throw new Error(`${a.key}: ${(buf.length / 1024).toFixed(1)} КБ больше предела ${FAC_MAX / 1024} КБ на плитку`);
+      attrs = ` data-m="${m.w}x${m.h}" data-mean="${m.mean.join(',')}"`;
+    }
+    lines.push(`<img data-asset="${a.key}"${attrs} alt="" src="data:image/webp;base64,${buf.toString('base64')}">`);
     log(`${a.key}: ${(fs.statSync(file).size / 1024).toFixed(0)} КБ PNG → ${(buf.length / 1024).toFixed(0)} КБ WebP q${a.q}`);
   }
   if (!fs.existsSync(CAR_MESH)) throw new Error('нет build/assets/car-mesh.json — сначала Blender -b -P tools/blender/models.py');
