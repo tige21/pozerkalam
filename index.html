@@ -3209,8 +3209,10 @@ function cityWorld(spec){
        него бордюр стоял бы на голой земле между двумя полосами тротуара */
     for(const [e,s] of [[r.a,-1],[r.b,1]]){
       if(!Array.isArray(e) || ends[e.join()]!==1) continue;
-      const d=KERB_OUT+KERB_W/2+WALK_W/2;
-      walks.push({pts:rectPts(e[0]+f.u*s*d, e[1]+f.v*s*d, (r._hw+BLD_SETBACK)*2, WALK_W, r._yaw), fill:SIDEWALK, far:true});
+      /* от самого конца асфальта (−3 см внахлёст), а не от наружной грани бордюра: полосы тротуара вдоль
+         улицы кончаются на конце асфальта, и между ними и заглушкой оставалась полоса земли в 0,55 м */
+      const d=(BLD_SETBACK-0.03)/2;
+      walks.push({pts:rectPts(e[0]+f.u*s*d, e[1]+f.v*s*d, (r._hw+BLD_SETBACK)*2, BLD_SETBACK+0.03, r._yaw), fill:SIDEWALK, far:true});
     }
   }
   /* вокруг кольца тротуар диском: асфальт кольца ложится сверху, между лучами остаётся кольцо
