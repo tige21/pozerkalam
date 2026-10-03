@@ -1670,9 +1670,10 @@ function emitCarLow(u,v,th,col){
   for(const dz of [-C2R, -C2R+CAR.wheelbase]) for(const sg of [-1,1])
     pushBox(u+f.u*dz+r.u*sg*t, Rw, v+f.v*dz+r.v*sg*t, CAR.wheelW/2, Rw, Rw*0.8, th, [28,29,33]);
 }
-function pushWheelCyl(u,v,yaw,side,img){
+/* spin — угол качения (путь / R): диск поворачивается верхом вперёд; шина — цилиндр, ей поворот не нужен */
+function pushWheelCyl(u,v,yaw,side,img,spin){
   const Rw=CAR.wheelR, hw=CAR.wheelW/2;
-  const F=fwd(yaw), Rv=rgt(yaw), cx=-u, cz=v, cy=Rw;
+  const F=fwd(yaw), Rv=rgt(yaw), cx=-u, cz=v, cy=Rw, sp=spin||0, cs=Math.cos(sp), sn=Math.sin(sp);
   const N=12, out=[], inn=[];
   for(let i=0;i<N;i++){
     const a=(i+0.5)/N*TAU, du=Math.cos(a)*Rw, dy=Math.sin(a)*Rw;
@@ -1685,14 +1686,16 @@ function pushWheelCyl(u,v,yaw,side,img){
   /* у модели бок колеса — картинка шины с диском на квадрате 2R: углы квадрата прозрачные (основа
      грани с нулевой альфой), иначе вокруг колеса стоял бы тёмный квадрат */
   if(img){
-    const d=hw+0.004, at=(dz,dy)=>({x:cx+Rv.x*d*side+F.x*dz, y:cy+dy, z:cz+Rv.z*d*side+F.z*dz});
+    const d=hw+0.004, at=(z0,y0)=>{ const dz=z0*cs+y0*sn, dy=y0*cs-z0*sn;
+      return {x:cx+Rv.x*d*side+F.x*dz, y:cy+dy, z:cz+Rv.z*d*side+F.z*dz}; };
     pushFace([at(-Rw*side,Rw), at(Rw*side,Rw), at(Rw*side,-Rw), at(-Rw*side,-Rw)], {x:Rv.x*side, y:0, z:Rv.z*side}, CM_CLEAR, 0.02, {img});
     return;
   }
   pushPoly(out,[20,21,25],ref);
   /* диск: светлый круг с пятью тёмными окнами между спицами и ступицей — колесо перестаёт быть
      чёрным цилиндром с серым пятном */
-  const d=hw+0.006, at=(k,a,dd)=>({x:cx+Rv.x*dd*side+F.x*Math.cos(a)*Rw*k, y:cy+Math.sin(a)*Rw*k, z:cz+Rv.z*dd*side+F.z*Math.cos(a)*Rw*k});
+  const d=hw+0.006, at=(k,a0,dd)=>{ const a=a0-sp;
+    return {x:cx+Rv.x*dd*side+F.x*Math.cos(a)*Rw*k, y:cy+Math.sin(a)*Rw*k, z:cz+Rv.z*dd*side+F.z*Math.cos(a)*Rw*k}; };
   const disc=[], hub=[];
   for(let i=0;i<N;i++){ const a=(i+0.5)/N*TAU; disc.push(at(0.66,a,d)); hub.push(at(0.20,a,d+0.008)); }
   pushPoly(disc,[176,182,190],ref,0,MO.chrome);
@@ -2724,8 +2727,10 @@ function emitCarMesh(u, v, th, col, st, lights, look){
   const ax = body && body.axles, zr = ax ? ax[1] : -C2R, zf = ax ? ax[0] : -C2R+CAR.wheelbase;
   const wimg = model ? carModel.img[carStyleImg('wheel', style)] : null;
   const w1=at(-t,zr), w2=at(t,zr), w3=at(-t,zf), w4=at(t,zf);
-  pushWheelCyl(w1.u,w1.v,th,-1,wimg); pushWheelCyl(w2.u,w2.v,th,1,wimg);
-  pushWheelCyl(w3.u,w3.v,th+a.l,-1,wimg); pushWheelCyl(w4.u,w4.v,th+a.r,1,wimg);
+  /* угол качения: своя — накопленный в frame, поток и статисты — их путь по маршруту, стоящие — 0 */
+  const spin = lit.own ? car.spin : look && look.act ? look.act.s/CAR.wheelR : 0;
+  pushWheelCyl(w1.u,w1.v,th,-1,wimg,spin); pushWheelCyl(w2.u,w2.v,th,1,wimg,spin);
+  pushWheelCyl(w3.u,w3.v,th+a.l,-1,wimg,spin); pushWheelCyl(w4.u,w4.v,th+a.r,1,wimg,spin);
   if(!model) emitCarLamps(P,F,lit);
   const wiper = body && body.wiper, ky = body ? carCabinK(body, lit) : 1;
   emitCarMirrorsEtc(dy ? (lat,y,z)=>P(lat,y+dy,z) : P,F,R,at,th,col,lights,dy, wiper && ky<1 ? [wiper[0], wiper[1]*ky] : wiper);
@@ -6111,7 +6116,8 @@ const LEVELS = [
 ];
 
 /* ---------- состояние ---------- */
-const car = { ru:0, rv:0, th:0, steer:0, vel:0, gear:0, sel:'P', blink:null, blinkTh:0, roll:0, hand:false };
+/* spin — угол качения колёс (путь / R): копится в frame, а не в stepCar — это только рисунок */
+const car = { ru:0, rv:0, th:0, steer:0, vel:0, gear:0, sel:'P', blink:null, blinkTh:0, roll:0, hand:false, spin:0 };
 const SEL_ORDER=['P','R','N','D'];
 const STOP_V=0.12;                 /* «полная остановка» — как на реальной АКПП */
 let selWarn='', selWarnT=0, selBlockT=0;
@@ -11509,7 +11515,7 @@ function frame(ts){
        computeIdealPath и скриптовые прогоны frame не зовут — в headless актёры стоят */
     if(level.actors.length) actorsTick(dt);
     let rem=dt;
-    while(rem>1e-5){ const s=Math.min(1/120,rem); stepCar(s); rem-=s; }
+    while(rem>1e-5){ const s=Math.min(1/120,rem); stepCar(s); car.spin+=car.vel*s/CAR.wheelR; rem-=s; }
     if(!game.moved && Math.abs(car.vel)>0.5) game.moved=true;
     game.t+=dt; game.hitCd-=dt;
     pushTrail(dt);

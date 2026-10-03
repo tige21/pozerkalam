@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /* Гейт мира из картинок (коды render-car-styles, render-car-style-fallback, render-car-models,
-   render-car-lights, render-tram-texture, render-img-perspective, render-tram-fallback, render-sky-pano; сценарии —
+   render-car-lights, render-wheel-spin, render-tram-texture, render-img-perspective, render-tram-fallback, render-sky-pano; сценарии —
    specs/features/render/car.feature и world.feature): у чужих машин разные стили и кузова, а без
    картинки стиля — деталь стиля A; кузова — модели набора RgsDev с фарами, фонарями и номерами, стоп
    и поворотник горят на фонарях; трамвай нарисован
    картинками, а без них — прежними коробками; небо — панорама, низ которой стоит на линии горизонта,
    шов копий не виден, а на нижних уровнях качества — градиент.
      PW_DIR=/tmp/pw node tools/world-check.mjs
-     FAULT=styles|stylefallback|models|lights|tram|persp|tramfallback|sky — сломать нарочно и увидеть красный: один стиль у
+     FAULT=styles|stylefallback|models|lights|spin|tram|persp|tramfallback|sky — сломать нарочно и увидеть красный: один стиль у
        всех машин, картинка стиля на месте при проверке отказа, у хэтчбека нет левой фары, у фонарей
-       своей машины нет меток стороны, нет картинок трамвая, картинка на грани одной аффинной картой,
+       своей машины нет меток стороны, колёса без угла качения, нет картинок трамвая, картинка на грани одной аффинной картой,
        картинки трамвая на месте при проверке отказа, нет картинки неба
    Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена. */
 import { createRequire } from 'node:module';
@@ -56,6 +56,50 @@ await page.waitForFunction(() => typeof carModel !== 'undefined' && carModel.sta
   && worldImg['tram-front'] && worldImg['sky-pano'], null, { timeout: 20000 });
 /* кадр рисует сам инструмент: цикл rAF останавливается, иначе он перерисовал бы канвас между замерами */
 await page.evaluate(() => { window.requestAnimationFrame = () => 0; });
+
+/* колёса крутятся: диск — картинка на квадрате 2R, и пока квадрат стоял, колёса ехали не вращаясь.
+   Угол диска своей машины после настоящих кадров frame и машины потока после сдвига по её пути
+   сверяется с пройденным путём: повернуться он обязан на путь / R, верхом вперёд */
+const spin = await page.evaluate((fault) => {
+  const R = CAR.wheelR, wheelImgs = new Set(Object.keys(carModel.img).filter((k) => k.startsWith('wheel')).map((k) => carModel.img[k]));
+  const angleOf = (pick) => {
+    const oE = emitCarMesh, oP = pushFace; let on = false, quad = null, F = null;
+    window.emitCarMesh = function (u, v, th, col, st, lights, look) { on = pick(lights, look); F = fuv(th);
+      try { return oE.apply(this, arguments); } finally { on = false; } };
+    window.pushFace = function (vv, n, c, b, o) { if (on && !quad && o && o.img && wheelImgs.has(o.img)) quad = vv.map((q) => ({ u: -q.x, v: q.z, y: q.y })); return oP.apply(this, arguments); };
+    try { render(0); } finally { window.emitCarMesh = oE; window.pushFace = oP; }
+    if (!quad) return null;
+    const cu = quad.reduce((a, q) => a + q.u, 0) / 4, cv = quad.reduce((a, q) => a + q.v, 0) / 4, cy = quad.reduce((a, q) => a + q.y, 0) / 4;
+    const dz = (quad[0].u - cu) * F.u + (quad[0].v - cv) * F.v;
+    return Math.atan2(quad[0].y - cy, dz);
+  };
+  const wrap = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+  const out = {}, oW = pushWheelCyl;
+  if (fault === 'spin') window.pushWheelCyl = (u, v, y, sd, img) => oW(u, v, y, sd, img, 0);
+  try {
+  /* своя машина: 0,4 с настоящего frame на 3 м/с прямо */
+  loadLevel(0); doAct('start'); opt.camMode = CAM_CHASE; paused = false;
+  car.sel = 'D'; car.gear = 1; car.steer = 0; car.vel = 3; input.fwd = true;
+  const own = (l) => !!(l && l.own);
+  const a0 = angleOf(own), p0 = bodyPos();
+  let t = 1000; for (let i = 0; i < 25; i++) { frame(t); t += 16; car.vel = 3; }
+  const p1 = bodyPos(), a1 = angleOf(own), d = Math.hypot(p1.u - p0.u, p1.v - p0.v);
+  input.fwd = false; paused = true;
+  out.own = { d: +d.toFixed(3), want: +wrap(-d / R).toFixed(3), got: a0 === null || a1 === null ? null : +wrap(a1 - a0).toFixed(3) };
+  /* машина потока: тот же кузов, сдвиг на 0,5 м по её пути */
+  opt.traffic = 'normal'; loadLevel(29); doAct('start'); paused = true;
+  const fc = level.actors.find((a) => a.kind === 'car' && a.act && !a.act.rail);
+  if (fc) {
+    car.ru = fc.u - fuv(fc.yaw).u * 7 + ruv(fc.yaw).u * 3; car.rv = fc.v - fuv(fc.yaw).v * 7 + ruv(fc.yaw).v * 3; car.th = fc.yaw;
+    const mine = (l, look) => look === fc;
+    const b0 = angleOf(mine); fc.act.s += 0.5; const b1 = angleOf(mine); fc.act.s -= 0.5;
+    out.flow = { d: 0.5, want: +wrap(-0.5 / R).toFixed(3), got: b0 === null || b1 === null ? null : +wrap(b1 - b0).toFixed(3) };
+  } else out.flow = { got: null, why: 'нет машины потока' };
+  } finally { window.pushWheelCyl = oW; }
+  return out;
+}, FAULT);
+check('колёса крутятся: диск своей машины и машины потока поворачивается на пройденный путь / R, верхом вперёд (@render-wheel-spin)',
+  ['own', 'flow'].every((k) => spin[k].got !== null && Math.abs(spin[k].got - spin[k].want) < 0.02 && Math.abs(spin[k].want) > 0.3), JSON.stringify(spin));
 
 /* ---- стили чужих машин ---- */
 const styles = await page.evaluate((fault) => {
