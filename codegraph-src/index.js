@@ -1250,7 +1250,8 @@ function faceMode(f, s0, s1, s2, s3){
           dv = f.tex.fac ? Math.sqrt((f.ga3-f.ga0)**2+(f.gb3-f.gb0)**2) : f.lv*TEX_PX;
     const minif=Math.max(du/((Math.sqrt(ux*ux+uy*uy)||1e-6)*DPR), dv/((Math.sqrt(vx*vx+vy*vy)||1e-6)*DPR));
     f.tw=clamp((area-TEX_AREA_MIN)/(2*TEX_AREA_MIN),0,1)*clamp((TEX_MINIF_MAX-minif)/8,0,1);
-    if(f.tw>0){ f.gk = minif<=1.5 ? 0 : (minif<=3 ? 1 : 2); return mode+'+tex'; }
+    /* у фасада-картинки пять мип-уровней: она видна до FAC_FAR_D, и окна дома в 80 м на уровне 2 рябили */
+    if(f.tw>0){ f.gk = minif<=1.5 ? 0 : minif<=3 ? 1 : (!f.tex.fac || minif<=6) ? 2 : minif<=12 ? 3 : 4; return mode+'+tex'; }
     return mode;
   }
   if(f.grain && q.grain){
@@ -1461,7 +1462,7 @@ function facFace(f, s0, s1, s3, lvl){
     if(facCorners(c0,c1,c2,c3,te0,te1,re0,re1)){ te0=t0; te1=t1; re0=r0; re1=r1; facCorners(c0,c1,c2,c3,t0,t1,r0,r1); }
     /* картинка фасада гаснет к BLD_NEAR_D до нуля по глубине ячейки: дальше дом — ровный средний цвет */
     const dc=(FC[0].d+FC[1].d+FC[2].d+FC[3].d)*0.25;
-    ctx.globalAlpha=f.tw*clamp((BLD_NEAR_D-dc)/FAC_FADE, 0, 1);
+    ctx.globalAlpha=f.tw*clamp((FAC_FAR_D-dc)/FAC_FADE, 0, 1);
     ctx.setTransform(pxScale,0,0,pxScale,0,0);
     ctx.beginPath(); ctx.moveTo(FPX[0],FPY[0]); ctx.lineTo(FPX[1],FPY[1]); ctx.lineTo(FPX[2],FPY[2]); ctx.lineTo(FPX[3],FPY[3]); ctx.closePath();
     /* карта ячейки — симметричная: средние рёбра и центр, а не точная в трёх углах. Скрутка ячейки
@@ -2885,7 +2886,7 @@ facLoad();
 function facPattern(t, lvl){
   if(!t.pats){
     const lv=[t.img], w0=t.img.naturalWidth||t.img.width, h0=t.img.naturalHeight||t.img.height;
-    for(let l=1;l<3;l++){ const p=lv[l-1], q=document.createElement('canvas');
+    for(let l=1;l<5;l++){ const p=lv[l-1], q=document.createElement('canvas');
       q.width=Math.max(1,(p.naturalWidth||p.width)>>1); q.height=Math.max(1,(p.naturalHeight||p.height)>>1);
       const g=q.getContext('2d'); g.imageSmoothingEnabled=true; g.imageSmoothingQuality='high';
       g.drawImage(p,0,0,q.width,q.height); lv.push(q); }
@@ -8928,10 +8929,16 @@ function camSees(u, y, v, rad){
    дальше дом — одна коробка без рёбер и плитки: на телефоне кадр упирается в число граней (нарезка и
    рёбра до 100 м стоили +1,5 мс JS на уровне 29), а туман (fogFar) растворяет дальние дома к границе */
 const BLD_MAXD=250, BLD_NEAR_D=45, BLD_SEG=8;
-/* FAC_FADE — на последних метрах до BLD_NEAR_D картинка фасада гаснет до своего среднего цвета;
+/* FAC_FADE — на последних метрах до FAC_FAR_D картинка фасада гаснет до своего среднего цвета;
    FAC_TINT — доля оттенка торца без своей плитки; торец длиннее FAC_END_MAX — с окнами: у такой
    стены глухой торец выглядел бы складом */
-const FAC_FADE=10, FAC_TINT=0.5, FAC_END_MAX=16, FAC_T0=[0,0,0], FAC_OVL=1.5;
+const FAC_FADE=15, FAC_TINT=0.5, FAC_END_MAX=16, FAC_T0=[0,0,0], FAC_OVL=1.5;
+/* картинка фасада видна до FAC_FAR_D — дальше, чем нарезка и рёбра (BLD_NEAR_D): с картинкой только ближе
+   45 м и гаснущей уже с 35 м почти все дома впереди по улице стояли ровного цвета и фасады «подгружались»
+   у самого дома. Дальше 75 м общая дымка и так съедает 60 % цвета, поэтому граница — 90 м, гаснет на
+   последних FAC_FADE */
+const FAC_FAR_D=70;
+function facRange(d){ return d<FAC_FAR_D; }
 /* FAC_PERSP_PX — допуск скрутки ячейки: при симметричной карте сдвиг картинки — её четверть, ≤ 1 px, как
    IMG_PERSP_PX у трамвая; FAC_DEPTH — сколько
    раз ячейка может поделиться вчетверо, FAC_CELLS_MAX — потолок ячеек на грань, FAC_MIN_PX — ячейку
@@ -8952,14 +8959,14 @@ function emitBuilding(o, d){
   const near=d<BLD_NEAR_D, k=near ? Math.max(1, Math.ceil(o.l/BLD_SEG)) : 1, sl=o.l/k, f=fuv(o.yaw);
   const tex = near ? (o.style==='panel' ? 'panel' : 'brickwin') : null;
   const y0 = o.shop ? 3.2 : 0;                       /* первый этаж с магазином — своя коробка с витринами */
-  const fu = near ? facOf(o, false) : null, fs = near && o.shop ? facOf(o, true) : null;
+  const pic = facRange(d), fu = pic ? facOf(o, false) : null, fs = pic && o.shop ? facOf(o, true) : null;
   edgeOn=near;
   for(let i=0;i<k;i++){
     const t=-o.l/2+sl*(i+0.5), u=o.u+f.u*t, v=o.v+f.v*t;
     const cut = k>1 ? {f:i<k-1, b:i>0, l:false, r:false} : null;
     if(o.shop) pushBox(u, y0/2, v, o.w/2, y0/2, sl/2, o.yaw, o.col, 0, {cut, tex: tex ? 'shop' : null, fac:fs, bld:true, cols:o.colsS});
     pushBox(u, y0+(o.h-y0)/2, v, o.w/2, (o.h-y0)/2, sl/2, o.yaw, o.col, 0,
-            cut||tex ? {cut, tex, fac:fu, bld:true, cols:o.cols} : (o._far || (o._far={bld:true, cols:o.cols})));
+            cut||tex||fu ? {cut, tex, fac:fu, bld:true, cols:o.cols} : (o._far || (o._far={bld:true, cols:o.cols})));
   }
 }
 /* плитки граней дома по осям: r — грани ±R (длина стены l), f — грани ±F (длина w). Лицо дома
