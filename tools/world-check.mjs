@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /* Гейт мира из картинок (коды render-car-styles, render-car-style-fallback, render-car-models,
-   render-car-lights, render-wheel-spin, render-cull-exact, render-tram-texture, render-img-perspective, render-tram-fallback, render-sky-pano; сценарии —
+   render-car-lights, render-wheel-spin, render-cull-exact, render-tram-texture, render-img-perspective, render-tex-perspective, render-tram-fallback, render-sky-pano; сценарии —
    specs/features/render/car.feature и world.feature): у чужих машин разные стили и кузова, а без
    картинки стиля — деталь стиля A; кузова — модели набора RgsDev с фарами, фонарями и номерами, стоп
    и поворотник горят на фонарях; трамвай нарисован
    картинками, а без них — прежними коробками; небо — панорама, низ которой стоит на линии горизонта,
    шов копий не виден, а на нижних уровнях качества — градиент.
      PW_DIR=/tmp/pw node tools/world-check.mjs
-     FAULT=styles|stylefallback|models|lights|spin|cull|tram|persp|tramfallback|sky — сломать нарочно и увидеть красный: один стиль у
+     FAULT=styles|stylefallback|models|lights|spin|cull|tram|persp|tramfallback|sky|texcell — сломать нарочно и увидеть красный: один стиль у
        всех машин, картинка стиля на месте при проверке отказа, у хэтчбека нет левой фары, у фонарей
        своей машины нет меток стороны, колёса без угла качения, отсечение с радиусом 0,2 от нужного, нет картинок трамвая, картинка на грани одной аффинной картой,
-       картинки трамвая на месте при проверке отказа, нет картинки неба
+       картинки трамвая на месте при проверке отказа, нет картинки неба, плитка стен одной аффинной картой на грань
    Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена. */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -298,6 +298,61 @@ const persp = await page.evaluate((fault) => {
 }, FAULT);
 check('картинка на большой грани под углом стоит на грани: метка борта трамвая там же, где её точка, ± 2 px (@render-img-perspective)',
   persp.every((r) => r.err <= 2 && r.dark < 120), JSON.stringify(persp));
+
+/* плитка стен, бордюров и фасадов не плывёт: каждая залитая ячейка кладёт узор аффинно по трём углам, и
+   его сдвиг против честной проекции той же точки грани — в четвёртом углу и в серединах сторон —
+   это и разрыв на стыке с соседней ячейкой, и то, насколько узор «едет» при повороте камеры. Сцены — стены
+   дворов, дома общей карты, бордюры; камера поворачивается по кругу. В счёт идут ячейки в кадре */
+const texp = await page.evaluate((fault) => {
+  opt.traffic = 'off'; opt.gfx = 'max';
+  const origC = texCell;
+  /* поломка — настоящий код без права делить: одна аффинная карта на грань */
+  if (fault === 'texcell') window.texCell = function (t0, t1, r0, r1) { return origC(t0, t1, r0, r1, TEX_SPLIT, TEX_SPLIT); };
+  const M = { x: 0, y: 0, d: 0 };
+  const out = {}; let cur = null;
+  /* сдвиг по МАТРИЦЕ, которую получил канвас (ctx.getTransform, в ней и DPR), против честной проекции
+     точки грани — в углах, серединах сторон и центре ячейки; только ячейки в кадре */
+  texCellHook = (C) => {
+    const f = TXS.f, m = ctx.getTransform();
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for (const P of C) { const s = cam.scale / P.d, x = VP.cx + P.x * s, y = VP.cy - P.y * s; x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    if (x1 < 0 || x0 > VP.w || y1 < 0 || y0 > VP.h) return;
+    const t0 = C[0].t, t1 = C[1].t, r0 = C[0].r, r1 = C[2].r;
+    let e = 0;
+    for (const a of [0, 0.5, 1]) for (const b of [0, 0.5, 1]) {
+      const t = t0 + (t1 - t0) * a, r = r0 + (r1 - r0) * b;
+      texAt(f.cp[0], f.cp[1], f.cp[2], f.cp[3], t, r, M); const k = cam.scale / M.d;
+      const ta = TXS.a0 + TXS.d1a * t + TXS.d3a * r, tb = TXS.b0 + TXS.d1b * t + TXS.d3b * r;
+      const sx = (m.a * ta + m.c * tb + m.e) / pxScale, sy = (m.b * ta + m.d * tb + m.f) / pxScale;
+      e = Math.max(e, Math.hypot(VP.cx + M.x * k - sx, VP.cy - M.y * k - sy));
+    }
+    cur.cells++; cur.es.push(e);
+  };
+  const scene = (name, li, u, v, th, camMode, yaws) => {
+    cur = out[name] = { cells: 0, es: [] };
+    loadLevel(li); doAct('start'); paused = true; qLevel = 0; opt.camMode = camMode; opt.refs = 0;
+    setBody(u, v, th); car.vel = 0;
+    for (const y of yaws) { if (camMode === CAM_FP) opt.fpYaw = rad(y); else { opt.camYaw = th + rad(y); camSm = null; } for (let k = 0; k < 3; k++) render(0.016); }
+  };
+  const Y = []; for (let y = -180; y < 180; y += 5) Y.push(y);
+  try {
+    scene('двор 2 сзади', 1, 0, 0, 0, CAM_CHASE, Y);
+    scene('двор 1 сзади', 0, 0, 0, 0, CAM_CHASE, Y);
+    scene('двор 1 салон', 0, 0, 0, 0, CAM_FP, [-80, -40, 0, 40, 80]);
+    scene('город 29 сзади', 28, 8.15, -60, 0, CAM_CHASE, Y);
+    scene('экзамен старт сзади', 31, 8.15, -100, 0, CAM_CHASE, Y);
+    scene('экзамен старт салон', 31, 8.15, -100, 0, CAM_FP, [-80, -40, 0, 40, 80, 150, -150]);
+    scene('уровень 23 бордюры', 22, 1.65, -6, 0, CAM_CHASE, Y);
+  } finally { texCellHook = null; window.texCell = origC; opt.traffic = 'normal'; }
+  const res = {};
+  for (const k in out) { const e = out[k].es.sort((a, b) => a - b);
+    res[k] = { cells: out[k].cells, p99: +(e[Math.floor(e.length * 0.99)] || 0).toFixed(2), max: +(e[e.length - 1] || 0).toFixed(2) }; }
+  return res;
+}, FAULT);
+/* порог 2,5 px: раскладка держит TEX_ERR_PX 2 px в четвёртом углу, серединах сторон и центре, проверка
+   меряет девять точек ячейки — запас на точки между проверенными */
+check('плитка стен, бордюров и фасадов не плывёт при повороте камеры: сдвиг узора в каждой ячейке в кадре ≤ 2,5 px (@render-tex-perspective)',
+  Object.values(texp).every((r) => r.cells > 20 && r.max <= 2.5), JSON.stringify(texp));
 const tramFb = await tramRun(FAULT !== 'tramfallback');
 check('без картинок трамвая — прежние коробки поясов, ни одной грани-картинки (@render-tram-fallback)',
   tramFb.img === 0 && tramFb.boxes >= 6, JSON.stringify(tramFb));

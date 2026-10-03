@@ -1078,12 +1078,12 @@ const TEX={ brick:   {kind:'brick',    a:0.62, w:2.08, h:0.75},
             concrete:{kind:'concrete', a:0.85, w:2.0,  h:2.0},
             hedge:   {kind:'hedge',    a:0.62, w:1.5,  h:1.5},
             /* фасады домов: плитка — два шага окна по 3 м на этаж (панель 2,8, кирпич 3,2), строка 0 —
-               пол этажа (texUV кладёт высоту абсолютно), поэтому этажи совпадают сами. Ячейка крупнее
-               стеновой (cell): сетка окон крупная и перспективный перекос в 260 px не видит, а дом
-               поперёк тупика у старта экзамена с ячейкой 140 стоил почти вдвое больше заливок */
-            panel:   {kind:'panel',    a:0.85, w:6.0,  h:2.8, cell:260},
-            brickwin:{kind:'brickwin', a:0.85, w:6.0,  h:3.2, cell:260},
-            shop:    {kind:'shop',     a:0.85, w:6.0,  h:3.2, cell:260} };
+               пол этажа (texUV кладёт высоту абсолютно), поэтому этажи совпадают сами. Ячейки — по ошибке
+               перспективы, как у стен (texFace): крупная ячейка «в 260 px сетка окон не видит перекоса»
+               оказалась неправдой — окна на фасаде у старта экзамена ехали на 188 px */
+            panel:   {kind:'panel',    a:0.85, w:6.0,  h:2.8},
+            brickwin:{kind:'brickwin', a:0.85, w:6.0,  h:3.2},
+            shop:    {kind:'shop',     a:0.85, w:6.0,  h:3.2} };
 const TEX_UV=[0,0,0,0,0,0];
 let texNext=null;
 const texWarned=new Set();
@@ -1283,53 +1283,106 @@ function grainFace(f, s0, s1, s3){
   ctx.restore();
 }
 /* текстура стены: плитка мип-уровня f.gk кладётся по ЯЧЕЙКАМ грани, а не одной аффинной картой.
-   Аффинная карта по трём углам не знает перспективы: на грани 3,5×6,5 м под углом узор
-   перекашивался по-своему на каждом сегменте, и на стыке сегментов стояла вертикальная полоса
-   (для салонных граней в 10–20 см та же ошибка невидима). Ячейка ≤ TEX_CELL px — углы каждой
-   проецируются честно, площадь заливки та же, лишь вызовов больше. Контур ячейки строит pathCam
-   (с раздвижкой — иначе между ячейками шли волосяные щели без узора). Вдали текстура гаснет
-   вместе с туманом, иначе дальняя стена рябит */
-const TEX_CELL=140, TC=[{x:0,y:0,d:0},{x:0,y:0,d:0},{x:0,y:0,d:0},{x:0,y:0,d:0}];
+   Canvas умеет только аффинную карту, а она не знает перспективы: узор на ячейке сдвинут против честной
+   проекции — у четвёртого угла (разрыв на стыке с соседней ячейкой) и вдоль сторон (ракурс), и при
+   повороте камеры он «плывёт», как плыл борт трамвая (#256). Делить по размеру на экране было мало: при
+   ≤ 8×8 ячеек по 140 px (у фасадов 260) сдвиг доходил до 36–56 px на стенах дворов и до 188 px на фасаде
+   у старта экзамена (@render-tex-perspective). Поэтому ячейка делится пополам, пока её сдвиг больше
+   TEX_ERR_PX, — по оси, где он больше. 2 px, а не 1 — выбор владельца по замеру телефона (CPU×4, салон у
+   стены двора 1 и у домов 29): 1 px — JS +2,5 мс и 92 fps, 2 px — +1,1 мс и 105–107 fps; на глаз сдвиг в
+   2 px не виден, а прежний был в десятки раз больше. Сдвиг ячейки растёт как квадрат её размера, поэтому компактные
+   ячейки дешевле полос равной глубины: такая полоса длинна на экране и сходится трапецией, которую
+   аффинная карта не повторяет (проба дала 400 px на полосе в 3400 px). Ячейка целиком вне кадра не
+   заливается и не делится; ячейка через ближнюю плоскость делится по оси глубины, пока часть её не встанет
+   перед плоскостью. Контур ячейки строит pathCam (с раздвижкой — иначе между ячейками шли волосяные щели
+   без узора). Вдали текстура гаснет вместе с туманом, иначе дальняя стена рябит */
+/* 2^12 по оси: фасад у старта экзамена с камерой, прижатой к нему, при 2^8 упирался в предел и ехал на
+   153 px (ревью, ракурс −125°); ячейки вне кадра не делятся, поэтому глубина стоит только там, где видно */
+const TEX_ERR_PX=2, TEX_SPLIT=12;
+/* углы ячейки картинки в камере (imgFace) */
+const TC=[{x:0,y:0,d:0},{x:0,y:0,d:0},{x:0,y:0,d:0},{x:0,y:0,d:0}];
+/* точка наблюдения гейта @render-tex-perspective: углы каждой залитой ячейки (в камере, с t,r) сразу после
+   заливки, пока на канвасе стоит её матрица плитки. В игре null */
+let texCellHook=null;
 /* точка грани в камере — билинейно по (t вдоль v0→v1, r вдоль v0→v3): камера аффинна миру */
 function texAt(c0,c1,c2,c3,t,r,o){
   const ax=c0.x+(c1.x-c0.x)*t, ay=c0.y+(c1.y-c0.y)*t, ad=c0.d+(c1.d-c0.d)*t;
   const bx=c3.x+(c2.x-c3.x)*t, by=c3.y+(c2.y-c3.y)*t, bd=c3.d+(c2.d-c3.d)*t;
   o.x=ax+(bx-ax)*r; o.y=ay+(by-ay)*r; o.d=ad+(bd-ad)*r;
 }
+/* рабочие массивы по глубине деления: рекурсия без выделения памяти на ячейку */
+const TXC=[], TXP=[];
+for(let i=0;i<=2*TEX_SPLIT;i++){ const q=[]; for(let k=0;k<4;k++) q.push({x:0,y:0,d:0,t:0,r:0}); TXC.push(q); TXP.push(new Float64Array(8)); }
+const TXS={f:null, a0:0, b0:0, d1a:0, d1b:0, d3a:0, d3b:0, aBase:0};
+/* сдвиг середины стороны: честная проекция средней точки против середины отрезка на экране */
+function texMid(p,q,px,py,qx,qy){
+  const k=cam.scale/((p.d+q.d)*0.5);
+  const dx=VP.cx+(p.x+q.x)*0.5*k-(px+qx)*0.5, dy=VP.cy-(p.y+q.y)*0.5*k-(py+qy)*0.5;
+  return Math.sqrt(dx*dx+dy*dy);
+}
+function texCell(t0,t1,r0,r1,du,dv){
+  const lv=du+dv, C=TXC[lv], P=TXP[lv], f=TXS.f, c0=f.cp[0], c1=f.cp[1], c2=f.cp[2], c3=f.cp[3];
+  texAt(c0,c1,c2,c3,t0,r0,C[0]); texAt(c0,c1,c2,c3,t1,r0,C[1]); texAt(c0,c1,c2,c3,t1,r1,C[2]); texAt(c0,c1,c2,c3,t0,r1,C[3]);
+  const tm=(t0+t1)*0.5, rm=(r0+r1)*0.5;
+  if(C[0].d<NEAR||C[1].d<NEAR||C[2].d<NEAR||C[3].d<NEAR){
+    if(C[0].d<NEAR&&C[1].d<NEAR&&C[2].d<NEAR&&C[3].d<NEAR) return;
+    /* через ближнюю плоскость экранные углы прижаты к NEAR и карта плитки была бы кривой: делим ТОЛЬКО по
+       оси, вдоль которой меняется глубина, пока часть ячейки не встанет перед плоскостью; ось исчерпана —
+       полоска у самой камеры остаётся без узора. Деление второй оси плоскость не отодвигает и удваивало
+       вызовы на каждом уровне (ревью: ~60 % вызовов texCell уходили впустую) */
+    const gu=Math.abs(C[1].d-C[0].d)+Math.abs(C[2].d-C[3].d), gv=Math.abs(C[3].d-C[0].d)+Math.abs(C[2].d-C[1].d);
+    if(gu>=gv){ if(du<TEX_SPLIT){ texCell(t0,tm,r0,r1,du+1,dv); texCell(tm,t1,r0,r1,du+1,dv); } }
+    else if(dv<TEX_SPLIT){ texCell(t0,t1,r0,rm,du,dv+1); texCell(t0,t1,rm,r1,du,dv+1); }
+    return;
+  }
+  for(let k=0;k<4;k++){ const s=cam.scale/C[k].d; P[2*k]=VP.cx+C[k].x*s; P[2*k+1]=VP.cy-C[k].y*s; }
+  const x0=Math.min(P[0],P[2],P[4],P[6]), x1=Math.max(P[0],P[2],P[4],P[6]);
+  const y0=Math.min(P[1],P[3],P[5],P[7]), y1=Math.max(P[1],P[3],P[5],P[7]);
+  if(x1<VP.x-2 || x0>VP.x+VP.w+2 || y1<VP.y-2 || y0>VP.y+VP.h+2) return;
+  /* сдвиг считается против КАРТЫ ячейки: она точна в углах 0, 1, 3 и ставит угол 2 в (qx, qy) = P1 + P3 − P0.
+     Середины сторон, сходящихся в угле 2, и центр меряются от этой точки, а не от настоящего угла 2 — иначе
+     к их сдвигу незаметно добавлялась половина разрыва в углу (гейт мерил 2,7 px при допуске 2) */
+  const qx=P[2]+P[6]-P[0], qy=P[3]+P[7]-P[1], ex=qx-P[4], ey=qy-P[5], em=Math.sqrt(ex*ex+ey*ey);
+  const eu=Math.max(texMid(C[0],C[1],P[0],P[1],P[2],P[3]), texMid(C[3],C[2],P[6],P[7],qx,qy));
+  const ev=Math.max(texMid(C[0],C[3],P[0],P[1],P[6],P[7]), texMid(C[1],C[2],P[2],P[3],qx,qy));
+  const ec=texMid(C[0],C[2],P[0],P[1],qx,qy);
+  if(em>TEX_ERR_PX || eu>TEX_ERR_PX || ev>TEX_ERR_PX || ec>TEX_ERR_PX){
+    /* разрыв у четвёртого угла снимается делением любой оси — берём более длинную на экране */
+    const ax=P[2]-P[0], ay=P[3]-P[1], bx=P[4]-P[6], by=P[5]-P[7], cx=P[6]-P[0], cy=P[7]-P[1], dx=P[4]-P[2], dy=P[5]-P[3];
+    const lu=Math.sqrt(ax*ax+ay*ay)+Math.sqrt(bx*bx+by*by), lw=Math.sqrt(cx*cx+cy*cy)+Math.sqrt(dx*dx+dy*dy);
+    const wantU = eu>ev || (em>Math.max(eu,ev) && lu>=lw);
+    if(wantU && du<TEX_SPLIT){ texCell(t0,tm,r0,r1,du+1,dv); texCell(tm,t1,r0,r1,du+1,dv); return; }
+    if(dv<TEX_SPLIT){ texCell(t0,t1,r0,rm,du,dv+1); texCell(t0,t1,rm,r1,du,dv+1); return; }
+    if(du<TEX_SPLIT){ texCell(t0,tm,r0,r1,du+1,dv); texCell(tm,t1,r0,r1,du+1,dv); return; }
+  }
+  /* гашение вдали — по глубине ЯЧЕЙКИ, не грани: у соседних сегментов альфа иначе ступенькой */
+  const dc=(C[0].d+C[1].d+C[2].d+C[3].d)*0.25;
+  ctx.globalAlpha=TXS.aBase*clamp(1-(dc-30)/50, 0.3, 1);
+  /* контур строится под БАЗОВОЙ матрицей: точки пути фиксируются в момент lineTo текущей CTM,
+     и под матрицей предыдущей ячейки контур улетал в сторону — заливались только первые ячейки */
+  ctx.setTransform(pxScale,0,0,pxScale,0,0);  /* базовая матрица канваса — DPR, без сдвига (см. resize и renderMirrorInto) */
+  if(lv>0 && !pathCam(C)) return;             /* неделённая грань — её путь уже построен */
+  const ua=TXS.a0+TXS.d1a*t0+TXS.d3a*r0, ub=TXS.b0+TXS.d1b*t0+TXS.d3b*r0;
+  const e1a=TXS.d1a*(t1-t0), e1b=TXS.d1b*(t1-t0), e3a=TXS.d3a*(r1-r0), e3b=TXS.d3b*(r1-r0), dt=e1a*e3b-e1b*e3a;
+  if(Math.abs(dt)<1e-9) return;
+  const e1x=P[2]-P[0], e1y=P[3]-P[1], e3x=P[6]-P[0], e3y=P[7]-P[1];
+  const m11=( e1x*e3b-e3x*e1b)/dt, m12=( e1y*e3b-e3y*e1b)/dt;
+  const m21=(-e1x*e3a+e3x*e1a)/dt, m22=(-e1y*e3a+e3y*e1a)/dt;
+  ctx.transform(m11, m12, m21, m22, P[0]-(m11*ua+m21*ub), P[1]-(m12*ua+m22*ub));
+  ctx.fill();
+  if(texCellHook){ C[0].t=t0; C[0].r=r0; C[1].t=t1; C[1].r=r0; C[2].t=t1; C[2].r=r1; C[3].t=t0; C[3].r=r1; texCellHook(C); }
+}
 function texFace(f, s0, s1, s3){
   const lvl=f.gk, sc=1/(1<<lvl), pat=texPattern(f.tex.kind, lvl); if(!pat) return;
-  const c0=f.cp[0], c1=f.cp[1], c2=f.cp[2], c3=f.cp[3], s2=toScreenClamped(c2);
-  const cell=f.tex.cell||TEX_CELL;
-  const nu=clamp(Math.ceil(Math.max(Math.hypot(s1.x-s0.x,s1.y-s0.y), Math.hypot(s2.x-s3.x,s2.y-s3.y))/cell),1,8);
-  const nv=clamp(Math.ceil(Math.max(Math.hypot(s3.x-s0.x,s3.y-s0.y), Math.hypot(s2.x-s1.x,s2.y-s1.y))/cell),1,8);
-  const a0=f.ga0*sc, b0=f.gb0*sc, d1a=(f.ga1-f.ga0)*sc, d1b=(f.gb1-f.gb0)*sc, d3a=(f.ga3-f.ga0)*sc, d3b=(f.gb3-f.gb0)*sc;
-  const det=d1a*d3b-d1b*d3a; if(Math.abs(det)<1e-6) return;
+  TXS.f=f; TXS.a0=f.ga0*sc; TXS.b0=f.gb0*sc;
+  TXS.d1a=(f.ga1-f.ga0)*sc; TXS.d1b=(f.gb1-f.gb0)*sc; TXS.d3a=(f.ga3-f.ga0)*sc; TXS.d3b=(f.gb3-f.gb0)*sc;
+  if(Math.abs(TXS.d1a*TXS.d3b-TXS.d1b*TXS.d3a)<1e-6){ TXS.f=null; return; }
+  TXS.aBase=f.tex.a*f.tw;
   ctx.save();
   ctx.fillStyle=pat;
-  const aBase=f.tex.a*f.tw;
-  for(let i=0;i<nu;i++) for(let j=0;j<nv;j++){
-    const t0=i/nu, t1=(i+1)/nu, r0=j/nv, r1=(j+1)/nv;
-    texAt(c0,c1,c2,c3,t0,r0,TC[0]); texAt(c0,c1,c2,c3,t1,r0,TC[1]); texAt(c0,c1,c2,c3,t1,r1,TC[2]); texAt(c0,c1,c2,c3,t0,r1,TC[3]);
-    /* ячейка с углом за ближней плоскостью пропускается: её экранные углы прижаты к NEAR и карта
-       плитки была бы кривой; ячейка мала, полоска у края кадра остаётся плоской */
-    if(TC[0].d<NEAR||TC[1].d<NEAR||TC[2].d<NEAR||TC[3].d<NEAR) continue;
-    /* гашение вдали — по глубине ЯЧЕЙКИ, не грани: у соседних сегментов альфа иначе ступенькой */
-    const dc=(TC[0].d+TC[1].d+TC[2].d+TC[3].d)*0.25;
-    ctx.globalAlpha=aBase*clamp(1-(dc-30)/50, 0.3, 1);
-    /* контур строится под БАЗОВОЙ матрицей: точки пути фиксируются в момент lineTo текущей CTM,
-       и под матрицей предыдущей ячейки контур улетал в сторону — заливались только первые ячейки */
-    ctx.setTransform(pxScale,0,0,pxScale,0,0);  /* базовая матрица канваса — DPR, без сдвига (см. resize и renderMirrorInto) */
-    if((nu>1||nv>1) && !pathCam(TC)) continue;   /* одна ячейка — путь грани уже построен */
-    const p0=toScreenClamped(TC[0]), p1=toScreenClamped(TC[1]), p3=toScreenClamped(TC[3]);
-    const ua=a0+d1a*t0+d3a*r0, ub=b0+d1b*t0+d3b*r0;
-    const e1a=d1a/nu, e1b=d1b/nu, e3a=d3a/nv, e3b=d3b/nv, dt=e1a*e3b-e1b*e3a; if(Math.abs(dt)<1e-9) continue;
-    const e1x=p1.x-p0.x, e1y=p1.y-p0.y, e3x=p3.x-p0.x, e3y=p3.y-p0.y;
-    const m11=( e1x*e3b-e3x*e1b)/dt, m12=( e1y*e3b-e3y*e1b)/dt;
-    const m21=(-e1x*e3a+e3x*e1a)/dt, m22=(-e1y*e3a+e3y*e1a)/dt;
-    ctx.transform(m11, m12, m21, m22, p0.x-(m11*ua+m21*ub), p0.y-(m12*ua+m22*ub));
-    ctx.fill();
-  }
+  texCell(0,1,0,1,0,0);
   ctx.restore();
+  TXS.f=null;
 }
 /* картинка — тем же приёмом: паттерн без повтора, натянутый по трём углам грани:
    (0,0) → v0, (w,0) → v1, (0,h) → v3 */
