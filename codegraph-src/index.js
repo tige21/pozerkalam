@@ -838,6 +838,9 @@ let edgeOn=false, emNext=-1;         /* emNext — маска рёбер для 
    окон и корпуса зеркал сливались с обивкой — то есть ровно те ориентиры, по которым
    игрок и должен смотреть наружу */
 let cabinLit=false;
+/* туман домов: дома рисуются до BLD_MAXD, и с общим потолком тумана 0,62 дальний дом выскакивал бы на
+   границе дальности; в проходе домов туман вблизи общий, а к границе доходит до 0,95 */
+let fogFar=false;
 /* свет в салоне идёт из лобового, а не от солнца: направление ставит emitInterior от курса
    машины, поэтому торпедо и руль освещены одинаково при любом курсе, а не темнеют на юг */
 let cabinLight={x:0,y:0.37,z:0.93};
@@ -901,7 +904,8 @@ function shadeCol(col, n, d, y, sh){
       r+=(255-r)*sp; g+=(255-g)*sp; b+=(255-b)*sp;
     }
   }
-  const fog = clamp((d-26)/78, 0, 0.62);
+  const fog = fogFar ? Math.max(clamp((d-26)/78, 0, 0.62), clamp((d-60)/(BLD_MAXD-60), 0, 1)*0.95)
+                     : clamp((d-26)/78, 0, 0.62);
   r=lerp(r,154,fog); g=lerp(g,172,fog); b=lerp(b,192,fog);
   return fn+(r|0)+','+(g|0)+','+(b|0)+A+')';
 }
@@ -1072,7 +1076,14 @@ function grainPattern(kind){
 const TEX_PX=128;                          /* px плитки на метр на уровне 0 */
 const TEX={ brick:   {kind:'brick',    a:0.62, w:2.08, h:0.75},
             concrete:{kind:'concrete', a:0.85, w:2.0,  h:2.0},
-            hedge:   {kind:'hedge',    a:0.62, w:1.5,  h:1.5} };
+            hedge:   {kind:'hedge',    a:0.62, w:1.5,  h:1.5},
+            /* фасады домов: плитка — два шага окна по 3 м на этаж (панель 2,8, кирпич 3,2), строка 0 —
+               пол этажа (texUV кладёт высоту абсолютно), поэтому этажи совпадают сами. Ячейка крупнее
+               стеновой (cell): сетка окон крупная и перспективный перекос в 260 px не видит, а дом
+               поперёк тупика у старта экзамена с ячейкой 140 стоил почти вдвое больше заливок */
+            panel:   {kind:'panel',    a:0.85, w:6.0,  h:2.8, cell:260},
+            brickwin:{kind:'brickwin', a:0.85, w:6.0,  h:3.2, cell:260},
+            shop:    {kind:'shop',     a:0.85, w:6.0,  h:3.2, cell:260} };
 const TEX_UV=[0,0,0,0,0,0];
 let texNext=null;
 const texWarned=new Set();
@@ -1082,6 +1093,32 @@ function texOf(name){
   return null;
 }
 const texPats={};
+/* яркость фасада в точке плитки (метры; Y — высота над полом этажа): окна тёмные с отсветом, рамы и
+   подоконники светлее, швы панелей и цоколь темнее */
+function facadeLum(kind, X, Y, brick, a, b, c){
+  if(kind==='shop'){
+    if(Y<0.35) return 112;                                        /* цоколь */
+    if(Y>2.55 && Y<3.0) return 84 + 10*(b-0.5);                   /* вывеска */
+    if(X>0.4 && X<5.6 && Y>0.35 && Y<2.45){
+      const m=(X-0.4)%1.3;
+      if(m<0.05 || X<0.45 || X>5.55 || Y>2.4) return 160;          /* рама и переплёт витрины */
+      return 74 + 26*(a-0.5) + 14*(Y-0.35);                       /* стекло с отсветом к верху */
+    }
+    return 128 + 12*(c-0.5);
+  }
+  const panel=kind==='panel';
+  const wx0=panel?0.8:0.85, wx1=panel?2.2:2.15, wy0=panel?0.85:0.9, wy1=panel?2.25:2.5;
+  const k=Math.floor(X/3), lx=X-k*3;
+  let v = panel ? 128 + 18*(b-0.5) + 10*(c-0.5) : 128 + brick(X*TEX_PX, Y*TEX_PX) + 10*(c-0.5);
+  if(panel && (Y<0.03 || lx<0.03)) v-=26;                          /* швы панелей */
+  if(lx>wx0 && lx<wx1 && Y>wy0 && Y<wy1){
+    if(lx<wx0+0.05 || lx>wx1-0.05 || Y<wy0+0.05 || Y>wy1-0.05) return 166;   /* рама */
+    return (k%2 ? 70 : 62) + 24*(a-0.5) + 10*(Y-wy0);               /* стекло: соседние окна чуть разные */
+  }
+  if(lx>wx0-0.06 && lx<wx1+0.06 && Y>wy0-0.08 && Y<=wy0) return 158;  /* подоконник */
+  if(!panel && lx>wx0-0.06 && lx<wx1+0.06 && Y>=wy1 && Y<wy1+0.12) return 150;  /* перемычка */
+  return v;
+}
 function texPattern(kind, lvl){
   let arr=texPats[kind];
   if(!arr){
@@ -1100,7 +1137,7 @@ function texPattern(kind, lvl){
     };
     const n1=grid(4,Math.max(2,Math.round(4*M/N))), n2=grid(16,Math.max(4,Math.round(16*M/N))), n3=grid(48,Math.max(8,Math.round(48*M/N)));
     let brick=null;
-    if(kind==='brick'){
+    if(kind==='brick' || kind==='brickwin'){
       /* ряд 75 мм = 65 кирпич + 10 шов, кирпич 260 мм; в каждом ряду смещение на полкирпича */
       const rowH=0.075*TEX_PX, bw=0.26*TEX_PX, rows=Math.round(M/rowH), cols=Math.round(N/bw);
       const lum=new Float32Array(rows*cols); for(let i=0;i<lum.length;i++) lum[i]=(rnd()-0.5)*26;
@@ -1112,6 +1149,7 @@ function texPattern(kind, lvl){
     for(let y=0;y<M;y++) for(let x=0;x<N;x++){
       let v;
       if(kind==='brick')         v = 128 + brick(x,y) + 10*(n3(x,y)-0.5);
+      else if(kind==='panel' || kind==='brickwin' || kind==='shop') v = facadeLum(kind, x/TEX_PX, y/TEX_PX, brick, n1(x,y), n2(x,y), n3(x,y));
       else if(kind==='hedge')    v = 128 + 44*(n3(x,y)-0.5) + 26*(n2(x,y)-0.5) + 14*(n1(x,y)-0.5);
       else {                     /* бетон: пятна опалубки + горизонтальные швы щитов каждые 0,5 м */
         const joint = ((y/TEX_PX)%0.5) < 0.012 ? -22 : 0;   /* 0,5 м делит плитку 2 м нацело — шов не сбивается на стыке плиток */
@@ -1261,8 +1299,9 @@ function texAt(c0,c1,c2,c3,t,r,o){
 function texFace(f, s0, s1, s3){
   const lvl=f.gk, sc=1/(1<<lvl), pat=texPattern(f.tex.kind, lvl); if(!pat) return;
   const c0=f.cp[0], c1=f.cp[1], c2=f.cp[2], c3=f.cp[3], s2=toScreenClamped(c2);
-  const nu=clamp(Math.ceil(Math.max(Math.hypot(s1.x-s0.x,s1.y-s0.y), Math.hypot(s2.x-s3.x,s2.y-s3.y))/TEX_CELL),1,8);
-  const nv=clamp(Math.ceil(Math.max(Math.hypot(s3.x-s0.x,s3.y-s0.y), Math.hypot(s2.x-s1.x,s2.y-s1.y))/TEX_CELL),1,8);
+  const cell=f.tex.cell||TEX_CELL;
+  const nu=clamp(Math.ceil(Math.max(Math.hypot(s1.x-s0.x,s1.y-s0.y), Math.hypot(s2.x-s3.x,s2.y-s3.y))/cell),1,8);
+  const nv=clamp(Math.ceil(Math.max(Math.hypot(s3.x-s0.x,s3.y-s0.y), Math.hypot(s2.x-s1.x,s2.y-s1.y))/cell),1,8);
   const a0=f.ga0*sc, b0=f.gb0*sc, d1a=(f.ga1-f.ga0)*sc, d1b=(f.gb1-f.gb0)*sc, d3a=(f.ga3-f.ga0)*sc, d3b=(f.gb3-f.gb0)*sc;
   const det=d1a*d3b-d1b*d3a; if(Math.abs(det)<1e-6) return;
   ctx.save();
@@ -2799,6 +2838,15 @@ const LANE_W=3.3;                 /* ширина полосы */
 const TRAM_HW=3.2;                /* полуширина трамвайного полотна (два пути посередине) */
 const TRAM_GAUGE=1.524;           /* колея */
 const KERB_OUT=0.30;              /* бордюр — сразу за краем проезжей части */
+/* кварталы общего города (cityBuildings): фасад на BLD_SETBACK от края проезжей части — на 1,3 м
+   дальше внешнего края указателя улиц (hw + 3,7); треугольник видимости BLD_SIGHT × BLD_SIGHT у
+   каждого угла перекрёстка — СП 42.13330, 40 км/ч; внешний пояс — на BLD_BELT за крайними коридорами
+   улиц; дворы — решёткой с шагом BLD_LOT */
+const BLD_SETBACK=5.0, BLD_SIGHT=25, BLD_BELT=34, BLD_LOT=22;
+/* тротуар — плитка светлее асфальта и земли: граница проезжей части читается и издали */
+const SIDEWALK='#8e8f8a';
+const BLD_PAL={panel:[[200,196,186],[184,188,190],[210,202,182],[176,178,172]],
+               brick:[[156,94,74],[142,104,84],[192,166,118],[168,120,92]]};
 /* длинную дорогу режем на куски: отсечение декалей по дальности работает по кускам,
    а один прямоугольник в 200 м заливался бы целиком на каждом кадре */
 const ROAD_CHUNK=42;
@@ -2838,7 +2886,7 @@ function roadDec2(dec, u, v, yaw, len, r){
   /* куски перекрываются на 6 см: встык антиалиасинг оставлял светлый шов вдоль улицы */
   for(let i=0;i<n;i++){
     const c=at(-len/2+sl*(i+0.5),0);
-    dec.push({pts:rectPts(c.u,c.v,hw*2,sl+0.06,yaw), fill:ASPHALT});
+    dec.push({pts:rectPts(c.u,c.v,hw*2,sl+0.06,yaw), fill:ASPHALT, far:true});
   }
   const s0=-len/2, s1=len/2;
   for(const sx of [-1,1]) decLine(dec, at(s0,sx*(hw-0.12)), at(s1,sx*(hw-0.12)), ROAD_EDGE, 2);
@@ -2882,15 +2930,15 @@ function nodeDec(dec, nu, nv, arms){
     for(const sx of [-1,1])
       pts.push({u:nu+f.u*R+rt.u*sx*a.hw, v:nv+f.v*R+rt.v*sx*a.hw});
   }
-  dec.push({pts:hull2(pts), fill:ASPHALT});
+  dec.push({pts:hull2(pts), fill:ASPHALT, far:true});
   return R;
 }
 /* кольцо: заплатка, островок и разметка по внутреннему краю */
 function roundDec(dec, u, v, rOut, rIn){
   const ring=(R)=>{ const p=[]; for(let i=0;i<40;i++){ const a=i/40*TAU;
     p.push({u:u+Math.cos(a)*R, v:v+Math.sin(a)*R}); } return p; };
-  dec.push({pts:ring(rOut), fill:ASPHALT});
-  dec.push({pts:ring(rIn), fill:'#4b6b4a'});
+  dec.push({pts:ring(rOut), fill:ASPHALT, far:true});
+  dec.push({pts:ring(rIn), fill:'#4b6b4a', far:true});
   dec.push(circleDec(u,v,rIn+0.35,'rgba(240,243,245,.8)',2.5));
   dec.push(circleDec(u,v,(rIn+rOut)/2,'rgba(240,243,245,.5)',2,[8,7]));
   return {kind:'round', u, v, rOut, rIn};
@@ -2991,7 +3039,193 @@ function cityWorld(spec){
     E.push(e); adj[e.a].push(e); adj[e.b].push(e);
   }
   city.graph={V, adj, E};
+  /* тротуары: от бордюра до линии фасада по всей длине улицы, кусками по 42 м с перекрытием, как
+     асфальт; кладутся В НАЧАЛО разметки — асфальт перекрёстков, кольцо и разметка рисуются поверх, а
+     угол квартала мостят две пересекающиеся полосы, без отдельной геометрии угла */
+  const walks=[];
+  for(const r of spec.roads){
+    const A=pt(r.a), f=fuv(r._yaw), rt=ruv(r._yaw), n=Math.max(1, Math.ceil(r._len/42)), sl=r._len/n;
+    const w=BLD_SETBACK-KERB_OUT-0.25, off=r._hw+KERB_OUT+0.25+w/2;
+    for(const sx of [-1,1]) for(let i=0;i<n;i++){
+      const tc=sl*(i+0.5);
+      walks.push({pts:rectPts(A.u+f.u*tc+rt.u*sx*off, A.v+f.v*tc+rt.v*sx*off, w, sl+0.06, r._yaw), fill:SIDEWALK, far:true});
+    }
+  }
+  dec.unshift(...walks);
+  const bl=cityBuildings(spec, pt, radius, arms, obs);
+  for(const b of bl.list) obs.push({...b});
+  city.buildings=bl.stats; city.beltHull=bl.hull;
   return {obs, dec, city, nodes:spec.nodes, radius};
+}
+
+/* ---------- кварталы ----------
+   Город без края: с любой точки улицы взгляд по кругу обязан упираться в дом, а не уходить в равнину
+   (владелец 03.10.2026: «чтобы пользователь не видел краёв мира»). Слои: ряд домов вдоль каждой стороны
+   каждой улицы, дом поперёк каждого тупика, внешний пояс без разрывов по выпуклой оболочке карты и
+   застройка кварталов решёткой между ними. Перекрёстки открыты треугольником видимости: дом в нём
+   закрывал бы поток, которому игрок уступает, и линзы светофоров на поворотах. Детерминированно —
+   показы, level-audit и снимки воспроизводятся; считается один раз на спек, уровень берёт копии */
+const bldCache=new WeakMap();
+function bldRng(key){
+  let h=2166136261; for(let i=0;i<key.length;i++){ h^=key.charCodeAt(i); h=Math.imul(h,16777619); }
+  let s=(h>>>0)%2147483646+1;
+  return ()=>{ s=(s*16807)%2147483647; return (s-1)/2147483646; };
+}
+function cityBuildings(spec, pt, radius, arms, obs){
+  const hit=bldCache.get(spec); if(hit) return hit;
+  /* запретные зоны — выпуклые многоугольники с описанным кругом для дешёвого отсева */
+  const zones=[];
+  const zone=(pts)=>{ let cu=0, cv=0; for(const q of pts){ cu+=q.u; cv+=q.v; } cu/=pts.length; cv/=pts.length;
+    let r=0; for(const q of pts) r=Math.max(r, Math.hypot(q.u-cu, q.v-cv)); zones.push({pts, cu, cv, r}); };
+  const ring=(u,v,r,n)=>{ const k=r/Math.cos(PI/n), o=[]; for(let i=0;i<n;i++){ const a=i/n*TAU; o.push({u:u+Math.cos(a)*k, v:v+Math.sin(a)*k}); } return o; };
+  const corr=[];
+  for(const r of spec.roads){
+    const A=pt(r.a), B=pt(r.b);
+    const c=rectPts((A.u+B.u)/2, (A.v+B.v)/2, 2*(r._hw+BLD_SETBACK)-0.02, r._len, r._yaw);
+    corr.push(c); zone(c);
+  }
+  /* узел — оболочка устьев его лучей до линии фасада: у прямого бордюра (сторона Т без луча) ряд идёт
+     сквозь узел, а не обрывается кругом; кольцо — асфальт, тротуар и обзор въезжающих */
+  for(const k in spec.nodes){ const nd=spec.nodes[k];
+    if(nd.round){ zone(ring(nd.u, nd.v, nd.round+15, 16)); continue; }
+    const m=[{u:nd.u, v:nd.v}], rk=radius[k]||0;
+    for(const a of arms[k]){ const f=fuv(a.yaw), rt=ruv(a.yaw), o=a.hw+BLD_SETBACK-0.02;
+      for(const sx of [-1,1]) m.push({u:nd.u+f.u*rk+rt.u*o*sx, v:nd.v+f.v*rk+rt.v*o*sx}); }
+    if(m.length>2) zone(hull2(m)); }
+  for(const k in spec.nodes){
+    const nd=spec.nodes[k], list=arms[k].slice().sort((a,b)=>a.yaw-b.yaw);
+    if(nd.round || list.length<2) continue;
+    for(let i=0;i<list.length;i++){
+      const a=list[i], b=list[(i+1)%list.length];
+      let gap=b.yaw-a.yaw; if(i===list.length-1) gap+=TAU;
+      if(gap<rad(20) || gap>rad(170)) continue;          /* прямой бордюр — угла нет */
+      /* угол квартала — пересечение бордюра справа от луча a и бордюра слева от луча b */
+      const da=fuv(a.yaw), ra=ruv(a.yaw), db=fuv(b.yaw), rb=ruv(b.yaw);
+      const ha=a.hw+KERB_OUT, hb=b.hw+KERB_OUT;
+      const pu=nd.u+ra.u*ha, pv=nd.v+ra.v*ha, qu=nd.u-rb.u*hb, qv=nd.v-rb.v*hb;
+      const det=-da.u*db.v+da.v*db.u; if(Math.abs(det)<1e-6) continue;
+      const t=(-(qu-pu)*db.v+(qv-pv)*db.u)/det, cu=pu+da.u*t, cv=pv+da.v*t;
+      zone([{u:cu,v:cv},{u:cu+da.u*BLD_SIGHT,v:cv+da.v*BLD_SIGHT},{u:cu+db.u*BLD_SIGHT,v:cv+db.v*BLD_SIGHT}]);
+    }
+  }
+  for(const o of obs) if(o.kind==='guide') zone(rectPts(o.u, o.v, 2*GUIDE_HW+2, o.l+2, o.yaw));
+  const list=[];
+  /* зоны — по самому следу дома, соседи — по следу, раздвинутому на pad: у дворов между домами двор */
+  const fits=(u,v,w,l,yaw,pad)=>{
+    const p=rectPts(u,v,w,l,yaw), q=pad ? rectPts(u,v,w+2*pad,l+2*pad,yaw) : p, r=Math.hypot(w,l)/2+pad;
+    for(const z of zones) if(Math.hypot(z.cu-u, z.cv-v) < z.r+r && polyMTV(p,4,z.pts,z.pts.length)) return false;
+    for(const b of list) if(Math.hypot(b.u-u, b.v-v) < b._r+r && polyMTV(q,4,b._pad,4)) return false;
+    return true;
+  };
+  const add=(u,v,w,l,yaw,style,floors,shop,layer,rnd)=>{
+    const pal=BLD_PAL[style], h=floors*(style==='panel'?2.8:3.2)+0.6;
+    list.push({kind:'bld', u, v, w, l, h, yaw, style, floors, shop:!!shop, layer, solid:true,
+               col:pal[Math.floor(rnd()*pal.length)], _pad:rectPts(u,v,w+0.8,l+0.8,yaw), _r:Math.hypot(w,l)/2+0.6});
+  };
+  /* этажность — типовые серии, а не равномерный разброс: ровный ряд 5–9 этажей читался одной стеной
+     (владелец: «здания можешь сделать разной высоты»). Соседи в ряду высоту не повторяют, изредка —
+     башня: она же даёт силуэт над кварталом */
+  const SERIES={panel:[5,5,9,9,9,12,12,16], brick:[2,3,3,4,5,6], lenin:[3,4,5,6], belt:[9,12,14,16,17], tower:[18,20,22]};
+  let lastFl=0;
+  const floorsOf=(rnd, kind)=>{
+    if(kind!=='lenin' && rnd()<0.08) return lastFl=SERIES.tower[Math.floor(rnd()*SERIES.tower.length)];
+    const a=SERIES[kind]; let f=a[Math.floor(rnd()*a.length)];
+    if(f===lastFl) f=a[(a.indexOf(f)+1+Math.floor(rnd()*(a.length-1)))%a.length];
+    return lastFl=f;
+  };
+  const pick=(rnd, lenin)=> lenin ? ['brick', floorsOf(rnd,'lenin'), true]
+                         : rnd()<0.6 ? ['panel', floorsOf(rnd,'panel'), false] : ['brick', floorsOf(rnd,'brick'), false];
+  const stats={street:0, ends:0, belt:0, yard:0};
+  /* 0. внешний пояс — первым: выпуклая оболочка коридоров, раздвинутая на BLD_BELT, — дома встык по
+     каждой стороне, внутренняя грань на стороне оболочки; у выпуклой вершины внутренние углы сходятся.
+     Поставленный после других слоёв, он врезался в дома концов перспективы (за кольцом два дома стояли
+     друг в друге — сортировка рисует такие пары как попало); теперь остальные слои обходят его сами */
+  const cp=[];
+  for(const c of corr) for(const q of c) for(let i=0;i<12;i++){ const a=i/12*TAU; cp.push({u:q.u+Math.cos(a)*BLD_BELT, v:q.v+Math.sin(a)*BLD_BELT}); }
+  const hull=hull2(cp);
+  const rb=bldRng('belt');
+  for(let i=0;i<hull.length;i++){
+    const P=hull[i], Q=hull[(i+1)%hull.length], du=Q.u-P.u, dv=Q.v-P.v, L=Math.hypot(du,dv);
+    if(L<6) continue;
+    const yaw=Math.atan2(du,dv), nu=dv/L, nv=-du/L, n=Math.max(1, Math.round(L/24)), seg=L/n;
+    for(let k=0;k<n;k++){
+      const d=14, tc=(k+0.5)*seg, u=P.u+du/L*tc+nu*d/2, v=P.v+dv/L*tc+nv*d/2;
+      add(u,v,d,seg,yaw,'panel',floorsOf(rb,'belt'),false,'belt',rb); stats.belt++;
+    }
+  }
+  /* 1. тупики: дом поперёк свободного конца улицы, в 8 м за концом асфальта; раньше рядов — иначе место
+     у конца уже занято рядом. Свободный конец — точка, которой кончается ровно одна улица: [42,0] у
+     Заводской — стык двух её кусков, а не тупик */
+  const endKey=(e)=>Array.isArray(e) ? e[0]+','+e[1] : null, endCount={};
+  for(const r of spec.roads) for(const e of [r.a, r.b]){ const k=endKey(e); if(k) endCount[k]=(endCount[k]||0)+1; }
+  for(const r of spec.roads) for(const end of ['a','b']){
+    if(!Array.isArray(r[end]) || endCount[endKey(r[end])]!==1) continue;
+    const E=pt(r[end]), out=end==='b' ? r._yaw : r._yaw+PI, f=fuv(out), rnd=bldRng('end|'+String(r[end]));
+    const d=12, w=2*(r._hw+BLD_SETBACK)+16;
+    /* у короткой улицы место за концом занимает треугольник видимости соседнего перекрёстка — дом
+       отходит дальше, пока не встанет */
+    let ok=false;
+    for(let gap=8; gap<=32 && !ok; gap+=3){
+      const u=E.u+f.u*(gap+d/2), v=E.v+f.v*(gap+d/2);
+      if(fits(u,v,w,d,out,0)){ add(u,v,w,d,out,'panel',floorsOf(rnd,'panel'),false,'ends',rnd); stats.ends++; ok=true; }
+    }
+    if(!ok) console.warn('[city] тупик «'+streetName(r)+'» не закрыт домом');
+  }
+  /* 1б. конец перспективы: луч вдоль улицы за узлом, где напротив нет улицы (верх Т, восток кольца,
+     угол), уходил бы за пределы карты — там дом поперёк оси, как у тупика */
+  for(const k in spec.nodes){
+    const nd=spec.nodes[k], list=arms[k];
+    for(const a of list){
+      const back=angNorm(a.yaw+PI);
+      if(list.some(b=>b!==a && Math.abs(angNorm(b.yaw-back))<rad(25))) continue;
+      const f=fuv(back), rnd=bldRng('vista|'+k+'|'+a.name), d=12, w=2*(a.hw+BLD_SETBACK)+16;
+      const from=(nd.round ? nd.round+15 : Math.max(radius[k]||0, ...list.map(b=>b.hw+BLD_SETBACK)))+d/2;
+      let ok=false;
+      for(let dist=from; dist<=from+30 && !ok; dist+=3){
+        const u=nd.u+f.u*dist, v=nd.v+f.v*dist;
+        if(fits(u,v,w,d,back,0)){ add(u,v,w,d,back,'panel',floorsOf(rnd,'panel'),false,'ends',rnd); stats.ends++; ok=true; }
+      }
+    }
+  }
+  /* 2. ряды вдоль улиц */
+  for(const r of spec.roads){
+    const A=pt(r.a), f=fuv(r._yaw), rt=ruv(r._yaw), lenin=streetName(r)==='Ленина';
+    const t0=0, t1=r._len;
+    for(const sx of [-1,1]){
+      const rnd=bldRng('row|'+r.name+'|'+String(r.a)+'|'+sx);
+      let t=t0;
+      while(t < t1-8){
+        const w0=12+rnd()*18, d=10+rnd()*4; let ok=false;
+        for(let w=Math.min(w0, t1-t); w>=8; w-=4){
+          const off=r._hw+BLD_SETBACK+d/2, tc=t+w/2;
+          const u=A.u+f.u*tc+rt.u*sx*off, v=A.v+f.v*tc+rt.v*sx*off;
+          if(!fits(u,v,d,w,r._yaw,0)) continue;
+          const [st,fl,shop]=pick(rnd, lenin);
+          add(u,v,d,w,r._yaw,st,fl,shop,'street',rnd); stats.street++;
+          t+=w+rnd()*6; ok=true; break;
+        }
+        if(!ok) t+=2;
+      }
+    }
+  }
+  /* 4. дворы: решётка внутри пояса, дом развёрнут по ближайшей улице */
+  const inHull=(u,v)=>{ for(let i=0;i<hull.length;i++){ const P=hull[i], Q=hull[(i+1)%hull.length];
+    if((Q.u-P.u)*(v-P.v)-(Q.v-P.v)*(u-P.u) < 0) return false; } return true; };
+  let u0=1e9,u1=-1e9,v0=1e9,v1=-1e9; for(const q of hull){ u0=Math.min(u0,q.u); u1=Math.max(u1,q.u); v0=Math.min(v0,q.v); v1=Math.max(v1,q.v); }
+  const ry=bldRng('yard');
+  for(let gu=u0+BLD_LOT/2; gu<u1; gu+=BLD_LOT) for(let gv=v0+BLD_LOT/2; gv<v1; gv+=BLD_LOT){
+    if(!inHull(gu,gv)) continue;
+    let best=1e9, yaw=0;
+    for(const r of spec.roads){ const A=pt(r.a), f=fuv(r._yaw);
+      const t=clamp((gu-A.u)*f.u+(gv-A.v)*f.v, 0, r._len), d=Math.hypot(A.u+f.u*t-gu, A.v+f.v*t-gv);
+      if(d<best){ best=d; yaw=r._yaw; } }
+    const w=12+ry()*8, d=10+ry()*4, fl=floorsOf(ry,'panel');
+    for(const [ww,dd] of [[w,d],[10,10]]) if(fits(gu,gv,dd,ww,yaw,2.5)){ add(gu,gv,dd,ww,yaw,'panel',fl,false,'yard',ry); stats.yard++; break; }
+  }
+  for(const b of list){ delete b._pad; delete b._r; }
+  const res={list, stats, hull};
+  bldCache.set(spec, res);
+  return res;
 }
 
 /* ---------- маршрут по улицам ----------
@@ -6332,6 +6566,7 @@ function buildRenderList(obs){
   const out=[];
   let nCar=0;
   for(const o of obs){
+    if(o.kind==='bld') continue;                 /* дома — свой проход, emitBuildings */
     if(o.kind==='car' && !o.style) carStyle(o, nCar++);
     /* sign и guide проходят целиком: сегментация копирует только базовые поля и потеряла
        бы pic и rows */
@@ -6356,7 +6591,7 @@ function loadLevel(i){
   game.li = ((i%LEVELS.length)+LEVELS.length)%LEVELS.length;
   const def = LEVELS[game.li], b = def.build();
   for(const o of b.obs){ o.hw=o.w/2; o.hl=o.l/2; o.knocked=false; o._touch=false;
-                         o._shadow=shadowPoly(o.u,o.v,o.w,o.l,o.yaw,o.h); }
+                         o._shadow=shadowPoly(o.u,o.v,o.w,o.l,o.yaw,o.h); o._sr=undefined; }
   /* границы считаем от старта и цели, а не от одних препятствий: площадка без
      препятствий давала перевёрнутый диапазон и выкидывала машину за миллиард метров */
   let u0=b.start.u-10, u1=b.start.u+10, v0=b.start.v-10, v1=b.start.v+10;
@@ -6380,6 +6615,7 @@ function loadLevel(i){
             /* городу — запас 12 м: с 3 м разворот на L24 упирался в невидимую границу на v=-1,5 */
             bounds:{u0:u0-(b.city?12:3), u1:u1+(b.city?12:3), v0:v0-(b.city?12:3), v1:v1+(b.city?12:3)},
             marks: def.marks ? def.marks() : {} };
+  level.bld = level.obs.filter(o=>o.kind==='bld');
   decBounds(level.dec);
   RAMP_ON = level.ramps.length>0;
   if(def.phases) for(const p of def.phases){
@@ -7913,12 +8149,17 @@ function carShadow(u,v,th){
 function drawShadows(){
   const cu=-cam.pos.x, cv=cam.pos.z;
   for(const o of level.obs){
-    if(Math.hypot(o.u-cu,o.v-cv)>55) continue;
+    if(o.kind!=='bld' && Math.hypot(o.u-cu,o.v-cv)>55) continue;
     /* статист движется — кэш _shadow оставил бы тень на месте старта. Дальнюю машину
        потока оставляем без тени: она и сама рисуется коробкой */
     if(o.kind==='tram'){ fillGroundPoly(shadowPoly(o.u,o.v,o.w,o.l,o.yaw,TRAM_H),'rgba(0,0,0,.22)',null,0,0.010); continue; }
     if(o.act){ if(Math.hypot(o.u-cu,o.v-cv)<=trafLod()) carShadow(o.u,o.v,o.yaw); continue; }
     if(!o._shadow || o.knocked) continue;
+    /* тень — по своему описанному кругу: тень дома в 16 этажей ложится на 19 м, и по расстоянию до
+       центра дома она пропадала бы, ещё лёжа поперёк улицы; за пирамидой взгляда — мимо, как сам дом */
+    if(o._sr===undefined){ let su=0, sv=0; for(const q of o._shadow){ su+=q.u; sv+=q.v; } su/=o._shadow.length; sv/=o._shadow.length;
+      let sr=0; for(const q of o._shadow) sr=Math.max(sr, Math.hypot(q.u-su, q.v-sv)); o._su=su; o._sv=sv; o._sr=sr; }
+    if(Math.hypot(o._su-cu,o._sv-cv)-o._sr>55 || !camSees(o._su, 0, o._sv, o._sr)) continue;
     fillGroundPoly(o._shadow,'rgba(0,0,0,.22)',null,0,0.010);
   }
   const c=bodyPos(); carShadow(c.u,c.v,car.th);
@@ -8158,7 +8399,8 @@ let decDrawn=0;
 function drawDecals(maxD){
   const c=camGroundUV(), lim=maxD||1e9;
   for(const d of level.dec){
-    if(d._r!==undefined && Math.hypot(d._u-c.u, d._v-c.v)-d._r > lim) continue;
+    /* асфальт и тротуары (far) — до дальности домов: улица не обрывается в 85 м перед домом в 200 */
+    if(d._r!==undefined && Math.hypot(d._u-c.u, d._v-c.v)-d._r > (d.far ? BLD_MAXD : lim)) continue;
     /* вне пирамиды взгляда — тоже мимо: шар описывает многоугольник, 0,3 м — на толщину линии в
        пикселях; на эстакаде разметка поднята склоном, и шар у земли её бы не описал */
     if(d._r!==undefined && !RAMP_ON && !camSees(d._u, 0, d._v, d._r+0.3)) continue;
@@ -8265,6 +8507,34 @@ function camSees(u, y, v, rad){
   const kx=VP.w*0.5/cam.scale, ky=VP.h*0.5/cam.scale;
   const x=dx*cam.r.x+dy*cam.r.y+dz*cam.r.z, yy=dx*cam.u.x+dy*cam.u.y+dz*cam.u.z;
   return kx*d-Math.abs(x) > -rad*Math.sqrt(1+kx*kx) && ky*d-Math.abs(yy) > -rad*Math.sqrt(1+ky*ky);
+}
+/* дома: свой проход и своя дальность. Ближе BLD_NEAR_D фасад режется на куски по BLD_SEG — внутри
+   прохода дома сортируются между собой по центрам граней, — с рёбрами, как у стен, и плиткой окон;
+   дальше дом — одна коробка без рёбер и плитки: на телефоне кадр упирается в число граней (нарезка и
+   рёбра до 100 м стоили +1,5 мс JS на уровне 29), а туман (fogFar) растворяет дальние дома к границе */
+const BLD_MAXD=250, BLD_NEAR_D=45, BLD_SEG=8;
+function emitBuildings(){
+  const cu=-cam.pos.x, cv=cam.pos.z;
+  fogFar=true;
+  try{
+    for(const o of level.bld){
+      const rd=o._crad || (o._crad=cullRad(o)), d=Math.hypot(o.u-cu, o.v-cv);
+      if(d-rd > BLD_MAXD || !camSees(o.u, o.h*0.5, o.v, rd)) continue;
+      emitBuilding(o, d);
+    }
+  } finally { fogFar=false; edgeOn=false; }
+}
+function emitBuilding(o, d){
+  const near=d<BLD_NEAR_D, k=near ? Math.max(1, Math.ceil(o.l/BLD_SEG)) : 1, sl=o.l/k, f=fuv(o.yaw);
+  const tex = near ? (o.style==='panel' ? 'panel' : 'brickwin') : null;
+  const y0 = o.shop ? 3.2 : 0;                       /* первый этаж с магазином — своя коробка с витринами */
+  edgeOn=near;
+  for(let i=0;i<k;i++){
+    const t=-o.l/2+sl*(i+0.5), u=o.u+f.u*t, v=o.v+f.v*t;
+    const cut = k>1 ? {f:i<k-1, b:i>0, l:false, r:false} : null;
+    if(o.shop) pushBox(u, y0/2, v, o.w/2, y0/2, sl/2, o.yaw, o.col, 0, {cut, tex: tex ? 'shop' : null});
+    pushBox(u, y0+(o.h-y0)/2, v, o.w/2, (o.h-y0)/2, sl/2, o.yaw, o.col, 0, cut||tex ? {cut, tex} : null);
+  }
 }
 function emitObstacles(maxD){
   const cu=-cam.pos.x, cv=cam.pos.z;
@@ -8417,6 +8687,9 @@ function drawSceneInto(o){
   drawExamNav();
   if(opt.refs) drawRefs();
   if(o.guides) drawGuides();
+  /* дома — отдельным проходом под всем уличным: с улицы дом всегда позади знака, светофора и машины,
+     а сортировка 30-метрового фасада по центру ошибалась бы на половину его длины */
+  if(level.bld && level.bld.length){ emitBuildings(); flushFaces(); }
   if(curPhase) drawMarks(curPhase._marks, curS, !!o.labels, !!(demo&&demo.say>0));
   else drawMarks(examMarks(), curS, !!o.labels, false);
   edgeOn=true;
@@ -8835,10 +9108,13 @@ function drawMinimap(x,y,size){
     ctx.fillRect(-g.w*s/2,-g.l*s/2,g.w*s,g.l*s); ctx.strokeRect(-g.w*s/2,-g.l*s/2,g.w*s,g.l*s);
     ctx.restore(); }
   for(const o of level.obs){
-    const p=P(o.u,o.v);
-    if(p.x<x-40||p.x>x+size+40||p.y<y-40||p.y>y+size+40) continue;
+    /* дом крупнее карты — запас по его размеру, иначе кусок дома у края пропадал бы */
+    const p=P(o.u,o.v), m=40+(o.kind==='bld' ? Math.max(o.w,o.l)*s/2 : 0);
+    if(p.x<x-m||p.x>x+size+m||p.y<y-m||p.y>y+size+m) continue;
     ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(o.yaw);
-    ctx.fillStyle = o.kind==='car' ? 'rgba(150,170,195,.92)'
+    /* дома бледные: на карте главное — улицы и машины, кварталы только обозначают, где их нет */
+    ctx.fillStyle = o.kind==='bld' ? 'rgba(128,120,108,.38)'
+                  : o.kind==='car' ? 'rgba(150,170,195,.92)'
                   : o.kind==='cone' ? (o.knocked?'rgba(150,60,40,.8)':'rgba(240,120,40,.95)')
                   : o.kind==='kerb' ? 'rgba(120,128,138,.75)' : 'rgba(96,104,116,.95)';
     ctx.fillRect(-o.w*s/2,-o.l*s/2,o.w*s,o.l*s);
@@ -10915,7 +11191,7 @@ function edRebuild(){
   const d=editor.data;
   const obs=d.items.map(edMake);
   for(const o of obs){ o.hw=o.w/2; o.hl=o.l/2; o.knocked=false; o._touch=false;
-                       o._shadow=shadowPoly(o.u,o.v,o.w,o.l,o.yaw,o.h); }
+                       o._shadow=shadowPoly(o.u,o.v,o.w,o.l,o.yaw,o.h); o._sr=undefined; }
   const dec=[stripe(d.goal.u,d.goal.v,d.goal.w,d.goal.l,'rgba(80,200,140,.20)',d.goal.th)];
   let u0=-20,u1=20,v0=-20,v1=20;
   for(const o of obs){ u0=Math.min(u0,o.u-6); u1=Math.max(u1,o.u+6);
