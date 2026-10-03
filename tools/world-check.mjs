@@ -130,6 +130,20 @@ const cull = await page.evaluate((fault) => {
           }
         }
         level.rend = all; faces.length = 0; window.camSees = oS;
+        /* дома — свой проход: отсечённый дом, нарисованный отдельно, тоже не даёт граней в кадре */
+        let bldCulled = 0;
+        for (const o of level.bld || []) {
+          if (sees(o.u, o.h * 0.5, o.v, o._crad || cullRad(o))) continue;
+          bldCulled++; faces.length = 0;
+          emitBuilding(o, Math.hypot(o.u - c.u, o.v - c.v)); edgeOn = false;
+          for (const f of faces) {
+            const cc = f.cp.some((q) => q.d <= NEAR) ? clipNear(f.cp) : f.cp;
+            let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+            for (const q of cc) { const sp = toScreen(q); x0 = Math.min(x0, sp.x); x1 = Math.max(x1, sp.x); y0 = Math.min(y0, sp.y); y1 = Math.max(y1, sp.y); }
+            if (cc.length && x1 >= VP.x - 1 && x0 <= VP.x + VP.w + 1 && y1 >= VP.y - 1 && y0 <= VP.y + VP.h + 1) { leak++; worst = worst || { kind: 'bld', u: +o.u.toFixed(1), v: +o.v.toFixed(1) }; }
+          }
+        }
+        faces.length = 0;
         /* разметка: отсечённый многоугольник целиком вне кадра (с запасом 3 px на линию) */
         let decCulled = 0;
         if (!RAMP_ON) for (const d of level.dec) {
@@ -140,7 +154,7 @@ const cull = await page.evaluate((fault) => {
           for (const q of cc) { const sp = toScreen(q); x0 = Math.min(x0, sp.x); x1 = Math.max(x1, sp.x); y0 = Math.min(y0, sp.y); y1 = Math.max(y1, sp.y); }
           if (cc.length && x1 >= VP.x - 3 && x0 <= VP.x + VP.w + 3 && y1 >= VP.y - 3 && y0 <= VP.y + VP.h + 3) { leak++; worst = worst || { kind: 'decal', u: +d._u.toFixed(1), v: +d._v.toFixed(1) }; }
         }
-        out.push({ lvl: lvl + 1, a, r, culled: culled.length + decCulled, leak, worst });
+        out.push({ lvl: lvl + 1, a, r, culled: culled.length + decCulled + bldCulled, leak, worst });
       }
     }
   } finally { window.camSees = oS; opt.traffic = 'normal'; }
