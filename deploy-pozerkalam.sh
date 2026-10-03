@@ -44,6 +44,12 @@ fi
 
 HOST=vdsina
 DOCROOT=/var/www/pozerkalam
+# Домен под гео-DNS (Gcore): из РФ юзер приходит на vdsina, из-за рубежа и из-под VPN — на
+# зеркало. С машины деплоя имя резолвится куда угодно, поэтому КАЖДАЯ проверка идёт по явному
+# адресу: без этого смоук однажды весь прогон проверял зеркало вместо только что залитого прода.
+PROD_IP="${PROD_IP:-83.217.215.66}"
+MIRROR_HOST="${MIRROR_HOST:-assistant-box}"
+MIRROR_IP="${MIRROR_IP:-194.5.65.182}"
 [ -f .deploy.env ] && source .deploy.env
 : "${METRIKA_ID:=}"
 : "${RYBBIT_SITE_ID:=}"
@@ -148,32 +154,55 @@ cp icon-192.png icon-512.png build/play/
 echo "==> CSP-хэши инлайн-скриптов игры и лендинга"
 # Astro инлайнит маленькие бандлы, и такой скрипт режется CSP уровня server —
 # поэтому хэши считаем по всем отдаваемым HTML, а не только по игре.
-CSP_HASHES=$(python3 - <<'PYCSP'
-import re, hashlib, base64, glob
-files = ['build/play/index.html'] + sorted(glob.glob('landing/dist/**/*.html', recursive=True))
-out = []
-for f in files:
-    s = open(f).read()
-    for m in re.finditer(r'<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>', s, re.S):
-        if 'ld+json' in m.group(0):
-            continue
-        h = base64.b64encode(hashlib.sha256(m.group(1).encode()).digest()).decode()
-        q = "'sha256-%s'" % h
-        if q not in out:
-            out.append(q)
-print(' '.join(out))
-PYCSP
-)
+CSP_HASHES=$(python3 tools/csp-hashes.py build/play/index.html $(find landing/dist -name '*.html' | sort))
+
+# Новый заголовок пускает и новые страницы, и те, что боксы отдают прямо сейчас. Файлы меняются не
+# мгновенно (scp, rsync, асинхронный reload nginx), и в этот промежуток браузер получал новую
+# страницу под старым CSP: скрипт игры молча не запускался. 03.10.2026 так вернулся вход через VK —
+# посреди чужой выкатки на тёмную страницу с пустой карточкой, и обмен входа не случился вовсе.
+# «Живые» хэши считаются на боксе тем же скриптом; при следующей выкатке живыми станут нынешние
+# новые, поэтому набор не растёт. Из вывода берутся только токены хэшей — ретраи ssh пишут в stdout.
+live_hashes(){ # $1 — команда ssh-обёртки (sshr | mirror_ssh)
+  "$1" "python3 /tmp/pz-csp-hashes.py \$(find $DOCROOT -name '*.html' -not -path '*/stats/*' 2>/dev/null | sort)" 2>/dev/null \
+    | grep -oE "'sha256-[A-Za-z0-9+/=]+'" | tr '\n' ' ' || true
+}
+csp_union(){ # хэши через пробел из всех аргументов, без повторов, порядок сохраняется
+  printf '%s\n' $* | awk 'NF && !seen[$0]++' | tr '\n' ' ' | sed 's/ $//'
+}
+write_headers(){ # $1 — файл, $2 — хэши
+  cat > "$1" <<EOF
+add_header Content-Security-Policy "default-src 'self'; script-src 'self' $2 https://mc.yandex.ru; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://mc.yandex.ru; connect-src 'self' https://mc.yandex.ru https://*.mc.yandex.ru; worker-src 'self' blob:; child-src blob: https://mc.yandex.ru; frame-ancestors 'self' https://yandex.ru https://*.yandex.net https://playhop.com https://vk.com https://*.vk.com https://web.telegram.org; base-uri 'self'" always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+EOF
+}
+# Заливать файлы можно, только когда бокс уже отдаёт новый заголовок: reload асинхронный, и до
+# смены рабочих nginx старый CSP ещё уходит клиентам. HEAD-запрос — тело в 1,5 МБ тут не нужно.
+csp_header_wait(){ # $1 — IP, $2 — подпись
+  local ip="$1" where="$2" i h x miss
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    h=$(curl -sI -m 10 ${CURL_BIND[@]+"${CURL_BIND[@]}"} --resolve "pozerkalam.space:443:$ip" \
+         "https://pozerkalam.space/play/" | tr -d '\r' | grep -i '^content-security-policy:' || true)
+    miss=0
+    for x in $CSP_HASHES; do case "$h" in *"$x"*) ;; *) miss=1; break;; esac; done
+    if [ -n "$h" ] && [ "$miss" = "0" ]; then
+      echo "    $where: новый CSP отдаётся$([ "$i" -gt 1 ] && echo " (с $i-й попытки)") — можно лить файлы"
+      return 0
+    fi
+    sleep 1.5
+  done
+  echo "ДЕПЛОЙ ОСТАНОВЛЕН: $where не отдаёт новый CSP за 18 с — файлы не заливаю, старые страницы целы"; exit 1
+}
 
 echo "==> заголовки"
 # Файлом, а не heredoc'ом прямо в ssh: тот же самый набор хэшей нужен зеркалу, иначе оно
 # отдаёт новую сборку под старым CSP и режет собственный скрипт игры.
 mkdir -p build
-cat > build/pozerkalam-headers.conf <<EOF
-add_header Content-Security-Policy "default-src 'self'; script-src 'self' ${CSP_HASHES} https://mc.yandex.ru; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://mc.yandex.ru; connect-src 'self' https://mc.yandex.ru https://*.mc.yandex.ru; worker-src 'self' blob:; child-src blob: https://mc.yandex.ru; frame-ancestors 'self' https://yandex.ru https://*.yandex.net https://playhop.com https://vk.com https://*.vk.com https://web.telegram.org; base-uri 'self'" always;
-add_header X-Content-Type-Options "nosniff" always;
-add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-EOF
+scpr tools/csp-hashes.py "$HOST:/tmp/pz-csp-hashes.py"
+LIVE_PROD=$(live_hashes sshr)
+CSP_PROD=$(csp_union $CSP_HASHES $LIVE_PROD)
+echo "    новых хэшей: $(echo $CSP_HASHES | wc -w | tr -d ' '), живых на проде: $(echo $LIVE_PROD | wc -w | tr -d ' '), в заголовке: $(echo $CSP_PROD | wc -w | tr -d ' ')"
+write_headers build/pozerkalam-headers.conf "$CSP_PROD"
 scpr build/pozerkalam-headers.conf "$HOST:/etc/nginx/snippets/pozerkalam-headers.conf"
 
 echo "==> nginx: location для /play/"
@@ -242,19 +271,19 @@ sshr "systemctl daemon-reload && systemctl enable pozerkalam-account >/dev/null 
 sshr "sleep 1; systemctl is-active pozerkalam-account"
 sshr "journalctl -u pozerkalam-account -n 30 --no-pager -o cat | grep -E 'CONFIG' | tail -2 || true"
 
-echo "==> заливка"
-sshr "mkdir -p $DOCROOT/play"
-scpr -r landing/dist/* "$HOST:$DOCROOT/"
-scpr build/play/index.html build/play/sw.js build/play/manifest.webmanifest build/play/icon-192.png build/play/icon-512.png "$HOST:$DOCROOT/play/"
-scpr sw-root-killer.js "$HOST:$DOCROOT/sw.js"
+echo "==> nginx: новый CSP раньше файлов"
 sshr "nginx -t >/dev/null 2>&1 && systemctl reload nginx && echo RELOADED"
+csp_header_wait "$PROD_IP" "прод"
 
-# Домен под гео-DNS (Gcore): из РФ юзер приходит на vdsina, из-за рубежа и из-под VPN — на
-# зеркало. С машины деплоя имя резолвится куда угодно, поэтому КАЖДАЯ проверка идёт по явному
-# адресу: без этого смоук однажды весь прогон проверял зеркало вместо только что залитого прода.
-PROD_IP="${PROD_IP:-83.217.215.66}"
-MIRROR_HOST="${MIRROR_HOST:-assistant-box}"
-MIRROR_IP="${MIRROR_IP:-194.5.65.182}"
+echo "==> заливка"
+sshr "mkdir -p $DOCROOT/play/.next"
+scpr -r landing/dist/* "$HOST:$DOCROOT/"
+# scp пишет файл на месте: пока 1,5 МБ страницы идут по сети, nginx отдавал бы её обрезанной.
+# В .next рядом, потом mv — переименование в той же файловой системе атомарно
+scpr build/play/index.html build/play/sw.js build/play/manifest.webmanifest build/play/icon-192.png build/play/icon-512.png "$HOST:$DOCROOT/play/.next/"
+sshr "cd $DOCROOT/play && mv -f .next/* . && rmdir .next"
+scpr sw-root-killer.js "$HOST:$DOCROOT/sw.js"
+
 RES_PROD=(--resolve "pozerkalam.space:443:$PROD_IP")
 
 # CSP-хэши пересчитываются на каждой сборке. Страница с новыми инлайн-скриптами под старым
@@ -398,15 +427,16 @@ else
 
   MIRROR_OK=1
   mirror_rsync "выгрузка с vdsina" "$HOST:$DOCROOT/" "$MIRROR_TMP/" || MIRROR_OK=0
-  if [ "$MIRROR_OK" = "1" ]; then
-    mirror_rsync "заливка на зеркало" --rsync-path="sudo rsync" "$MIRROR_TMP/" "$MIRROR_HOST:$DOCROOT/" || MIRROR_OK=0
-  fi
 
   # Конфиг зеркала — не только файлы. CSP считается от содержимого страниц, а страницы
   # у зеркала те же: со старым заголовком браузер режет скрипт игры, и зарубежный игрок
-  # видит пустую страницу при целых файлах и сошедшемся sha256.
+  # видит пустую страницу при целых файлах и сошедшемся sha256. Поэтому конфиг идёт ПЕРВЫМ:
+  # заголовок пускает и живые страницы зеркала, и новые, а файлы льются, когда он уже отдаётся.
   if [ "$MIRROR_OK" = "1" ]; then
-    mirror_scp build/pozerkalam-headers.conf /tmp/pz-headers.conf || MIRROR_OK=0
+    mirror_scp tools/csp-hashes.py /tmp/pz-csp-hashes.py || MIRROR_OK=0
+    LIVE_MIRROR=$(live_hashes mirror_ssh)
+    write_headers build/pozerkalam-headers-mirror.conf "$(csp_union $CSP_PROD $LIVE_MIRROR)"
+    mirror_scp build/pozerkalam-headers-mirror.conf /tmp/pz-headers.conf || MIRROR_OK=0
     mirror_ssh "sudo cp /tmp/pz-headers.conf /etc/nginx/snippets/pozerkalam-headers.conf" || MIRROR_OK=0
     # Аналитика зарубежных и VPN-игроков: /rb/ проксируется на прод, своего Rybbit здесь нет.
     mirror_scp server/nginx-rybbit-mirror.conf /tmp/pz-rybbit.conf || MIRROR_OK=0
@@ -424,6 +454,10 @@ else
     fi
     mirror_ssh "grep -q 'location = /play/sw.js' /etc/nginx/sites-available/pozerkalam.space || sudo sed -i 's|    location = /play/index.html { add_header Cache-Control \"no-cache\"; include snippets/pozerkalam-headers.conf; }|&\n    location = /play/sw.js { add_header Cache-Control \"no-cache\"; include snippets/pozerkalam-headers.conf; }|' /etc/nginx/sites-available/pozerkalam.space" || MIRROR_OK=0
     mirror_ssh "sudo nginx -t >/dev/null 2>&1 && sudo systemctl reload nginx && echo '    зеркало: nginx перезагружен'" || MIRROR_OK=0
+  fi
+  if [ "$MIRROR_OK" = "1" ]; then
+    csp_header_wait "$MIRROR_IP" "зеркало"
+    mirror_rsync "заливка на зеркало" --rsync-path="sudo rsync" "$MIRROR_TMP/" "$MIRROR_HOST:$DOCROOT/" || MIRROR_OK=0
   fi
 
   if [ "$MIRROR_OK" = "1" ]; then

@@ -108,6 +108,26 @@ check('мусор в trainer_progress вычищается, progAdd и win() н�
 const empty = await page.evaluate(() => { try { doAct(); doAct(''); doAct(null); return 'ok'; } catch (e) { return e.message; } });
 check('doAct без действия не бросает (@app-doact-empty)', empty === 'ok', empty);
 
+/* 7. скрипт игры не запустился (CSP срезал его посреди выкатки, обрыв сети) — игрок видит не пустую
+   карточку, а что делать. CSP script-src 'none' воспроизводит то, что делает браузер при чужом хэше */
+{
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const p2 = await ctx.newPage();
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  await ctx.route('**/*', r => r.request().url().split('#')[0] === 'https://pozerkalam.space/play/'
+    ? r.fulfill({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "script-src 'none'" }, body: html })
+    : r.fulfill({ status: 404, body: '' }));
+  await p2.goto('https://pozerkalam.space/play/#auth=x');
+  await p2.waitForTimeout(400);
+  const b = await p2.evaluate(() => ({ ov: getComputedStyle(document.getElementById('overlay')).display,
+    text: document.getElementById('ovCard').textContent.trim(), ran: typeof window.loadLevel }));
+  check('скрипт не запустился — в карточке «обнови страницу», а не пустота (@app-boot-blocked-hint)',
+    b.ran === 'undefined' && b.ov !== 'none' && /обнови страницу/.test(b.text), JSON.stringify(b));
+  const ok = await page.evaluate(() => document.getElementById('ovCard').textContent);
+  check('при обычной загрузке подсказки о сбое на экране нет (@app-boot-blocked-hint)', !/обнови страницу/.test(ok), ok.slice(0, 60));
+  await ctx.close();
+}
+
 await browser.close();
 const failed = results.filter(r => !r.ok);
 console.log(JSON.stringify({ total: results.length, failed: failed.length, names: failed.map(f => f.name) }));

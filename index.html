@@ -29,6 +29,7 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;touch-action:none
 input,textarea{-webkit-user-select:text;user-select:text}
 /* текст оверлеев — содержимое: шаги, лайфхаки, итоги копируют; запрет выделения остаётся на игровом слое и кнопках */
 #overlay .card{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
+#overlay .bootnote{margin:0;color:#c3d2e2;font-size:15px;line-height:1.5}
 body.drag #view{cursor:grabbing}
 body.mir #coach{top:calc(var(--mirbot,100px) + 8px)}
 .panel{position:fixed;background:rgba(9,14,20,.74);border:1px solid rgba(255,255,255,.10);
@@ -572,7 +573,10 @@ body.fp #hint{display:none}
 <div id="rotate"><span style="font-size:44px;line-height:1">↻</span><br><br>Поверни телефон горизонтально —<br>тренажёр рассчитан на альбомную ориентацию.</div>
 
 <div id="overlay">
-  <div class="card" id="ovCard"></div>
+  <!-- текст виден, только пока скрипт не запустился: при сбое загрузки (скрипт срезан CSP посреди
+       выкатки, обрыв сети) игрок видел пустую тёмную карточку без единого слова. Скрипт заменяет
+       его стартовым экраном в первый же момент. Обновление страницы завершает и вход: sid остаётся в адресе -->
+  <div class="card" id="ovCard"><p class="bootnote">Загружаем тренажёр. Если экран не меняется дольше пары секунд — обнови страницу.</p></div>
 </div>
 
 <!-- assets:begin — генерат tools/assets/embed.mjs, руками не править -->
