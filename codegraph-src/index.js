@@ -3887,13 +3887,17 @@ const LAMP_LAT=LAWN_IN+0.6;                      /* стойка фонаря �
    щиты указателей. Низкие кроны (tree-c, tree-d) — в середине квартала */
 const PROP_HIGH=['tree-a','tree-b','tree-e','pine'];
 const PROP_NEAR_NODE=40;
+/* верх щита указателя улиц: крона выше него щит не закрывает */
+const GUIDE_TOP=3.4;
 /* перед лицом знака или светофора уровня: 25 м вперёд и по 4,5 м в стороны — полосы подхода и газон. Щит
    указателя стоит дальше ряда деревьев от проезжей части (hw + 2,6 против hw + 1,35), и линия взгляда из полос
    пересекает этот ряд только в 2–17 м перед щитом (с 60 м) — ему хватает 20 м: с 25 конус срезал треть деревьев */
 const PROP_CONE_L=25, PROP_CONE_W=4.5, GUIDE_CONE_L=20;
 /* порода улицы: аллея из одной породы читается посадкой, а не случайным лесом */
-const PROP_STREET={'Ленина':'tree-d','Заводская':'tree-a','Садовая':'tree-b','Восточная':'tree-e','Парковая':'tree-c',
-                   'Западная':'tree-a','Южная':'tree-e','Косой съезд':'pine'};
+/* на улицах — только высокие кроны: короткие кварталы почти целиком лежат в 40 м от перекрёстков; низкие (tree-c, tree-d)
+   — во дворах */
+const PROP_STREET={'Ленина':'tree-a','Заводская':'tree-e','Садовая':'tree-b','Восточная':'tree-a','Парковая':'tree-b',
+                   'Западная':'tree-e','Южная':'tree-a','Косой съезд':'pine'};
 const PROP_HEDGE={'Садовая':true,'Западная':true};
 /* крона заходит за кромку проезжей части не дальше 0,55 м: камера погони в правом ряду идёт в 1,1 м от этой
    границы на высоте ~4 м и иначе проходила бы сквозь крону */
@@ -3903,6 +3907,7 @@ const PROP_LEAF=[[98,138,74],[86,128,68],[112,146,80],[90,120,70]];
 const PROP_BARK=[116,94,74];
 const HEDGE_COL=[74,110,66];
 const LAMP_STEP=30;
+const TREE_STEP=7.5, TREE_PHASE=LAMP_STEP/2-3*TREE_STEP/2;     /* стволы в 3,75 м от фонарей и через 7,5 м */
 const BENCH_X=3.9;                               /* скамейка — у фасада (hw + 5), за рядом деревьев */
 const YARD_STEP=16, YARD_GROUND='#66745a', YARD_PAD='#5d6168';
 /* контактная сеть трамвая: поперечина между опорами на 7,2 м, контактный провод над осью каждого пути на 6 м */
@@ -3965,11 +3970,12 @@ function cityProps(spec, pt, radius, arms, obs, bld, hull){
   const list=[];
   /* half — полуразмер следа для зон, tall — выше 0,5 м, gap — свой зазор до соседей */
   const stats={lamps:0, trees:0, bushes:0, hedges:0, island:0, lawnM:0, miss:{node:0, solid:0, tall:0, gap:0}};
-  const fits=(u,v,half,tall,gap,box)=>{
+  /* crownOk — дерево с кроной выше щита указателя: перед щитом ему можно стоять, ствол закрывает лишь полосу щита */
+  const fits=(u,v,half,tall,gap,box,crownOk)=>{
     const p=box ? rectPts(u,v,box.w,box.l,box.yaw) : rectPts(u,v,2*half,2*half,0), r=box ? Math.hypot(box.w,box.l)/2 : half*1.42;
     if(hitZ(nodeZ,p,r)){ stats.miss.node++; return false; }
     if(hitZ(solidZ,p,r)){ stats.miss.solid++; return false; }
-    if(tall && (hitZ(tallZ,p,r) || inCone(u,v))){ stats.miss.tall++; return false; }
+    if(tall && (hitZ(tallZ,p,r) || (!crownOk && inCone(u,v)))){ stats.miss.tall++; return false; }
     if(gap) for(const q of list) if(q._gap && Math.hypot(q.u-u, q.v-v) < q._gap+gap){ stats.miss.gap++; return false; }
     return true;
   };
@@ -4050,41 +4056,40 @@ function cityProps(spec, pt, radius, arms, obs, bld, hull){
     add({kind:'prop', m:'wire', u:(w.a.u+w.b.u)/2, v:(w.a.v+w.b.v)/2, yaw:Math.atan2(du,dv), s:1, a:w.a, b:w.b, len:L, solid:null});
     stats.wires=(stats.wires||0)+1;
   }
-  /* 2. деревья в газоне, между ними — кусты или стриженая изгородь */
+  /* 2. деревья в газоне — аллеей: одна порода и один размер на сторону улицы, шаг TREE_STEP, сдвинутый от фонарей на
+     половину шага, — между двумя фонарями ровно четыре ствола; грани кроны развёрнуты вдоль улицы. Место, где дерево
+     не встаёт (перекрёсток, треугольник видимости, остановка), остаётся пустым, ритм не сбивается. Случайные шаг,
+     порода, размер и поворот читались неряшливо (владелец: «сделаем деревья более аккуратными»). Между стволами —
+     куст в каждом втором промежутке или стриженая изгородь */
   for(const r of spec.roads){
-    const A=pt(r.a), f=fuv(r._yaw), rt=ruv(r._yaw), name=streetName(r), sp=PROP_STREET[name]||'tree-a', hedge=!!PROP_HEDGE[name];
+    const A=pt(r.a), f=fuv(r._yaw), rt=ruv(r._yaw), name=streetName(r), hedge=!!PROP_HEDGE[name];
     const ends=[r.a,r.b].filter(e=>!Array.isArray(e)).map(e=>spec.nodes[e]);
     for(const sx of [-1,1]){
-      const rnd=bldRng('tree|'+r.name+'|'+String(r.a)+'|'+sx), off=r._hw+PROP_LAT, at=(t,x)=>({u:A.u+f.u*t+rt.u*sx*x, v:A.v+f.v*t+rt.v*sx*x});
+      const off=r._hw+PROP_LAT, at=(t,x)=>({u:A.u+f.u*t+rt.u*sx*x, v:A.v+f.v*t+rt.v*sx*x});
+      const nearNode=(p)=>ends.some(n=>Math.hypot(n.u-p.u, n.v-p.v)<PROP_NEAR_NODE);
+      let m=PROP_STREET[name]||'tree-a';
+      const D=propDim(m), s=Math.min(1, D.r>0 ? PROP_CROWN_MAX/D.r : 1), leaf=PROP_LEAF[(name.length+(sx>0?1:0))%PROP_LEAF.length];
       const ts=[];
-      for(let t=2+rnd()*5; t<r._len-2; ){
-        const p=at(t,off), dn=ends.length ? Math.min(...ends.map(n=>Math.hypot(n.u-p.u, n.v-p.v))) : 1e9;
-        let m = rnd()<0.8 ? sp : PROP_HIGH[Math.floor(rnd()*PROP_HIGH.length)];
-        if(dn<PROP_NEAR_NODE && !PROP_HIGH.includes(m)) m='tree-a';
-        const D=propDim(m), s=Math.min(0.85+0.3*rnd(), D.r>0 ? PROP_CROWN_MAX/D.r : 1), yaw=rnd()*TAU, leaf=PROP_LEAF[Math.floor(rnd()*PROP_LEAF.length)];
-        if(rnd()<0.06 || !fits(p.u,p.v,0.6,true,2.4)){ t+=2; continue; }
-        add({kind:'prop', m, u:p.u, v:p.v, yaw, s, leaf, solid:'tree', _gap:2.4}); stats.trees++;
-        ts.push(t); t+=7.5+rnd()*2;
+      for(let t=TREE_PHASE; t<r._len-2; t+=TREE_STEP){
+        const p=at(t,off);
+        const mm = nearNode(p) && !PROP_HIGH.includes(m) ? 'tree-a' : m;
+        if(!fits(p.u,p.v,0.6,true,2.4,null,propDim(mm).y0*s>GUIDE_TOP)) continue;
+        add({kind:'prop', m:mm, u:p.u, v:p.v, yaw:r._yaw, s, leaf, solid:'tree', _gap:2.4}); stats.trees++;
+        ts.push(t);
       }
       for(let i=0;i+1<ts.length;i++){
         const a=ts[i], b=ts[i+1];
-        if(b-a<6) continue;
+        if(b-a>TREE_STEP+0.01) continue;
+        const tm=(a+b)/2;
         if(hedge){
-          /* изгородь — по внешнему краю газона, кусками по 3 м: длинная коробка сортируется по центру неверно */
-          const x=r._hw+LAWN_IN+LAWN_W-0.25;
-          for(let t=a+1.6; t+3<=b-1.6; t+=3.3){
-            const p=at(t+1.5, x);
-            if(!fits(p.u,p.v,0.25,true,0) || !fits(at(t,x).u,at(t,x).v,0.25,true,0) || !fits(at(t+3,x).u,at(t+3,x).v,0.25,true,0)) continue;
-            add({kind:'prop', m:'hedge', u:p.u, v:p.v, w:0.45, l:3.0, h:0.75, yaw:r._yaw, col:HEDGE_COL, tex:'hedge', solid:'hedge'}); stats.hedges++;
-          }
-        } else if(b-a>=8 && rnd()<0.4){
-          const n=2+Math.floor(rnd()*2), tm=(a+b)/2;
-          for(let j=0;j<n;j++){
-            const p=at(tm+(j-(n-1)/2)*1.1, off), m=rnd()<0.5 ? 'bush-b' : 'bush-c', D=propDim(m);
-            const s=Math.min(0.9+0.3*rnd(), PROP_BUSH_MAX/(D.r||0.8)), yaw=rnd()*TAU;
-            if(!fits(p.u,p.v,0.4,true,0.4)) continue;
-            add({kind:'prop', m, u:p.u, v:p.v, yaw, s, leaf:PROP_LEAF[(i+j)%PROP_LEAF.length], solid:null}); stats.bushes++;
-          }
+          /* изгородь — по внешнему краю газона, кусок 3 м посередине промежутка: длинная коробка сортируется по центру неверно */
+          const x=r._hw+LAWN_IN+LAWN_W-0.25, p=at(tm, x);
+          if(!fits(p.u,p.v,0.25,true,0) || !fits(at(tm-1.5,x).u,at(tm-1.5,x).v,0.25,true,0) || !fits(at(tm+1.5,x).u,at(tm+1.5,x).v,0.25,true,0)) continue;
+          add({kind:'prop', m:'hedge', u:p.u, v:p.v, w:0.45, l:3.0, h:0.75, yaw:r._yaw, col:HEDGE_COL, tex:'hedge', solid:'hedge'}); stats.hedges++;
+        } else if(i%2===0){
+          const p=at(tm, off), Db=propDim('bush-a'), sb=Math.min(1, PROP_BUSH_MAX/(Db.r||0.8));
+          if(!fits(p.u,p.v,0.4,true,0.4)) continue;
+          add({kind:'prop', m:'bush-a', u:p.u, v:p.v, yaw:r._yaw, s:sb, leaf, solid:null}); stats.bushes++;
         }
       }
     }
@@ -4118,12 +4123,12 @@ function cityProps(spec, pt, radius, arms, obs, bld, hull){
   const BED=['#c4484a','#e0b23c','#d277a6'];
   for(const k in spec.nodes){ const nd=spec.nodes[k]; if(!nd.round) continue;
     const rnd=bldRng('island|'+k), rIn=nd.round-7.0;
-    add({kind:'prop', m:'tree-b', u:nd.u, v:nd.v, yaw:rnd()*TAU, s:1, leaf:PROP_LEAF[0], solid:'tree'}); stats.island++;
+    add({kind:'prop', m:'tree-b', u:nd.u, v:nd.v, yaw:0, s:1, leaf:PROP_LEAF[0], solid:'tree'}); stats.island++;
     for(let i=0;i<5;i++){ const a=i/5*TAU+0.3, rr=rIn-3.4;
-      add({kind:'prop', m:i%2 ? 'tree-e' : 'tree-a', u:nd.u+Math.cos(a)*rr, v:nd.v+Math.sin(a)*rr, yaw:rnd()*TAU, s:0.9,
+      add({kind:'prop', m:i%2 ? 'tree-e' : 'tree-a', u:nd.u+Math.cos(a)*rr, v:nd.v+Math.sin(a)*rr, yaw:0, s:0.9,
            leaf:PROP_LEAF[(i+1)%PROP_LEAF.length], solid:'tree'}); stats.island++; }
     for(let i=0;i<10;i++){ const a=i/10*TAU, rr=rIn-1.5, m=['bush-b','bush-c'][i%2], D=propDim(m);
-      add({kind:'prop', m, u:nd.u+Math.cos(a)*rr, v:nd.v+Math.sin(a)*rr, yaw:rnd()*TAU, s:Math.min(1, PROP_BUSH_MAX/(D.r||0.8)),
+      add({kind:'prop', m, u:nd.u+Math.cos(a)*rr, v:nd.v+Math.sin(a)*rr, yaw:0, s:Math.min(1, PROP_BUSH_MAX/(D.r||0.8)),
            leaf:PROP_LEAF[i%PROP_LEAF.length], solid:null}); stats.island++; }
     /* клумба — по одной заливке на цвет: двенадцать секторов отдельными наклейками стоили двенадцати заливок */
     const bp=[[],[],[]];
@@ -4174,7 +4179,7 @@ function cityProps(spec, pt, radius, arms, obs, bld, hull){
       const L=(a,x)=>({u:gu+F.u*a+Rt.u*x, v:gv+F.v*a+Rt.v*x});
       if(kind==='green'){
         for(let k=0;k<3;k++){ const p=L((k-1)*5, (ry()-0.5)*4), m=['tree-b','tree-a','pine','tree-c'][Math.floor(ry()*4)], D=propDim(m);
-          const s=0.9+0.3*ry(), yw=ry()*TAU, leaf=PROP_LEAF[Math.floor(ry()*PROP_LEAF.length)];
+          const s=0.95+0.1*ry(), yw=yaw, leaf=PROP_LEAF[Math.floor(ry()*PROP_LEAF.length)];
           if(!fits(p.u,p.v,0.6,true,2.4)) continue;
           add({kind:'prop', m, u:p.u, v:p.v, yaw:yw, s, leaf, solid:'tree', yard:true, _gap:2.4}); stats.yardTrees=(stats.yardTrees||0)+1; }
         continue;

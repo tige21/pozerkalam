@@ -15,8 +15,8 @@
   по материалу слила бы в одну грань полосы разных цветов.
 - Грани одной плоскости и одного цвета склеиваются, как у кузовов (models.py): рендер заливает грань одним
   цветом, а число граней — то, во что упирается кадр телефона.
-- Дерево собирается заново: крона — выпуклая оболочка листвы, ствол — призма до низа кроны; дальний вид (lod) —
-  оболочка 12 самых удалённых точек кроны и четырёхгранный ствол (подробнее — в build).
+- Дерево собирается заново: от модели берутся размеры кроны, сама крона — тело вращения по профилю породы
+  (PROFILE) на оси ствола, ствол — призма до низа кроны; дальний вид — те же кольца реже (подробнее — в build).
 - Начало координат — центр ствола у земли: генератор ставит предмет точкой, касание — по стволу.
 """
 import json
@@ -27,14 +27,23 @@ import sys
 import bmesh
 import bpy
 import mathutils
-from mathutils.bvhtree import BVHTree
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SRC = ROOT / 'assets' / 'src' / 'models' / 'kenney'
 OUT = ROOT / 'build' / 'assets' / 'props-mesh.json'
 MAX_POLY = 48                 # заготовки массивов на грань в игре — те же, что у кузовов (carModel.scratch)
-LOD_PTS = 12                  # точек кроны в дальнем виде: с 8 крона выходила угловатым кристаллом
-BUSH_PTS = 10
+CROWN_N, LOD_N = 8, 6         # граней кроны по кругу: вблизи и в дальнем виде
+# профиль кроны породы: (доля высоты кроны, доля наибольшего радиуса) снизу вверх — силуэт модели Kenney,
+# выпрямленный в тело вращения. Наклоны убывают (профиль вогнутый) — тело выпуклое
+PROFILE = {
+    'tree-a': [(0, .55), (.38, 1), (.8, .78), (1, .35)],      # липа: круглая крона
+    'tree-b': [(0, .62), (.4, 1), (.8, .8), (1, .4)],         # дуб: шире и площе
+    'tree-c': [(0, .75), (.4, 1), (.78, .78), (1, .3)],       # низкая пышная
+    'tree-d': [(0, .55), (.3, 1), (.8, .75), (1, .28)],       # тополь: колонна
+    'tree-e': [(0, .5), (.35, 1), (.8, .72), (1, .3)],        # яйцо
+    'pine': [(0, 1), (.45, .6), (.8, .25), (1, 0)],           # ель: конус
+    'bush': [(0, .8), (.45, 1), (1, .6)],                     # куст: подстриженный ком
+}
 TRUNK_R = 0.022               # радиус ствола у земли — доля высоты дерева: 8 м → 0,18 м
 TRUNK_IN = 0.15               # ствол заходит в крону на 15 см: без захода между ними просвечивала щель
 
@@ -140,29 +149,26 @@ def prepare(objs, bm):
     return keys
 
 
-def hull(points):
-    """Выпуклая оболочка точек: копланарные треугольники склеены в многоугольники, нормали наружу."""
+def revolve(cx, cy, zb, zt, R, prof, n):
+    """Крона — тело вращения: n граней по кругу, кольца по профилю породы (доля высоты кроны, доля радиуса).
+    Профиль вогнутый, поэтому тело выпуклое и его грани сортируются без ошибок; радиус 0 — вершина (ель),
+    иначе сверху плоская шапка. Обход колец против часовой при взгляде сверху даёт нормали наружу"""
     bm = bmesh.new()
-    vs = [bm.verts.new(p) for p in points]
-    res = bmesh.ops.convex_hull(bm, input=vs, use_existing_faces=False)
-    junk = list({g for g in res['geom_interior'] + res['geom_unused'] if isinstance(g, bmesh.types.BMVert)})
-    if junk:
-        bmesh.ops.delete(bm, geom=junk, context='VERTS')
-    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
-    bmesh.ops.dissolve_limit(bm, angle_limit=math.radians(1.0), verts=bm.verts[:], edges=bm.edges[:])
+    a = [2 * math.pi * (i + 0.5) / n for i in range(n)]
+    rings = []
+    for f, r in prof:
+        z = zb + (zt - zb) * f
+        rings.append([bm.verts.new((cx, cy, z))] if r <= 1e-6 else
+                     [bm.verts.new((cx + R * r * math.cos(t), cy + R * r * math.sin(t), z)) for t in a])
+    bm.faces.new(list(reversed(rings[0])))
+    for A, B in zip(rings, rings[1:]):
+        for j in range(n):
+            bm.faces.new((A[j], A[(j + 1) % n], B[0]) if len(B) == 1 else (A[j], A[(j + 1) % n], B[(j + 1) % n], B[j]))
+    if len(rings[-1]) > 1:
+        bm.faces.new(rings[-1])
     for f in bm.faces:
         f.material_index = 0
     return bm
-
-
-def sample(points, n):
-    """Самые удалённые друг от друга точки: верх, низ и дальше каждая — дальше всех от уже выбранных.
-    Оболочка выборки повторяет силуэт кроны меньшим числом граней и остаётся выпуклой."""
-    pts = list(points)
-    chosen = [max(pts, key=lambda p: p.z), min(pts, key=lambda p: p.z)]
-    while len(chosen) < min(n, len(pts)):
-        chosen.append(max(pts, key=lambda p: min((p - q).length for q in chosen)))
-    return chosen
 
 
 def trunk(cx, cy, z0, z1, rb, rt, n):
@@ -227,22 +233,26 @@ def build(name):
             return (-p.x, p.z, -p.y)
         return (-p.x * k, p.z * k, -p.y * k)
 
-    # Крона Kenney — несколько вставленных друг в друга частей, а ствол уходит в неё до середины: рендер с
-    # сортировкой граней такие тела не различает (правило 4), и ствол рисовался поверх кроны. А упрощение всей
-    # модели до 14 треугольников склеивало ствол с кроной в коричневое веретено. Поэтому крона — выпуклая
-    # оболочка листвы, ствол — отдельная призма от земли до низа кроны на оси, дальний вид — оболочка
-    # 12 самых удалённых точек кроны и четырёхгранный ствол: силуэт тот же, тела не пересекаются
+    # Модель Kenney как есть не годится рендеру с сортировкой граней: части кроны вставлены друг в друга, ствол
+    # уходит в крону до середины и рисовался поверх неё, а упрощение модели склеивало ствол с кроной в веретено.
+    # Выпуклая оболочка листвы это лечила, но выходила неровной и местами заваленной набок (владелец: «сделаем
+    # деревья более аккуратными»). От модели берутся только размеры кроны — низ, верх и радиус; сама крона —
+    # тело вращения по профилю породы ровно на оси ствола, ствол — призма до низа кроны. Дальний вид — те же
+    # кольца без промежуточных, шесть граней по кругу и четырёхгранный ствол
     tree = not name.startswith('bush')
-    # куст мелкий: его крона сразу — оболочка BUSH_PTS точек (~16 граней), полная оболочка листьев давала до 38
-    crown = hull(leaf) if tree else hull(sample(leaf, BUSH_PTS))
-    lod_crown = hull(sample([v.co for v in crown.verts], LOD_PTS))
+    lc = (sum(p.x for p in leaf) / len(leaf), sum(p.y for p in leaf) / len(leaf))
+    R = max(math.hypot(p.x - lc[0], p.y - lc[1]) for p in leaf)
+    zb, zt = (min(p.z for p in leaf), max(p.z for p in leaf)) if tree else (z0, z1)
+    prof = PROFILE['bush' if not tree else name]
+    widest = max(range(len(prof)), key=lambda i: prof[i][1])
+    lod_prof = [prof[i] for i in sorted({0, widest, len(prof) - 1})]
+    crown = revolve(cx, cy, zb, zt, R, prof, CROWN_N)
+    lod_crown = revolve(cx, cy, zb, zt, R, lod_prof, LOD_N)
     keys2 = ['leaf', 'wood']
     rb = TRUNK_R * (z1 - z0)
     parts, lod_parts = [crown], [lod_crown]
     if tree:
-        bvh = BVHTree.FromBMesh(crown)
-        hit = bvh.ray_cast(mathutils.Vector((cx, cy, z0 - 1.0)), mathutils.Vector((0, 0, 1)))
-        ztop = (hit[0].z if hit[0] is not None else min(p.z for p in leaf)) + TRUNK_IN / k
+        ztop = zb + TRUNK_IN / k
         parts.append(trunk(cx, cy, z0, ztop, rb, rb * 0.6, 6))
         lod_parts.append(trunk(cx, cy, z0, ztop, rb, rb * 0.6, 4))
 

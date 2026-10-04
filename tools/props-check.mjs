@@ -191,7 +191,9 @@ const sightline = await page.evaluate(([CITY, fault]) => {
     for (const o of level.obs) {
       if (o.kind === 'light') for (let i = 0; i < 3; i++) tg.push({ o, y: LIGHT_H - 0.16 - i * 0.29 });
       else if (o.kind === 'sign') tg.push({ o, y: SIGN_H - 0.35 });
-      else if (o.kind === 'guide') tg.push({ o, y: 2.8 });
+      /* щит указателя шириной 2,2 м читается, пока видны две из трёх точек по его ширине: ствол толщиной 0,4 м перед
+         щитом закрывает лишь его полосу */
+      else if (o.kind === 'guide') tg.push({ o, y: 2.8, lat: [-0.8, 0, 0.8], need: 2 });
     }
     for (const T of tg) {
       out.targets++;
@@ -208,11 +210,14 @@ const sightline = await page.evaluate(([CITY, fault]) => {
         const eu = best.pu + nu * x + f.u * d, ev = best.pv + nv * x + f.v * d;
         if (!onRoad(eu, ev)) continue;
         out.rays++;
-        for (const p of P) {
-          if (Math.hypot(p.u - (eu + o.u) / 2, p.v - (ev + o.v) / 2) > d / 2 + 4) continue;
-          if (blocks(p, eu, EYE_Y, ev, o.u, T.y, o.v)) {
-            out.bad.push({ lvl: li + 1, kind: o.kind, at: [+o.u.toFixed(1), +o.v.toFixed(1)], from: d, m: p.m, p: [+p.u.toFixed(1), +p.v.toFixed(1)] }); break; }
+        const r0 = ruv(o.yaw), pts = (T.lat || [0]).map((l) => ({ u: o.u + r0.u * l, v: o.v + r0.v * l }));
+        let hidden = 0, who = null;
+        for (const q of pts) for (const p of P) {
+          if (Math.hypot(p.u - (eu + q.u) / 2, p.v - (ev + q.v) / 2) > d / 2 + 4) continue;
+          if (blocks(p, eu, EYE_Y, ev, q.u, T.y, q.v)) { hidden++; who = p; break; }
         }
+        if (pts.length - hidden < (T.need || 1))
+          out.bad.push({ lvl: li + 1, kind: o.kind, at: [+o.u.toFixed(1), +o.v.toFixed(1)], from: d, m: who.m, p: [+who.u.toFixed(1), +who.v.toFixed(1)] });
       }
     }
   }
