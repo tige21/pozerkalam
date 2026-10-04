@@ -65,6 +65,22 @@
 `CAR_HULL`, номер поставлен на бампер, грани одной плоскости склеены. Сами FBX в страницу не идут —
 только `build/assets/car-mesh.json`.
 
+## Модели обустройства города (04.10.2026)
+
+Выбор владельца по листу превью из трёх наборов (Kenney Nature Kit, Quaternius, Kenney City Kit
+Suburban): Kenney Nature Kit. Скамьи, урны, павильоны и опоры контактной сети в CC0-наборах не нашлись —
+они коробками в коде.
+
+| Файл | Дата | Откуда | Лицензия | Что сделано |
+|---|---|---|---|---|
+| models/kenney/nature/tree_default.glb, tree_oak, tree_fat, tree_tall, tree_simple, tree_pineTallA | 2026-10-04 | Nature Kit 2.1, Kenney, kenney.nl/assets/nature-kit | CC0 (models/kenney/nature/License.txt), автора указывать не обязательно | деревья `tree-a…e`, `pine`; листва и кора красятся палитрой игры |
+| models/kenney/nature/plant_bushDetailed, plant_bush, plant_bushLarge | 2026-10-04 | то же | CC0 | кусты `bush-a…c` |
+| models/kenney/roads/light-curved, light-square, dumpster | 2026-10-04 | City Kit (Roads), Kenney, kenney.nl/assets/city-kit-roads | CC0 (models/kenney/roads/License.txt) | фонари `lamp-a`, `lamp-b`, бак `dumpster`; цвет грани — из палитры-текстуры набора |
+
+В игру модели переводит `tools/blender/props.py`: масштаб целиком по высоте, начало — центр ствола у
+земли, фонарь консолью вперёд, грани одной плоскости и цвета склеены, у деревьев с выгодой — дальний
+вид упрощением до 24 треугольников. В страницу идёт только `build/assets/props-mesh.json`.
+
 ## Удалены 03.10.2026
 
 Не читаются ни игрой, ни конвейером (`clean.py`, `car.py`, `embed.mjs`); строки журнала и сами файлы —

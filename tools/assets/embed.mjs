@@ -50,6 +50,9 @@ const ASSETS = [
 /* модель кузова (tools/blender/models.py) — JSON в <template>: шаблон не исполняется и не
    попадает ни в скрипты страницы, ни в зеркало codegraph */
 const CAR_MESH = path.join(SRC, 'car-mesh.json');
+/* обустройство города (tools/blender/props.py): деревья, кусты, фонари, бак — тем же шаблоном */
+const PROPS_MESH = path.join(SRC, 'props-mesh.json');
+const PROPS_NEED = ['tree-a', 'bush-a', 'lamp-a'];
 
 const log = (m) => console.log('[embed] ' + m);
 
@@ -85,6 +88,9 @@ function check() {
   const tpl = block.match(/<template id="car-mesh">([^<]*)<\/template>/);
   if (!tpl) fails.push('нет модели кузова <template id="car-mesh">');
   else { try { const d = JSON.parse(tpl[1]); if (!d.bodies || !['sedan', 'hatch', 'cross'].every((k) => d.bodies[k] && d.bodies[k].f.length)) fails.push('в модели кузова нет седана, хэтчбека или кроссовера'); } catch { fails.push('модель кузова — не JSON'); } }
+  const ptpl = block.match(/<template id="props-mesh">([^<]*)<\/template>/);
+  if (!ptpl) fails.push('нет моделей обустройства <template id="props-mesh">');
+  else { try { const d = JSON.parse(ptpl[1]); if (!d.models || !PROPS_NEED.every((k) => d.models[k] && d.models[k].f.length)) fails.push(`в моделях обустройства нет ${PROPS_NEED.join(', ')}`); } catch { fails.push('модели обустройства — не JSON'); } }
   log(`index.html ${(size / 1048576).toFixed(2)} МБ, бюджет ${(BUDGET / 1048576).toFixed(1)} МБ, блок ${(block.length / 1048576).toFixed(2)} МБ`);
   if (size > BUDGET) fails.push(`страница ${(size / 1048576).toFixed(2)} МБ больше бюджета`);
   for (const f of fails) console.error('ПРОВАЛ: ' + f);
@@ -128,6 +134,11 @@ function build() {
   lines.push(`<template id="car-mesh">${JSON.stringify(mesh)}</template>`);
   if (!mesh.bodies || !mesh.bodies.sedan) throw new Error('в car-mesh.json нет кузова sedan — tools/blender/models.py заново');
   log(`car-mesh: ${Object.entries(mesh.bodies).map(([k, b]) => `${k} ${b.f.length}`).join(', ')} граней, ${(JSON.stringify(mesh).length / 1024).toFixed(0)} КБ`);
+  if (!fs.existsSync(PROPS_MESH)) throw new Error('нет build/assets/props-mesh.json — сначала Blender -b -P tools/blender/props.py');
+  const props = JSON.parse(fs.readFileSync(PROPS_MESH, 'utf8'));
+  if (!props.models || !PROPS_NEED.every((k) => props.models[k])) throw new Error(`в props-mesh.json нет ${PROPS_NEED.join(', ')} — tools/blender/props.py заново`);
+  lines.push(`<template id="props-mesh">${JSON.stringify(props)}</template>`);
+  log(`props-mesh: ${Object.keys(props.models).length} моделей, ${(JSON.stringify(props).length / 1024).toFixed(0)} КБ`);
   const block = [BEGIN,
     `<div id="assets" hidden data-fingerprint="${stamp.fingerprint}" data-baked="${stamp.baked}" data-cube='${JSON.stringify(cube)}'>`,
     ...lines, '</div>', END].join('\n');
