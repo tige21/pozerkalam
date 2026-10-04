@@ -91,6 +91,8 @@ const gost = await page.evaluate((LV) => {
     /* краска, на которую позже лёг асфальт (квадрат перекрёстка 23–26, следующая улица), не видна и не считается */
     const MP = [];
     level.dec.forEach((d, j) => { if (d.polys && d.fill === MARK_COL) for (const P of d.polys) MP.push({ P, j }); });
+    /* разметка, лежащая целиком на эстакаде, рисуется поверх настила (level.rampDec) — её ничто не закрывает */
+    for (const d of level.rampDec || []) if (d.polys && d.fill === MARK_COL) for (const P of d.polys) MP.push({ P, j: Infinity });
     const covered = (p, j) => level.dec.some((d, k) => k > j && d.fill === ASPHALT && d.pts && polyHas(p.u, p.v, d.pts));
     /* голубые контуры карманов экзамена — учебная подсказка, не разметка */
     if (level.dec.some((d) => d.line && !/125,216,255/.test(d.stroke))) bad(`L${i + 1}: на уровне осталась экранная линия`);

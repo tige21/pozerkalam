@@ -701,13 +701,18 @@ function setCam(pos, target, upHint, fovDeg){
    делается здесь одной поправкой по высоте — машина, разметка, тени, маркеры
    и салон поднимаются согласованно, а физика остаётся плоской 2D (u,v) */
 let RAMP_ON=false;
+/* грани самой эстакады (настил, бортики) несут высоту в вершинах уже готовой: подъём по groundH поднял бы
+   их второй раз, а у бортика на краю зоны — то да, то нет, по округлению */
+let rampRaw=false;
 function groundH(u,v){
   const rs=level.ramps;
   for(let i=0;i<rs.length;i++){
     const z=rs[i], du=u-z.ou, dv=v-z.ov;
     const a=du*z.up.u+dv*z.up.v;
-    if(a<0||a>z.len||Math.abs(du*z.rt.u+dv*z.rt.v)>z.hw) continue;
-    return z.kind==='deck' ? z.h : z.grade*a;
+    /* допуск в микрон: точка, поставленная ровно на край зоны (стоп-линия во всю ширину подъёма, угол
+       настила), из-за округления выпадала из неё и ложилась на землю — линия вставала наклонно */
+    if(a<-1e-6||a>z.len+1e-6||Math.abs(du*z.rt.u+dv*z.rt.v)>z.hw+1e-6) continue;
+    return z.kind==='deck' ? z.h : z.grade*Math.min(z.len, Math.max(0, a));
   }
   return 0;
 }
@@ -741,7 +746,7 @@ function carLift(u,v){
   return c.h + c.k*((u-c.u)*c.fu+(v-c.v)*c.fv);
 }
 function toCam(p){
-  const py = RAMP_ON ? p.y+(carRampUse ? carLift(-p.x,p.z) : groundH(-p.x,p.z)) : p.y;
+  const py = RAMP_ON && !rampRaw ? p.y+(carRampUse ? carLift(-p.x,p.z) : groundH(-p.x,p.z)) : p.y;
   const dx=p.x-cam.pos.x, dy=py-cam.pos.y, dz=p.z-cam.pos.z;
   return { x: dx*cam.r.x+dy*cam.r.y+dz*cam.r.z,
            y: dx*cam.u.x+dy*cam.u.y+dz*cam.u.z,
@@ -961,7 +966,7 @@ function pushFace(v, n, col, bias, o){
      уже поднята; тест по сырому центру сравнивал поднятый глаз с неподнятой крышей — у верха
      подъёма (h ≥ 0,22) крыша проходила отсечение и закрывала лобовое, а грани потолка и мира
      вблизи глаза, наоборот, выпадали (#155) */
-  const cy0=(v[0].y+v[2].y)*0.5, cy=cy0 + (RAMP_ON ? (carRampUse ? carLift(-cx,cz) : groundH(-cx,cz)) : 0);
+  const cy0=(v[0].y+v[2].y)*0.5, cy=cy0 + (RAMP_ON && !rampRaw ? (carRampUse ? carLift(-cx,cz) : groundH(-cx,cz)) : 0);
   if((cam.pos.x-cx)*n.x + (cam.pos.y-cy)*n.y + (cam.pos.z-cz)*n.z <= 0) return;
   const cp=[]; let vis=false, behind=false;
   for(let i=0;i<v.length;i++){ const c=toCam(v[i]); cp.push(c); if(c.d>NEAR) vis=true; else behind=true; }
@@ -7221,6 +7226,8 @@ function loadLevel(i){
             marks: def.marks ? def.marks() : {} };
   level.bld = level.obs.filter(o=>o.kind==='bld');
   bldGridBuild();
+  level.rampDec=[];
+  if(level.ramps.length) rampBuild(level);
   decBounds(level.dec);
   RAMP_ON = level.ramps.length>0;
   if(def.phases) for(const p of def.phases){
@@ -9364,6 +9371,7 @@ function emitObstacle(o, cu, cv){
     if(o.kind==='tram'){ emitTram(o); return; }
     if(o.kind==='guide'){ emitGuide(o); return; }
     if(o.kind==='light'){ emitTrafficLight(o); return; }
+    if(o.kind==='rampside'){ emitRampSide(o); return; }
     pushBox(o.u,o.h/2,o.v,o.w/2,o.h/2,o.l/2,o.yaw,o.col,0,o);
   }
 }
@@ -9471,15 +9479,143 @@ function emitSign(o){
   }
 }
 /* настил эстакады красится плоскими декалями: warp в toCam сам кладёт их на склон */
-function drawRampDecks(){
+/* эстакада — конструкция, а не наклейка. Была одна плоская заливка #71767d в слое земли: без боков, без
+   текстуры и без света по уклону, на экзамене того же тона, что асфальт улицы, — подъём не читался ни сзади,
+   ни из салона (владелец, 04.10.2026: «подъёмов вообще не видно, текстуры нет»), а стоп-линию на подъёме
+   настил закрывал. Теперь: настил — гранями бетона с плиткой и светом по нормали уклона, сброшенными сразу,
+   в слое земли (машина на настиле рисуется поверх, как на наклейке); бордюр вдоль эстакады поднимается
+   стенкой от земли до бортика над настилом; разметка, лежащая целиком на эстакаде, — поверх настила */
+const RAMP_COL=[150,151,147], RAMP_SIDE_COL=[178,178,172], RAMP_PARAPET=0.32;
+const RAMP_EDGE_COL='rgba(244,200,52,.9)', RAMP_GROOVE_COL='rgba(58,60,62,.34)';
+function rampSurfH(z, a){ return z.kind==='deck' ? z.h : z.grade*Math.min(z.len, Math.max(0, a)); }
+function inRampZone(u, v, tol){
   for(const z of level.ramps){
-    fillGroundPoly(z.corners, '#71767d', 'rgba(230,234,238,.55)', 2, 0.012);
-    const e=0.14;
-    for(const s of [-1,1]){
-      const pts=[0,z.len].map(a=>({u:z.ou+z.up.u*a+z.rt.u*s*(z.hw-e),
-                                   v:z.ov+z.up.v*a+z.rt.v*s*(z.hw-e)}));
-      strokeGroundPath(pts, 'rgba(255,214,64,.85)', 2.5, null, 0.016);
+    const du=u-z.ou, dv=v-z.ov, a=du*z.up.u+dv*z.up.v;
+    if(a>=-tol && a<=z.len+tol && Math.abs(du*z.rt.u+dv*z.rt.v)<=z.hw+tol) return true;
+  }
+  return false;
+}
+/* бордюр вдоль бока эстакады режется по границам зон: кусок над зоной становится бортиком с высотой настила
+   на своих концах, остальное остаётся бордюром. Столкновения не меняются — они идут по level.obs */
+function rampSidesSplit(rend, ramps){
+  const out=[];
+  for(const o of rend){
+    if(o.kind!=='kerb'){ out.push(o); continue; }
+    const f=fuv(o.yaw), r=ruv(o.yaw), Z=[];
+    for(const z of ramps){
+      const par=f.u*z.up.u+f.v*z.up.v;
+      if(Math.abs(Math.abs(par)-1)>1e-3) continue;
+      const du=o.u-z.ou, dv=o.v-z.ov, lat=du*z.rt.u+dv*z.rt.v, inner=Math.abs(lat)-o.w/2;
+      if(inner<z.hw-0.05 || inner>z.hw+0.2) continue;
+      const ac=du*z.up.u+dv*z.up.v;
+      if(ac+o.l/2<=0.01 || ac-o.l/2>=z.len-0.01) continue;
+      const tz=-Math.sign(lat);
+      Z.push({z, ac, par:Math.sign(par), inS:Math.sign(tz*(z.rt.u*r.u+z.rt.v*r.v))});
     }
+    if(!Z.length){ out.push(o); continue; }
+    const L=o.l/2, cuts=[-L, L];
+    for(const q of Z) for(const a of [0, q.z.len]){ const sc=(a-q.ac)*q.par; if(sc>-L+0.01 && sc<L-0.01) cuts.push(sc); }
+    cuts.sort((x,y)=>x-y);
+    const oc=o.cut||{f:false,b:false,l:false,r:false};
+    for(let i=0;i+1<cuts.length;i++){
+      const s0=cuts[i], s1=cuts[i+1]; if(s1-s0<0.01) continue;
+      const sm=(s0+s1)/2, cu=o.u+f.u*sm, cv=o.v+f.v*sm;
+      const q=Z.find(q=>{ const a=q.ac+sm*q.par; return a>0 && a<q.z.len; });
+      const fEnd = i+2===cuts.length, bEnd = i===0;
+      if(!q){
+        out.push({kind:'kerb', u:cu, v:cv, w:o.w, l:s1-s0, h:o.h, yaw:o.yaw, col:o.col, tex:o.tex,
+                  cut:{f:fEnd ? oc.f : true, b:bEnd ? oc.b : true, l:oc.l, r:oc.r}});
+        continue;
+      }
+      const hs0=rampSurfH(q.z, q.ac+s0*q.par), hs1=rampSurfH(q.z, q.ac+s1*q.par);
+      /* торец бортика рисуется там, где эстакада кончается (настил у земли): дальше низкий бордюр, и без
+         торца бортик стоял бы открытой коробкой; на стыке бортиков торцы прячутся, как на швах стен */
+      out.push({kind:'rampside', u:cu, v:cv, w:o.w, l:s1-s0, h:Math.max(hs0,hs1)+RAMP_PARAPET, yaw:o.yaw,
+                col:RAMP_SIDE_COL, tex:'concrete', inS:q.inS, hs0, hs1,
+                cut:{f:hs1>0.01, b:hs0>0.01, l:false, r:false}});
+    }
+  }
+  return out;
+}
+function rampBuild(lv){
+  lv.rend=rampSidesSplit(lv.rend, lv.ramps);
+  const grooves=markSink(), edges=markSink();
+  for(const z of lv.ramps){
+    const P=(a,x)=>({u:z.ou+z.up.u*a+z.rt.u*x, v:z.ov+z.up.v*a+z.rt.v*x});
+    for(const sx of [-1,1]){ const x0=sx*(z.hw-0.22), x1=sx*(z.hw-0.07);
+      markPoly(edges, 0, [P(0,x0), P(z.len,x0), P(z.len,x1), P(0,x1)]); }
+    /* поперечные рифли на подъёме: шаг 0,6 м сжимается перспективой вдоль уклона иначе, чем на плоскости, —
+       по ним подъём и читается из салона */
+    if(z.kind==='ramp') for(let a=0.4; a<z.len-0.25; a+=0.6){ const w=z.hw-0.35;
+      markPoly(grooves, 0, [P(a-0.04,-w), P(a+0.04,-w), P(a+0.04,w), P(a-0.04,w)]); }
+  }
+  const moved=[];
+  const onRamp=(P)=>P.every(p=>inRampZone(p.u,p.v,0.02));
+  lv.dec=lv.dec.filter(d=>{
+    if(d.line) return true;
+    if(d.polys){
+      const inside=d.polys.filter(onRamp);
+      if(!inside.length) return true;
+      moved.push({polys:inside, fill:d.fill});
+      d.polys=d.polys.filter(P=>!onRamp(P));
+      return d.polys.length>0;
+    }
+    if(d.pts && d.pts.length && onRamp(d.pts)){ moved.push(d); return false; }
+    return true;
+  });
+  lv.rampDec=[];
+  if(grooves.polys.length) lv.rampDec.push({polys:grooves.polys.map(p=>p.pts), fill:RAMP_GROOVE_COL});
+  lv.rampDec.push(...moved);
+  lv.rampDec.push({polys:edges.polys.map(p=>p.pts), fill:RAMP_EDGE_COL});
+}
+const RAMP_UP={x:0,y:1,z:0};
+function emitRampDeck(z){
+  const P=(a,x)=>({x:-(z.ou+z.up.u*a+z.rt.u*x), y:rampSurfH(z,a), z:z.ov+z.up.v*a+z.rt.v*x});
+  const v0=P(0,-z.hw), v1=P(z.len,-z.hw), v2=P(z.len,z.hw), v3=P(0,z.hw);
+  let n=RAMP_UP;
+  if(z.kind==='ramp'){
+    const e1x=v1.x-v0.x, e1y=v1.y-v0.y, e1z=v1.z-v0.z, e2x=v3.x-v0.x, e2y=v3.y-v0.y, e2z=v3.z-v0.z;
+    let nx=e1y*e2z-e1z*e2y, ny=e1z*e2x-e1x*e2z, nz=e1x*e2y-e1y*e2x;
+    if(ny<0){ nx=-nx; ny=-ny; nz=-nz; }
+    const l=Math.sqrt(nx*nx+ny*ny+nz*nz)||1; n={x:nx/l, y:ny/l, z:nz/l};
+  }
+  if(QUALITY[qLevel].tex) texUV(texOf('concrete'), v0, v1, v3, {x:-z.up.u, y:0, z:z.up.v}, {x:-z.rt.u, y:0, z:z.rt.v});
+  pushFace([v0,v1,v2,v3], n, RAMP_COL, 0, null);
+}
+function emitRampSide(o){
+  const f=fuv(o.yaw), r=ruv(o.yaw), L=o.l/2, xi=o.inS*o.w/2, xo=-xi;
+  const P=(sl,x,y)=>({x:-(o.u+f.u*sl+r.u*x), y, z:o.v+f.v*sl+r.v*x});
+  const F3={x:-f.u, y:0, z:f.v}, R3={x:-r.u, y:0, z:r.v};
+  const nOut={x:-r.u*Math.sign(xo), y:0, z:r.v*Math.sign(xo)}, nIn={x:-nOut.x, y:0, z:-nOut.z};
+  const y0=o.hs0+RAMP_PARAPET, y1=o.hs1+RAMP_PARAPET, c=o.cut;
+  const tex=o.tex && QUALITY[qLevel].tex ? texOf(o.tex) : null;
+  const side=0xF & ~((c.f?2:0)|(c.b?8:0));
+  rampRaw=true;
+  try{
+    let q=[P(-L,xo,0), P(L,xo,0), P(L,xo,y1), P(-L,xo,y0)];
+    emNext=side; if(tex) texUV(tex,q[0],q[1],q[3],F3,null); pushFace(q, nOut, o.col, 0, null);
+    q=[P(-L,xi,o.hs0), P(L,xi,o.hs1), P(L,xi,y1), P(-L,xi,y0)];
+    emNext=side; if(tex) texUV(tex,q[0],q[1],q[3],F3,null); pushFace(q, nIn, o.col, 0, null);
+    q=[P(-L,xi,y0), P(L,xi,y1), P(L,xo,y1), P(-L,xo,y0)];
+    const dy=(y1-y0)/(2*L), tl=Math.sqrt(1+dy*dy);
+    emNext=side; if(tex) texUV(tex,q[0],q[1],q[3],F3,R3);
+    pushFace(q, {x:-F3.x*dy/tl, y:1/tl, z:-F3.z*dy/tl}, o.col, 0, null);
+    if(!c.b){ q=[P(-L,xi,0), P(-L,xo,0), P(-L,xo,y0), P(-L,xi,y0)];
+      emNext=0xF; if(tex) texUV(tex,q[0],q[1],q[3],R3,null); pushFace(q, {x:-F3.x, y:0, z:-F3.z}, o.col, 0, null); }
+    if(!c.f){ q=[P(L,xo,0), P(L,xi,0), P(L,xi,y1), P(L,xo,y1)];
+      emNext=0xF; if(tex) texUV(tex,q[0],q[1],q[3],R3,null); pushFace(q, F3, o.col, 0, null); }
+  } finally { rampRaw=false; }
+}
+/* настил сбрасывается сразу, отдельно от мира — как наклейка: большая грань с центром ближе колёс иначе
+   легла бы поверх машины, стоящей на ней */
+function drawRampDecks(){
+  rampRaw=true;
+  try{ for(const z of level.ramps) emitRampDeck(z); } finally { rampRaw=false; }
+  flushFaces();
+  for(const d of level.rampDec){
+    if(d.polys) fillGroundPolys(d.polys, d.fill, 0.02);
+    else if(d.line) strokeGroundPath(d.pts, d.stroke, d.lw, d.dash, 0.02);
+    else fillGroundPoly(d.pts, d.fill, d.stroke, d.lw, 0.02);
   }
 }
 function drawSceneInto(o){
@@ -12032,7 +12168,7 @@ function edRebuild(){
   for(const o of obs){ u0=Math.min(u0,o.u-6); u1=Math.max(u1,o.u+6);
                        v0=Math.min(v0,o.v-6); v1=Math.max(v1,o.v+6); }
   level={ def:{name:'редактор', task:'', phases:null}, obs, rend:buildRenderList(obs), dec,
-          ramps:[], city:null, actors:[], start:d.start, goal:d.goal, bounds:{u0,u1,v0,v1}, marks:{}, idealDraw:null };
+          ramps:[], rampDec:[], city:null, actors:[], start:d.start, goal:d.goal, bounds:{u0,u1,v0,v1}, marks:{}, idealDraw:null };
   decBounds(level.dec);
   RAMP_ON=false;
   curPhase=null;
