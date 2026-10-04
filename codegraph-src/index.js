@@ -798,7 +798,7 @@ function clipNear(poly){
    антиалиасинга (две кромки по половине покрытия) оставался светлой линией */
 const EXPAND_DEV=0.9, SPX=[], SPY=[];
 let pxScale=1, pathW=0;              /* pathW — ширина последней грани в px, её читает штрих рёбер */
-function pathCam(pts){
+function pathCam(pts, append){
   const c = clipNear(pts); const n=c.length; if(n<3) return false;
   let area=0, per=0;
   /* toScreen без объекта на вершину и sqrt вместо Math.hypot: pathCam идёт на каждую грань кадра,
@@ -814,7 +814,7 @@ function pathCam(pts){
   /* в экранных координатах (y вниз) положительная площадь — обход по часовой, и нормаль (dy, −dx)
      смотрит наружу; с обратным знаком контуры сжимались, и между гранями открывались щели-«сетка» */
   const sg = area>0 ? ex : -ex;
-  ctx.beginPath();
+  if(!append) ctx.beginPath();
   for(let i=0;i<n;i++){
     const p=(i+n-1)%n, q=(i+1)%n;
     let ax=SPX[i]-SPX[p], ay=SPY[i]-SPY[p], bx=SPX[q]-SPX[i], by=SPY[q]-SPY[i];
@@ -3080,13 +3080,10 @@ const ASPHALT='#565b62';
    отличает уход дороги за край площадки от края асфальта (kerbsFromAsphalt, openEnds) */
 function roadDec(dec,u,v,yaw,len,hw){
   dec.push({pts:rectPts(u,v,hw*2,len,yaw), fill:ASPHALT, road:true});
-  const f=fuv(yaw), r=ruv(yaw);
-  for(const s of [-1,1])
-    dec.push({line:true, stroke:'rgba(240,243,245,.75)', lw:2, pts:[
-      {u:u-f.u*len/2+r.u*s*(hw-0.12), v:v-f.v*len/2+r.v*s*(hw-0.12)},
-      {u:u+f.u*len/2+r.u*s*(hw-0.12), v:v+f.v*len/2+r.v*s*(hw-0.12)}]});
-  dec.push({line:true, stroke:'rgba(240,243,245,.65)', lw:2, dash:[9,8], pts:[
-    {u:u-f.u*len/2, v:v-f.v*len/2}, {u:u+f.u*len/2, v:v+f.v*len/2}]});
+  const f=fuv(yaw), r=ruv(yaw), at=(s,x)=>({u:u+f.u*s+r.u*x, v:v+f.v*s+r.v*x}), m=markSink();
+  for(const sx of [-1,1]) markLine(m, at, -len/2, len/2, sx*MARK_EDGE_X(hw), '1.2');
+  markLine(m, at, -len/2, len/2, 0, '1.5');
+  markFlush(dec, m, -len/2, len/2, MARK_COL);
 }
 function crossDec(dec,u,v,hw){ dec.push({pts:rectPts(u,v,hw*2,hw*2,0), fill:ASPHALT}); }
 function zebraDec(dec,u,v,yaw,w){
@@ -3172,10 +3169,60 @@ function laneSolid(r, x, hw){
   if(Math.abs(Math.abs(x)-hw)<1e-6) return true;
   return r.solid==='all' || (x===0 && r.solid==='center');
 }
-const ROAD_EDGE='rgba(240,243,245,.75)';
-const ROAD_LANE='rgba(240,243,245,.62)';
-function decLine(dec,a,b,stroke,lw,dash){
-  dec.push({line:true, stroke, lw:lw||2, dash, pts:[a,b]});
+/* разметка — полосками на земле в метрах по ГОСТ Р 51256: экранный штрих в 2 px с пунктиром 9/8 px был
+   вблизи волоском, вдали рябью, и разметка на дорогу не походила (владелец, 04.10.2026: «нет нормальной
+   разметки, чтобы перестраиваться»). 1.1 сплошная 0,10 м; 1.2 край 0,20 м; 1.3 двойная — две по 0,10 через
+   0,10; 1.5 пунктир 3/9 м; 1.6 предупреждение 6/2 м — APPROACH_L до начала сплошной. Полоски одного куска
+   улицы — один многоугольник с подконтурами и одна заливка (markFlush): по отдельности сотни заливок за кадр */
+const MARK_COL='rgba(240,243,245,.86)', RAIL_COL='rgba(146,150,156,.95)', SLEEPER_COL='rgba(64,58,52,.75)';
+const MARK_GOST={'1.1':{w:0.10}, '1.2':{w:0.20}, '1.3':{w:0.10, gapX:0.10},
+                 '1.5':{w:0.10, dash:3, gap:9}, '1.6':{w:0.10, dash:6, gap:2}};
+const MARK_CHUNK=42, APPROACH_L=30;
+const MARK_EDGE_X=(hw)=>hw-0.15;
+function markSink(){ return {polys:[], recs:[]}; }
+/* все подконтуры — одного обхода: при ненулевом правиле заливки встречные контуры на перекрытии (стрелка —
+   стебель и наконечник) давали бы дыру */
+function markPoly(m, s, pts){
+  let a=0; for(let i=0;i<pts.length;i++){ const p=pts[i], q=pts[(i+1)%pts.length]; a+=p.u*q.v-q.u*p.v; }
+  if(a>0) pts.reverse();
+  m.polys.push({s, pts});
+}
+/* длинная полоска — кусками по 20 м: пачка куска улицы описывается кругом по своим полоскам, и сплошная во всю
+   улицу растянула бы его на всю улицу — отсечение по дальности не работало бы */
+function markStrip(m, at, a, b, x, w){
+  const n=Math.max(1,Math.ceil((b-a)/20)), d=(b-a)/n;
+  for(let i=0;i<n;i++){ const p=a+d*i, q=p+d; markPoly(m, (p+q)/2, [at(p,x-w/2), at(q,x-w/2), at(q,x+w/2), at(p,x+w/2)]); }
+}
+/* phase — откуда считать пунктир: от начала улицы, чтобы штрихи не сбивались на стыке кусков */
+function markLine(m, at, s0, s1, x, type, from){
+  const g=MARK_GOST[type];
+  if(type==='1.3'){ markStrip(m,at,s0,s1,x-(g.w+g.gapX)/2,g.w); markStrip(m,at,s0,s1,x+(g.w+g.gapX)/2,g.w); }
+  else if(!g.dash) markStrip(m,at,s0,s1,x,g.w);
+  else { const p=g.dash+g.gap, o=from===undefined ? s0 : from;
+    for(let k=Math.floor((s0-o)/p); o+k*p<s1; k++){ const a=Math.max(s0,o+k*p), b=Math.min(s1,o+k*p+g.dash); if(b-a>0.05) markStrip(m,at,a,b,x,g.w); } }
+  m.recs.push({type, x, s0, s1, w:g.w, dash:g.dash||0, gap:g.gap||0});
+}
+/* стрелка 1.18 длиной ARROW_L (ГОСТ — 3 м в населённом пункте): остриё в (tu,tv) смотрит по курсу h; поворот —
+   отвод от стебля вбок с наконечником; «прямо и направо» — прямая стрела и отвод ниже наконечника.
+   Остриё — в ARROW_TIP от заплатки узла: при 6 м и при 2,5 м стрелка правой полосы Ленина у N3 ложилась в карман
+   остановки экзамена (v 47…53); стоп-линия стоит в 0,9–1,3 м от заплатки — до неё остаётся 0,7 м */
+const ARROW_L=3.0, ARROW_TIP=2.0;
+function markArrow(m, tu, tv, h, set){
+  const F=fuv(h), R=ruv(h), P=(x,y)=>({u:tu+R.u*x+F.u*y, v:tv+R.v*x+F.v*y});
+  const S=set.includes('S'), sw=0.08, by=S ? -1.95 : -1.6;
+  markPoly(m, 0, [P(-sw,-ARROW_L), P(sw,-ARROW_L), P(sw, S ? -1.0 : by+sw), P(-sw, S ? -1.0 : by+sw)]);
+  if(S) markPoly(m, 0, [P(-0.32,-1.0), P(0.32,-1.0), P(0,0)]);
+  for(const [d,sx] of [['L',-1],['R',1]]){
+    if(!set.includes(d)) continue;
+    markPoly(m, 0, [P(0,by-sw), P(sx*0.55,by-sw), P(sx*0.55,by+sw), P(0,by+sw)]);
+    markPoly(m, 0, [P(sx*0.55,by-0.3), P(sx*0.55,by+0.3), P(sx*0.95,by)]);
+  }
+}
+function markFlush(dec, m, s0, s1, fill){
+  const n=Math.max(1,Math.ceil((s1-s0)/MARK_CHUNK)), sl=(s1-s0)/n, bk=[];
+  for(let i=0;i<n;i++) bk.push([]);
+  for(const p of m.polys) bk[clamp(Math.floor((p.s-s0)/sl),0,n-1)].push(p.pts);
+  for(const b of bk) if(b.length) dec.push({polys:b, fill});
 }
 /* прямой участок улицы: асфальт кусками, кромки, осевая и межполосные линии.
    solid:'center' делает осевую сплошной — на этом держится урок «перестройся заранее» */
@@ -3188,18 +3235,28 @@ function roadDec2(dec, u, v, yaw, len, r){
     const c=at(-len/2+sl*(i+0.5),0);
     dec.push({pts:rectPts(c.u,c.v,hw*2,sl+0.06,yaw), fill:ASPHALT, far:true, road:true});
   }
-  const s0=-len/2, s1=len/2;
-  for(const sx of [-1,1]) decLine(dec, at(s0,sx*(hw-0.12)), at(s1,sx*(hw-0.12)), ROAD_EDGE, 2);
+  const s0=-len/2, s1=len/2, m=markSink(), apA=r._apprA||null, apB=r._apprB||null;
+  for(const sx of [-1,1]) markLine(m, at, s0, s1, sx*MARK_EDGE_X(hw), '1.2');
   const edges=roadEdges(r);
   for(const x of edges){
-    if(Math.abs(Math.abs(x)-hw)<1e-6) continue;                 /* кромки уже нарисованы */
-    const solidHere = laneSolid(r,x,hw);
-    decLine(dec, at(s0,x), at(s1,x), solidHere?ROAD_EDGE:ROAD_LANE, 2,
-            solidHere?null:[9,8]);
+    if(Math.abs(Math.abs(x)-hw)<1e-6) continue;                 /* кромки — 1.2 выше */
+    if(r.tram && x===0) continue;                               /* между путями разметки нет */
+    if(laneSolid(r,x,hw)){ markLine(m, at, s0, s1, x, x===0 && (r.lanes||1)>=2 ? '1.3' : '1.1'); continue; }
+    /* 1.6 — там, куда едут к сплошной: на конце b — полосы справа (x ≥ 0, едут к b), на конце a — слева */
+    const a6 = apA && apA.has(x) && x<=0, b6 = apB && apB.has(x) && x>=0, g6=MARK_GOST['1.6'].gap;
+    const q0 = a6 ? s0+APPROACH_L : s0, q1 = b6 ? s1-APPROACH_L : s1;
+    if(a6) markLine(m, at, s0, q0, x, '1.6');
+    /* штрих 1.5, обрезанный на границе, встал бы встык к штриху 1.6 и слился с ним в один длинный —
+       между ними оставляется разрыв 1.6 */
+    const p0 = a6 ? q0+g6 : q0, p1 = b6 ? q1-g6 : q1;
+    if(p1>p0) markLine(m, at, p0, p1, x, '1.5', s0);
+    if(b6) markLine(m, at, q1, s1, x, '1.6', q1);
   }
+  /* полотно раньше разметки: линия у его края (x = ±TRAM_HW) иначе уходила под него наполовину */
   if(r.tram) tramDec(dec, u, v, yaw, len);
-  const meta={kind:'lanes', u, v, yaw, len, hw, edges, name:streetName(r),
-                solid:edges.map(x=>laneSolid(r,x,hw))};
+  markFlush(dec, m, s0, s1, MARK_COL);
+  const meta={kind:'lanes', u, v, yaw, len, hw, edges, name:streetName(r), lanes:r.lanes||1, tram:!!r.tram,
+                solid:edges.map(x=>laneSolid(r,x,hw)), marks:m.recs};
   return meta;
 }
 /* трамвайное полотно: два пути посередине, на одном уровне с проезжей частью.
@@ -3208,14 +3265,14 @@ function tramDec(dec, u, v, yaw, len){
   const f=fuv(yaw), rt=ruv(yaw);
   const at=(s,x)=>({u:u+f.u*s+rt.u*x, v:v+f.v*s+rt.v*x});
   dec.push({pts:rectPts(u,v,TRAM_HW*2,len,yaw), fill:'#4e5259'});
-  for(const cx of [-TRAM_HW/2, TRAM_HW/2])
-    for(const sx of [-TRAM_GAUGE/2, TRAM_GAUGE/2])
-      decLine(dec, at(-len/2,cx+sx), at(len/2,cx+sx), 'rgba(146,150,156,.95)', 2.4);
+  /* шпалы и рельсы — тоже в метрах и пачками: шпала была отдельной заливкой, на Ленина их 170 на кусок */
+  const sl=markSink(), rl=markSink();
   for(let s=-len/2+1.2; s<len/2-0.6; s+=2.4)
-    for(const cx of [-TRAM_HW/2, TRAM_HW/2]){
-      const c=at(s,cx);
-      dec.push({pts:rectPts(c.u,c.v,TRAM_GAUGE+0.5,0.24,yaw), fill:'rgba(64,58,52,.75)'});
-    }
+    for(const cx of [-TRAM_HW/2, TRAM_HW/2]) markStrip(sl, at, s-0.12, s+0.12, cx, TRAM_GAUGE+0.5);
+  for(const cx of [-TRAM_HW/2, TRAM_HW/2])
+    for(const sx of [-TRAM_GAUGE/2, TRAM_GAUGE/2]) markStrip(rl, at, -len/2, len/2, cx+sx, 0.08);
+  markFlush(dec, sl, -len/2, len/2, SLEEPER_COL);
+  markFlush(dec, rl, -len/2, len/2, RAIL_COL);
   return {kind:'tram', u, v, yaw, len, hw:TRAM_HW};
 }
 /* заплатка перекрёстка любой формы: выпуклая оболочка «устьев» лучей.
@@ -3250,8 +3307,15 @@ function roundDec(dec, u, v, rOut, rIn){
     p.push({u:u+Math.cos(a)*R, v:v+Math.sin(a)*R}); } return p; };
   dec.push({pts:ring(rOut), fill:ASPHALT, far:true});
   dec.push({pts:ring(rIn), fill:'#4b6b4a', far:true});
-  dec.push(circleDec(u,v,rIn+0.35,'rgba(240,243,245,.8)',2.5));
-  dec.push(circleDec(u,v,(rIn+rOut)/2,'rgba(240,243,245,.5)',2,[8,7]));
+  /* край островка — 1.1, граница полос кольца — 1.5 по дуге; дуга идёт кусками по 3°, чтобы полоска лежала на круге */
+  const m=markSink(), arc=(R,a0,a1,w)=>{ const n=Math.max(1,Math.ceil((a1-a0)/rad(3))), pts=[];
+    for(let i=0;i<=n;i++){ const a=a0+(a1-a0)*i/n; pts.push({u:u+Math.cos(a)*(R-w/2), v:v+Math.sin(a)*(R-w/2)}); }
+    for(let i=n;i>=0;i--){ const a=a0+(a1-a0)*i/n; pts.push({u:u+Math.cos(a)*(R+w/2), v:v+Math.sin(a)*(R+w/2)}); }
+    markPoly(m, 0, pts); };
+  const ri=rIn+0.35, rm=(rIn+rOut)/2, g=MARK_GOST['1.5'];
+  arc(ri, 0, TAU*0.5, MARK_GOST['1.1'].w); arc(ri, TAU*0.5, TAU, MARK_GOST['1.1'].w);
+  for(let s=0; s+g.dash<=TAU*rm; s+=g.dash+g.gap) arc(rm, s/rm, (s+g.dash)/rm, g.w);
+  dec.push({polys:m.polys.map(p=>p.pts), fill:MARK_COL});
   return {kind:'round', u, v, rOut, rIn};
 }
 function polyHas(pu,pv,P){
@@ -3449,6 +3513,23 @@ function cityWorld(spec){
       obs.push(guideSign(nd.u+f.u*d+rt.u*off, nd.v+f.v*d+rt.v*off, a.yaw, rows.slice(0,3)));
     }
   }
+  /* 1.6 перед сплошной: улица продолжается через свободную точку (Заводская у [42,0]) куском, где у границы
+     сплошная, — последние APPROACH_L пунктира становятся линией-предупреждением */
+  const byEnd={};
+  for(const r of spec.roads) for(const [e,end] of [[r.a,'a'],[r.b,'b']]) if(Array.isArray(e)) (byEnd[e.join()]||(byEnd[e.join()]=[])).push({r,end});
+  for(const k in byEnd){ const L=byEnd[k]; if(L.length!==2) continue;
+    for(const [P,Q] of [[L[0],L[1]],[L[1],L[0]]]){
+      const r=P.r, o=Q.r;
+      if(Math.abs(Math.cos(angNorm(r._yaw-o._yaw)))<0.94) continue;
+      const same=P.end!==Q.end, hr=roadHW(r), ho=roadHW(o), set=new Set();
+      for(const x of roadEdges(r)){
+        if(Math.abs(Math.abs(x)-hr)<1e-6 || laneSolid(r,x,hr)) continue;
+        const xo=same ? x : -x;
+        if(roadEdges(o).some(e=>Math.abs(e-xo)<1e-6) && laneSolid(o,xo,ho)) set.add(x);
+      }
+      if(set.size){ if(P.end==='b') r._apprB=set; else r._apprA=set; }
+    }
+  }
   for(const r of spec.roads){
     const A=pt(r.a), B=pt(r.b), f=fuv(r._yaw), rt=ruv(r._yaw);
     const t0=Array.isArray(r.a)?0:radius[r.a], t1=Array.isArray(r.b)?0:radius[r.b];
@@ -3467,6 +3548,33 @@ function cityWorld(spec){
       const R=nd.round, a0=Math.sqrt(Math.max(0, R*R-r._hw*r._hw))-0.1, m=(a0+R)/2;
       dec.push({pts:rectPts(P.u+f.u*s*m, P.v+f.v*s*m, r._hw*2, R-a0+0.06, r._yaw), fill:ASPHALT, far:true});
     }
+  }
+  /* 1.18 — стрелки по полосам перед перекрёстком, по рукавам узла: прямо — луч напротив (±32°), налево/направо —
+     по стороне. Одна полоса — все направления узла; несколько — налево только из левой, направо только из правой,
+     прямо — из любой. На кольце стрелок нет: выезды там считают по кругу (как и указателей) */
+  city.arrows=[];
+  for(const k in spec.nodes){
+    const nd=spec.nodes[k], list=arms[k];
+    if(nd.round || list.length<3) continue;
+    const am=markSink();
+    for(const a of list){
+      const h=angNorm(a.yaw+Math.PI), rd=a.road, n=rd.lanes||1, b0=rd.tram ? TRAM_HW : 0, av={L:false,S:false,R:false};
+      /* на перемычке смещённого перекрёстка (N5b–N5: 4,2 м улицы) стрелка легла бы хвостом на соседний узел */
+      const far=rd.a===k ? rd.b : rd.a;
+      if(rd._len-radius[k]-(Array.isArray(far) ? 0 : radius[far]) < ARROW_TIP+ARROW_L+1) continue;
+      for(const b of list){ if(b===a) continue; const rel=angNorm(b.yaw-h);
+        if(Math.abs(rel)<rad(32)) av.S=true; else if(rel>0) av.R=true; else av.L=true; }
+      const f=fuv(a.yaw), rt=ruv(h);
+      for(let i=1;i<=n;i++){
+        const set=['L','S','R'].filter(d=>av[d] && (n===1 || d==='S' || (d==='L' && i===1) || (d==='R' && i===n)));
+        if(!set.length) continue;
+        const d=radius[k]+ARROW_TIP, lat=b0+LANE_W*(i-0.5);
+        const tu=nd.u+f.u*d+rt.u*lat, tv=nd.v+f.v*d+rt.v*lat;
+        markArrow(am, tu, tv, h, set);
+        city.arrows.push({node:k, u:tu, v:tv, yaw:h, lane:i, n, dirs:set, avail:['L','S','R'].filter(z=>av[z])});
+      }
+    }
+    if(am.polys.length) dec.push({polys:am.polys.map(p=>p.pts), fill:MARK_COL});
   }
   /* граф улиц в явном виде — узлы, свободные концы и рёбра с именами. Спек уже описывает
      город графом, но build() уровня отдаёт наружу только obs/dec/city, поэтому граф кладём
@@ -8920,9 +9028,20 @@ function drawDecals(maxD){
        пикселях; на эстакаде разметка поднята склоном, и шар у земли её бы не описал */
     if(d._r!==undefined && !RAMP_ON && !camSees(d._u, 0, d._v, d._r+0.3)) continue;
     decDrawn++;
-    if(d.line) strokeGroundPath(d.pts, d.stroke, d.lw, d.dash, 0.02);
+    if(d.polys) fillGroundPolys(d.polys, d.fill, 0.02);
+    else if(d.line) strokeGroundPath(d.pts, d.stroke, d.lw, d.dash, 0.02);
     else fillGroundPoly(d.pts, d.fill, d.stroke, d.lw, 0.02);
   }
+}
+/* пачка многоугольников одного цвета — одним путём и одной заливкой (разметка, шпалы, рельсы) */
+function fillGroundPolys(polys, fill, y){
+  let any=false;
+  ctx.beginPath();
+  for(const P of polys){
+    const cp=P.map(p=>toCam({x:-p.u, y, z:p.v}));
+    if(pathCam(cp, true)) any=true;
+  }
+  if(any){ ctx.fillStyle=fill; ctx.fill(); }
 }
 /* точка, от которой меряется дальность: центр камеры на земле, а не позиция машины —
    в виде сверху и в зеркалах камера стоит совсем не там, где кузов.
@@ -8931,7 +9050,7 @@ function drawDecals(maxD){
 function camGroundUV(){ return {u:-cam.pos.x, v:cam.pos.z}; }
 function decBounds(dec){
   for(const d of dec){
-    const p=d.pts; if(!p||!p.length){ d._r=undefined; continue; }
+    const p=d.polys ? d.polys.flat() : d.pts; if(!p||!p.length){ d._r=undefined; continue; }
     let u0=1e9,u1=-1e9,v0=1e9,v1=-1e9;
     for(const q of p){ if(q.u<u0)u0=q.u; if(q.u>u1)u1=q.u; if(q.v<v0)v0=q.v; if(q.v>v1)v1=q.v; }
     d._u=(u0+u1)/2; d._v=(v0+v1)/2; d._r=Math.hypot(u1-u0, v1-v0)/2;

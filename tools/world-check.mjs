@@ -149,10 +149,13 @@ const cull = await page.evaluate((fault) => {
         if (!RAMP_ON) for (const d of level.dec) {
           if (d._r === undefined || sees(d._u, 0, d._v, d._r + 0.3)) continue;
           decCulled++;
-          const cp = d.pts.map((q) => toCam({ x: -q.u, y: 0.02, z: q.v })), cc = cp.some((q) => q.d <= NEAR) ? clipNear(cp) : cp;
-          let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
-          for (const q of cc) { const sp = toScreen(q); x0 = Math.min(x0, sp.x); x1 = Math.max(x1, sp.x); y0 = Math.min(y0, sp.y); y1 = Math.max(y1, sp.y); }
-          if (cc.length && x1 >= VP.x - 3 && x0 <= VP.x + VP.w + 3 && y1 >= VP.y - 3 && y0 <= VP.y + VP.h + 3) { leak++; worst = worst || { kind: 'decal', u: +d._u.toFixed(1), v: +d._v.toFixed(1) }; }
+          /* пачка разметки — несколько многоугольников, проверяется каждый */
+          for (const P of (d.polys || [d.pts])) {
+            const cp = P.map((q) => toCam({ x: -q.u, y: 0.02, z: q.v })), cc = cp.some((q) => q.d <= NEAR) ? clipNear(cp) : cp;
+            let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+            for (const q of cc) { const sp = toScreen(q); x0 = Math.min(x0, sp.x); x1 = Math.max(x1, sp.x); y0 = Math.min(y0, sp.y); y1 = Math.max(y1, sp.y); }
+            if (cc.length && x1 >= VP.x - 3 && x0 <= VP.x + VP.w + 3 && y1 >= VP.y - 3 && y0 <= VP.y + VP.h + 3) { leak++; worst = worst || { kind: 'decal', u: +d._u.toFixed(1), v: +d._v.toFixed(1) }; break; }
+          }
         }
         out.push({ lvl: lvl + 1, a, r, culled: culled.length + decCulled + bldCulled, leak, worst });
       }
