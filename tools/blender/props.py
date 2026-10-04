@@ -15,7 +15,8 @@
   по материалу слила бы в одну грань полосы разных цветов.
 - Грани одной плоскости и одного цвета склеиваются, как у кузовов (models.py): рендер заливает грань одним
   цветом, а число граней — то, во что упирается кадр телефона.
-- Дальний вид (lod) — та же модель, упрощённая до LOD_TRI треугольников: силуэт тот же, граней втрое меньше.
+- Дерево собирается заново: крона — выпуклая оболочка листвы, ствол — призма до низа кроны; дальний вид (lod) —
+  оболочка 12 самых удалённых точек кроны и четырёхгранный ствол (подробнее — в build).
 - Начало координат — центр ствола у земли: генератор ставит предмет точкой, касание — по стволу.
 """
 import json
@@ -26,13 +27,16 @@ import sys
 import bmesh
 import bpy
 import mathutils
+from mathutils.bvhtree import BVHTree
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SRC = ROOT / 'assets' / 'src' / 'models' / 'kenney'
 OUT = ROOT / 'build' / 'assets' / 'props-mesh.json'
 MAX_POLY = 48                 # заготовки массивов на грань в игре — те же, что у кузовов (carModel.scratch)
-LOD_TRI = 14
-TRUNK_K = 0.5
+LOD_PTS = 12                  # точек кроны в дальнем виде: с 8 крона выходила угловатым кристаллом
+BUSH_PTS = 10
+TRUNK_R = 0.022               # радиус ствола у земли — доля высоты дерева: 8 м → 0,18 м
+TRUNK_IN = 0.15               # ствол заходит в крону на 15 см: без захода между ними просвечивала щель
 
 # имя в игре: файл, высота, м; leaf — у куста вся модель листва
 MODELS = {
@@ -136,22 +140,42 @@ def prepare(objs, bm):
     return keys
 
 
-def merge(bm):
-    n0 = len(bm.faces)
-    bmesh.ops.dissolve_limit(bm, angle_limit=math.radians(1.0), verts=bm.verts[:], edges=bm.edges[:], delimit={'MATERIAL'})
-    return n0 - len(bm.faces)
+def hull(points):
+    """Выпуклая оболочка точек: копланарные треугольники склеены в многоугольники, нормали наружу."""
+    bm = bmesh.new()
+    vs = [bm.verts.new(p) for p in points]
+    res = bmesh.ops.convex_hull(bm, input=vs, use_existing_faces=False)
+    junk = list({g for g in res['geom_interior'] + res['geom_unused'] if isinstance(g, bmesh.types.BMVert)})
+    if junk:
+        bmesh.ops.delete(bm, geom=junk, context='VERTS')
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    bmesh.ops.dissolve_limit(bm, angle_limit=math.radians(1.0), verts=bm.verts[:], edges=bm.edges[:])
+    for f in bm.faces:
+        f.material_index = 0
+    return bm
 
 
-def decimated(bm, tris):
-    ob = to_mesh(bm, 'lod')
-    mod = ob.modifiers.new('d', 'DECIMATE')
-    mod.ratio = min(1.0, LOD_TRI / max(1, tris))
-    mod.use_collapse_triangulate = True
-    dg = bpy.context.evaluated_depsgraph_get()
-    me = bpy.data.meshes.new_from_object(ob.evaluated_get(dg))
-    out = bmesh.new()
-    out.from_mesh(me)
-    return out
+def sample(points, n):
+    """Самые удалённые друг от друга точки: верх, низ и дальше каждая — дальше всех от уже выбранных.
+    Оболочка выборки повторяет силуэт кроны меньшим числом граней и остаётся выпуклой."""
+    pts = list(points)
+    chosen = [max(pts, key=lambda p: p.z), min(pts, key=lambda p: p.z)]
+    while len(chosen) < min(n, len(pts)):
+        chosen.append(max(pts, key=lambda p: min((p - q).length for q in chosen)))
+    return chosen
+
+
+def trunk(cx, cy, z0, z1, rb, rt, n):
+    """Ствол — призма от земли до низа кроны; без торцов: низ на земле, верх внутри кроны. Обход боковых граней
+    против часовой при взгляде сверху даёт нормали наружу"""
+    bm = bmesh.new()
+    a = [2 * math.pi * (i + 0.5) / n for i in range(n)]
+    bot = [bm.verts.new((cx + rb * math.cos(t), cy + rb * math.sin(t), z0)) for t in a]
+    top = [bm.verts.new((cx + rt * math.cos(t), cy + rt * math.sin(t), z1)) for t in a]
+    for i in range(n):
+        f = bm.faces.new((bot[i], bot[(i + 1) % n], top[(i + 1) % n], top[i]))
+        f.material_index = 1
+    return bm
 
 
 def export(bm, keys, frame):
@@ -189,17 +213,13 @@ def build(name):
     zs = [v.co.z for v in bm.verts]
     z0, z1 = min(zs), max(zs)
     k = height / (z1 - z0)
-    # ствол или стойка — вершины в нижних 8 % высоты: их центр становится началом координат
+    # ствол — вершины в нижних 8 % высоты: их центр становится началом координат
     low = [v.co for v in bm.verts if v.co.z < z0 + 0.08 * (z1 - z0)]
     cx, cy = sum(p.x for p in low) / len(low), sum(p.y for p in low) / len(low)
-    # ствол Kenney — брус: при высоте 8 м он выходил толщиной до 0,9 м против ~0,3 у живого дерева. Вершины, у
-    # которых все грани — кора, стягиваются к оси ствола; крона и место, где в неё входит ствол, не меняются
-    if 'wood' in keys:
-        wood = keys.index('wood')
-        for v in bm.verts:
-            if v.link_faces and all(f.material_index == wood for f in v.link_faces):
-                v.co.x = cx + (v.co.x - cx) * TRUNK_K
-                v.co.y = cy + (v.co.y - cy) * TRUNK_K
+    leaf_i = keys.index('leaf') if 'leaf' in keys else -1
+    leaf = list({tuple(round(c, 5) for c in v.co): v.co.copy() for f in bm.faces if f.material_index == leaf_i for v in f.verts}.values())
+    if len(leaf) < 4:
+        raise SystemExit(f'{name}: у модели нет листвы')
 
     def frame(co, direction=False):
         p = co if direction else mathutils.Vector((co.x - cx, co.y - cy, co.z - z0))
@@ -207,29 +227,50 @@ def build(name):
             return (-p.x, p.z, -p.y)
         return (-p.x * k, p.z * k, -p.y * k)
 
-    merged = merge(bm)
-    V, F = export(bm, keys, frame)
-    lod_bm = decimated(bm, tris0)
-    merge(lod_bm)
-    LV, LF = export(lod_bm, keys, frame)
-    leaf = [V[i] for f in F if f.get('m') == 'leaf' for i in f['i']]
-    wood = [V[i] for f in F if f.get('m') == 'wood' for i in f['i']]
-    meta = {'h': round(height, 2)}
-    if leaf:
-        meta['r'] = round(max(math.hypot(p[0], p[2]) for p in leaf), 2)
-        meta['y0'] = round(min(p[1] for p in leaf), 2)
-    if wood:
-        meta['tr'] = round(max(math.hypot(p[0], p[2]) for p in wood if p[1] < 0.3), 2) if any(p[1] < 0.3 for p in wood) else 0.15
-    max_n = max(len(f['i']) for f in F)
+    # Крона Kenney — несколько вставленных друг в друга частей, а ствол уходит в неё до середины: рендер с
+    # сортировкой граней такие тела не различает (правило 4), и ствол рисовался поверх кроны. А упрощение всей
+    # модели до 14 треугольников склеивало ствол с кроной в коричневое веретено. Поэтому крона — выпуклая
+    # оболочка листвы, ствол — отдельная призма от земли до низа кроны на оси, дальний вид — оболочка
+    # 12 самых удалённых точек кроны и четырёхгранный ствол: силуэт тот же, тела не пересекаются
+    tree = not name.startswith('bush')
+    # куст мелкий: его крона сразу — оболочка BUSH_PTS точек (~16 граней), полная оболочка листьев давала до 38
+    crown = hull(leaf) if tree else hull(sample(leaf, BUSH_PTS))
+    lod_crown = hull(sample([v.co for v in crown.verts], LOD_PTS))
+    keys2 = ['leaf', 'wood']
+    rb = TRUNK_R * (z1 - z0)
+    parts, lod_parts = [crown], [lod_crown]
+    if tree:
+        bvh = BVHTree.FromBMesh(crown)
+        hit = bvh.ray_cast(mathutils.Vector((cx, cy, z0 - 1.0)), mathutils.Vector((0, 0, 1)))
+        ztop = (hit[0].z if hit[0] is not None else min(p.z for p in leaf)) + TRUNK_IN / k
+        parts.append(trunk(cx, cy, z0, ztop, rb, rb * 0.6, 6))
+        lod_parts.append(trunk(cx, cy, z0, ztop, rb, rb * 0.6, 4))
+
+    def export_parts(ps):
+        V, F = [], []
+        for b in ps:
+            v, f = export(b, keys2, frame)
+            for e in f:
+                e['i'] = [i + len(V) for i in e['i']]
+            V += v
+            F += f
+        return V, F
+
+    V, F = export_parts(parts)
+    LV, LF = export_parts(lod_parts)
+    cr = [V[i] for f in F if f.get('m') == 'leaf' for i in f['i']]
+    meta = {'h': round(height, 2), 'r': round(max(math.hypot(p[0], p[2]) for p in cr), 2),
+            'y0': round(min(p[1] for p in cr), 2)}
+    if tree:
+        meta['tr'] = round(rb * k, 2)
+    max_n = max(len(f['i']) for f in F + LF)
     fails = []
     if max_n > MAX_POLY:
         fails.append(f'{name}: грань из {max_n} вершин — у игры заготовки до {MAX_POLY}')
-    log(f'{name} ({rel}): {tris0} тр. → {len(F)} граней (склеено {merged}), дальний вид '
-        f'{str(len(LF)) + " граней" if len(LF) <= 0.6 * len(F) else "не нужен"}; '
-        f'×{k:.2f}, ' + ', '.join(f'{a} {b}' for a, b in meta.items()))
+    log(f'{name} ({rel}): {tris0} тр. → {len(F)} граней, дальний вид {len(LF)}; ×{k:.2f}, '
+        + ', '.join(f'{a} {b}' for a, b in meta.items()))
     out = {**meta, 'v': [c for p in V for c in p], 'f': F}
-    # дальний вид — только если он правда дешевле: у мелкой модели упрощение до LOD_TRI граней не убавляет
-    if len(LF) <= 0.6 * len(F):
+    if tree:
         out['lod'] = {'v': [c for p in LV for c in p], 'f': LF}
     return out, fails
 
