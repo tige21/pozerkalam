@@ -2401,6 +2401,25 @@ function signPic(pic){
       g.beginPath(); g.moveTo(86,112); g.lineTo(86,58); g.arc(64,58,22,0,Math.PI,true); g.lineTo(42,80); g.stroke();
       g.beginPath(); g.moveTo(24,78); g.lineTo(60,78); g.lineTo(42,108); g.closePath(); g.fill();
     }
+    else if(pic==='bus' || pic==='tram'){
+      /* 5.16 и 5.17: белый силуэт сбоку, окна и колёса — цветом поля знака */
+      const blue='#1c4ea4';
+      g.fillStyle='#f4f6f8';
+      if(pic==='bus'){
+        g.beginPath(); g.moveTo(14,40); g.lineTo(108,40); g.quadraticCurveTo(116,40,116,50); g.lineTo(116,92); g.lineTo(14,92); g.closePath(); g.fill();
+        g.fillStyle=blue;
+        for(let x=22;x<96;x+=19) g.fillRect(x,48,14,18);
+        g.fillRect(100,48,10,22);
+        g.beginPath(); g.arc(36,92,9,0,TAU); g.arc(94,92,9,0,TAU); g.fill();
+      } else {
+        g.fillRect(12,46,104,44);
+        g.strokeStyle='#f4f6f8'; g.lineWidth=4;
+        g.beginPath(); g.moveTo(52,46); g.lineTo(64,30); g.lineTo(76,46); g.moveTo(54,30); g.lineTo(74,30); g.stroke();
+        g.fillStyle=blue;
+        for(let x=20;x<106;x+=17) g.fillRect(x,54,11,15);
+        g.fillRect(12,82,104,4);
+      }
+    }
     else if(pic==='ped'){
       g.fillStyle='#f4f6f8';
       g.beginPath(); g.moveTo(cx,10); g.lineTo(w-10,h-12); g.lineTo(10,h-12); g.closePath(); g.fill();
@@ -2918,6 +2937,30 @@ function emitCarModel(u,v,th,col,lit,body){
   }
 }
 carModelLoad();
+/* ---------- обустройство города: модели ----------
+   Деревья и кусты — готовые модели Kenney (CC0) из tools/blender/props.py, шаблоном <template id="props-mesh">.
+   Читаются при загрузке, до того как телефон удаляет #assets. Без шаблона — коробки той же высоты и одно
+   предупреждение: дерево, в которое можно врезаться, обязано быть видно */
+const propModel={state:'off', M:{}};
+function propMesh(m, name){
+  const v=m.v; if(!v || v.length%3 || !m.f || !m.f.length) throw new Error(name+' пустая');
+  const nv=v.length/3;
+  for(const f of m.f) for(const i of f.i) if(!(i>=0 && i<nv)) throw new Error(name+': индекс вершины вне модели');
+  return {V:Float32Array.from(v), F:m.f.map(f=>({i:f.i, n:f.n, m:f.m||null, c:f.c||null})),
+          W:Array.from({length:nv},()=>({x:0,y:0,z:0})), lod:m.lod ? propMesh(m.lod, name+' (дальняя)') : null,
+          h:m.h||1, r:m.r||0, y0:m.y0||0, arm:m.arm||0, w:m.w||0, l:m.l||0};
+}
+function propModelLoad(){
+  const t=document.getElementById('props-mesh');
+  if(!t){ propModel.state='failed'; console.warn('[assets] обустройство: нет моделей — деревья и кусты коробками'); return; }
+  try{
+    const d=JSON.parse((t.content||t).textContent);
+    for(const [k,m] of Object.entries(d.models||{})) propModel.M[k]=propMesh(m, k);
+    if(!propModel.M['tree-a']) throw new Error('нет tree-a');
+    propModel.state='ready';
+  }catch(e){ propModel.state='failed'; propModel.M={}; console.warn('[assets] обустройство: модели не читаются ('+e.message+') — коробками'); }
+}
+propModelLoad();
 /* картинки мира: трамвай (перёд, кусок борта у кабины, середина) и панорама неба; без картинки —
    прежние коробки трамвая и градиент неба, одно предупреждение на картинку */
 const worldImg={};
@@ -3638,8 +3681,15 @@ function cityWorld(spec){
   for(const k of kb.list) obs.push(k);
   city.kerbs=kb.stats;
   const bl=cityBuildings(spec, pt, radius, arms, obs);
+  const pr=cityProps(spec, pt, radius, arms, obs, bl.list, bl.hull);
   for(const b of bl.list) obs.push({...b});
   city.buildings=bl.stats; city.beltHull=bl.hull;
+  /* газон — сразу за плиткой тротуара и под асфальтом перекрёстков; клумба — поверх островка кольца; трава
+     дворов — под всем городом первой наклейкой: между домами вместо серой равнины земля двора */
+  dec.splice(walks.length, 0, ...pr.lawns);
+  if(pr.ground) dec.unshift(...pr.ground);
+  for(const d of pr.beds) dec.push(d);
+  city.props=pr.list.map(p=>({...p})); city.propStats=pr.stats; city.stops=pr.stops;
   return {obs, dec, city, nodes:spec.nodes, radius};
 }
 
@@ -3655,6 +3705,28 @@ function bldRng(key){
   let h=2166136261; for(let i=0;i<key.length;i++){ h^=key.charCodeAt(i); h=Math.imul(h,16777619); }
   let s=(h>>>0)%2147483646+1;
   return ()=>{ s=(s*16807)%2147483647; return (s-1)/2147483646; };
+}
+/* треугольники видимости у каждого угла квартала (СП 42.13330, 40 км/ч): в них не стоит ничего выше 0,5 м —
+   ни дом, ни дерево, ни куст, иначе закрыт поток, которому игрок уступает, и линзы на повороте */
+function citySightTris(spec, arms){
+  const out=[];
+  for(const k in spec.nodes){
+    const nd=spec.nodes[k], list=arms[k].slice().sort((a,b)=>a.yaw-b.yaw);
+    if(nd.round || list.length<2) continue;
+    for(let i=0;i<list.length;i++){
+      const a=list[i], b=list[(i+1)%list.length];
+      let gap=b.yaw-a.yaw; if(i===list.length-1) gap+=TAU;
+      if(gap<rad(20) || gap>rad(170)) continue;          /* прямой бордюр — угла нет */
+      /* угол квартала — пересечение бордюра справа от луча a и бордюра слева от луча b */
+      const da=fuv(a.yaw), ra=ruv(a.yaw), db=fuv(b.yaw), rb=ruv(b.yaw);
+      const ha=a.hw+KERB_OUT, hb=b.hw+KERB_OUT;
+      const pu=nd.u+ra.u*ha, pv=nd.v+ra.v*ha, qu=nd.u-rb.u*hb, qv=nd.v-rb.v*hb;
+      const det=-da.u*db.v+da.v*db.u; if(Math.abs(det)<1e-6) continue;
+      const t=(-(qu-pu)*db.v+(qv-pv)*db.u)/det, cu=pu+da.u*t, cv=pv+da.v*t;
+      out.push([{u:cu,v:cv},{u:cu+da.u*BLD_SIGHT,v:cv+da.v*BLD_SIGHT},{u:cu+db.u*BLD_SIGHT,v:cv+db.v*BLD_SIGHT}]);
+    }
+  }
+  return out;
 }
 function cityBuildings(spec, pt, radius, arms, obs){
   const hit=bldCache.get(spec); if(hit) return hit;
@@ -3677,22 +3749,7 @@ function cityBuildings(spec, pt, radius, arms, obs){
     for(const a of arms[k]){ const f=fuv(a.yaw), rt=ruv(a.yaw), o=a.hw+BLD_SETBACK-0.02;
       for(const sx of [-1,1]) m.push({u:nd.u+f.u*rk+rt.u*o*sx, v:nd.v+f.v*rk+rt.v*o*sx}); }
     if(m.length>2) zone(hull2(m)); }
-  for(const k in spec.nodes){
-    const nd=spec.nodes[k], list=arms[k].slice().sort((a,b)=>a.yaw-b.yaw);
-    if(nd.round || list.length<2) continue;
-    for(let i=0;i<list.length;i++){
-      const a=list[i], b=list[(i+1)%list.length];
-      let gap=b.yaw-a.yaw; if(i===list.length-1) gap+=TAU;
-      if(gap<rad(20) || gap>rad(170)) continue;          /* прямой бордюр — угла нет */
-      /* угол квартала — пересечение бордюра справа от луча a и бордюра слева от луча b */
-      const da=fuv(a.yaw), ra=ruv(a.yaw), db=fuv(b.yaw), rb=ruv(b.yaw);
-      const ha=a.hw+KERB_OUT, hb=b.hw+KERB_OUT;
-      const pu=nd.u+ra.u*ha, pv=nd.v+ra.v*ha, qu=nd.u-rb.u*hb, qv=nd.v-rb.v*hb;
-      const det=-da.u*db.v+da.v*db.u; if(Math.abs(det)<1e-6) continue;
-      const t=(-(qu-pu)*db.v+(qv-pv)*db.u)/det, cu=pu+da.u*t, cv=pv+da.v*t;
-      zone([{u:cu,v:cv},{u:cu+da.u*BLD_SIGHT,v:cv+da.v*BLD_SIGHT},{u:cu+db.u*BLD_SIGHT,v:cv+db.v*BLD_SIGHT}]);
-    }
-  }
+  for(const tri of citySightTris(spec, arms)) zone(tri);
   for(const o of obs) if(o.kind==='guide') zone(rectPts(o.u, o.v, 2*GUIDE_HW+2, o.l+2, o.yaw));
   const list=[];
   /* зоны — по самому следу дома, соседи — по следу, раздвинутому на pad: у дворов между домами двор */
@@ -3813,6 +3870,464 @@ function cityBuildings(spec, pt, radius, arms, obs){
   const res={list, stats, hull};
   bldCache.set(spec, res);
   return res;
+}
+
+/* ---------- обустройство города ----------
+   Владелец 04.10.2026 (уровень 30): «на уровнях с городом слишком пусто… остановки, озеленить». Тротуар
+   делится на газон у поребрика и плитку до фасада; в газоне — деревья, кусты и фонари, вдоль части улиц —
+   стриженая изгородь, на островке кольца — деревья и клумба. Ставит генератор по графу улиц один раз на спек,
+   случайность — только хэш bldRng: общий rnd() сдвинул бы дома и гейт края мира. Всё стоит за поребриком,
+   поэтому датчики (clearances) и пороги показов не меняются. Знаки и светофоры уровни ставят сами поверх
+   общего города — их обходит propsForLevel при загрузке, а не генератор */
+const LAWN_IN=KERB_OUT+KERB_W/2, LAWN_W=1.6;     /* газон — от наружной грани поребрика, 1,6 м */
+const LAWN_COL='#5e7451';
+const PROP_LAT=LAWN_IN+LAWN_W/2;                 /* ось газона от края проезжей части — ряд деревьев */
+const LAMP_LAT=LAWN_IN+0.6;                      /* стойка фонаря — в 0,6 м за поребриком, ближе к дороге, чем стволы */
+/* у перекрёстка — только кроны выше 3,4 м: под ними проходят линии взгляда из машины на линзы (1,2 → 2,9 м) и
+   щиты указателей. Низкие кроны (tree-c, tree-d) — в середине квартала */
+const PROP_HIGH=['tree-a','tree-b','tree-e','pine'];
+const PROP_NEAR_NODE=40;
+/* перед лицом знака или светофора уровня: 25 м вперёд и по 4,5 м в стороны — полосы подхода и газон. Щит
+   указателя стоит дальше ряда деревьев от проезжей части (hw + 2,6 против hw + 1,35), и линия взгляда из полос
+   пересекает этот ряд только в 2–17 м перед щитом (с 60 м) — ему хватает 20 м: с 25 конус срезал треть деревьев */
+const PROP_CONE_L=25, PROP_CONE_W=4.5, GUIDE_CONE_L=20;
+/* порода улицы: аллея из одной породы читается посадкой, а не случайным лесом */
+const PROP_STREET={'Ленина':'tree-d','Заводская':'tree-a','Садовая':'tree-b','Восточная':'tree-e','Парковая':'tree-c',
+                   'Западная':'tree-a','Южная':'tree-e','Косой съезд':'pine'};
+const PROP_HEDGE={'Садовая':true,'Западная':true};
+/* крона заходит за кромку проезжей части не дальше 0,55 м: камера погони в правом ряду идёт в 1,1 м от этой
+   границы на высоте ~4 м и иначе проходила бы сквозь крону */
+const PROP_CROWN_MAX=1.9, PROP_BUSH_MAX=0.75;
+const PROP_LEAF=[[78,112,62],[66,102,56],[92,122,68],[70,96,58]];
+const PROP_BARK=[106,86,68];
+const HEDGE_COL=[74,110,66];
+const LAMP_STEP=30;
+const BENCH_X=3.9;                               /* скамейка — у фасада (hw + 5), за рядом деревьев */
+const YARD_STEP=16, YARD_GROUND='#66745a', YARD_PAD='#5d6168';
+/* контактная сеть трамвая: поперечина между опорами на 7,2 м, контактный провод над осью каждого пути на 6 м */
+const OCS_SPAN_Y=7.2, OCS_WIRE_Y=6.0, WIRE_COL=[44,46,50], WIRE_R=0.014, WIRE_SEG=6;
+/* размеры без моделей: генератор не зависит от того, распаковался ли шаблон, — расстановка та же */
+const PROP_FALL={tree:{h:8,r:1.8,y0:3.5}, pine:{h:9,r:1.5,y0:3.7}, bush:{h:1,r:0.8,y0:0}, lamp:{h:8.5,r:0,y0:0,arm:2.8}};
+function propDim(m){
+  return propModel.M[m] || PROP_FALL[m.startsWith('bush') ? 'bush' : (m.startsWith('lamp') || m==='ocs') ? 'lamp' : m==='pine' ? 'pine' : 'tree'];
+}
+function inConvex(pts, u, v){
+  let pos=false, neg=false;
+  for(let i=0;i<pts.length;i++){ const a=pts[i], b=pts[(i+1)%pts.length];
+    const c=(b.u-a.u)*(v-a.v)-(b.v-a.v)*(u-a.u); if(c>1e-9) pos=true; else if(c<-1e-9) neg=true; if(pos&&neg) return false; }
+  return true;
+}
+/* остановки общего города. Места выбраны по треугольникам видимости (СП 42.13330) и правилу 15 м (ПДД 12.4):
+   ближе 15 м к знаку остановки и разметке 1.17 стоять нельзя, поэтому ни одна не стоит у кармана экзамена
+   (EXAM_POCK) и у цели уровней 27–31, где уровень требует встать у тротуара; сверяет props-check
+   (@city-stop-rules). t — где знак, от начала улицы a; side +1 — сторона движения a→b, −1 — обратного.
+   Трамвайной на Ленина нет: кварталы там по 70 м, и треугольники видимости с указателем занимают оба конца */
+const CITY_STOPS=[
+  {street:'Заводская', a:'N6', side: 1, t:24, kind:'bus'},
+  {street:'Заводская', a:'N6', side:-1, t:46, kind:'bus'},
+  {street:'Заводская', a:'42,0', side:-1, t:14, kind:'bus'},
+  {street:'Садовая', a:'N7', side: 1, t:30, kind:'bus'},
+  {street:'Западная', a:'N7', side:-1, t:38, kind:'bus'}
+];
+const STOP_ZONE=20, STOP_ZIG=1.5, STOP_ZIG_COL='#e2c13c';
+/* где уровень или экзамен требует встать у тротуара: карманы экзамена и цели уровней 27–31 (с их длиной) */
+/* функцией, а не константой: EXAM_POCK объявлен ниже по файлу, а генератор зовут уже при загрузке уровня */
+const stopKeep=()=>[...EXAM_POCK.lenS, ...EXAM_POCK.lenN, ...EXAM_POCK.sadW].map(p=>({u:p.u, v:p.v, l:Math.max(p.w,p.l)}))
+  .concat([[8.15,-52],[58,-4.95],[-8.15,-52],[79.65,32],[-93.55,15.65]].map(([u,v])=>({u, v, l:5.6})));
+const STOP_PAV_AT=6, STOP_PAV_X=LAWN_IN+LAWN_W+1.15, STOP_PAV_W=1.6, STOP_PAV_L=4.2, STOP_PAV_H=2.7;
+const propCache=new WeakMap();
+function cityProps(spec, pt, radius, arms, obs, bld, hull){
+  const hit=propCache.get(spec); if(hit) return hit;
+  /* nodeZ — перекрёстки и кольца до линии фасада: ни газона, ни предметов (углы мощёные); tallZ — треугольники
+     видимости: ничего выше 0,5 м, кроме тонкой стойки фонаря; solidZ — дома и указатели улиц */
+  const nodeZ=[], tallZ=[], solidZ=[];
+  const zone=(L,pts)=>{ let cu=0, cv=0; for(const q of pts){ cu+=q.u; cv+=q.v; } cu/=pts.length; cv/=pts.length;
+    let r=0; for(const q of pts) r=Math.max(r, Math.hypot(q.u-cu, q.v-cv)); L.push({pts, cu, cv, r}); };
+  const ring=(u,v,r,n)=>{ const k=r/Math.cos(PI/n), o=[]; for(let i=0;i<n;i++){ const a=i/n*TAU; o.push({u:u+Math.cos(a)*k, v:v+Math.sin(a)*k}); } return o; };
+  for(const k in spec.nodes){ const nd=spec.nodes[k];
+    if(nd.round){ zone(nodeZ, ring(nd.u, nd.v, nd.round+BLD_SETBACK+0.5, 16)); continue; }
+    const m=[{u:nd.u, v:nd.v}], rk=radius[k]||0;
+    for(const a of arms[k]){ const f=fuv(a.yaw), rt=ruv(a.yaw), o=a.hw+BLD_SETBACK;
+      for(const sx of [-1,1]) m.push({u:nd.u+f.u*rk+rt.u*o*sx, v:nd.v+f.v*rk+rt.v*o*sx}); }
+    if(m.length>2) zone(nodeZ, hull2(m)); }
+  for(const tri of citySightTris(spec, arms)) zone(tallZ, tri);
+  /* указатель — запрет и для стойки фонаря: перед щитом она закрыла бы строку с улицей */
+  for(const o of obs) if(o.kind==='guide') zone(solidZ, rectPts(o.u, o.v, 2*GUIDE_HW+2, o.l+2, o.yaw));
+  for(const b of bld) zone(solidZ, rectPts(b.u, b.v, b.w+1, b.l+1, b.yaw));
+  /* перед лицом указателя на 25 м — ничего выше 0,5 м, как перед знаками и светофорами уровня (propsForLevel):
+     ствол в 10 м перед щитом закрывал его середину из полосы подхода с 30 м */
+  const cones=obs.filter(o=>o.kind==='guide').map(o=>({u:o.u, v:o.v, f:fuv(o.yaw), r:ruv(o.yaw)}));
+  const inCone=(u,v)=>{ for(const c of cones){ const du=u-c.u, dv=v-c.v, a=du*c.f.u+dv*c.f.v, l=du*c.r.u+dv*c.r.v;
+    if(a>-1 && a<GUIDE_CONE_L && Math.abs(l)<PROP_CONE_W) return true; } return false; };
+  const inZ=(L,u,v)=>{ for(const z of L) if(Math.hypot(z.cu-u, z.cv-v)<z.r && inConvex(z.pts,u,v)) return true; return false; };
+  const hitZ=(L,p,r)=>{ for(const z of L) if(Math.hypot(z.cu-p[0].u, z.cv-p[0].v)<z.r+r+4 && polyMTV(p,4,z.pts,z.pts.length)) return true; return false; };
+  const list=[];
+  /* half — полуразмер следа для зон, tall — выше 0,5 м, gap — свой зазор до соседей */
+  const stats={lamps:0, trees:0, bushes:0, hedges:0, island:0, lawnM:0, miss:{node:0, solid:0, tall:0, gap:0}};
+  const fits=(u,v,half,tall,gap,box)=>{
+    const p=box ? rectPts(u,v,box.w,box.l,box.yaw) : rectPts(u,v,2*half,2*half,0), r=box ? Math.hypot(box.w,box.l)/2 : half*1.42;
+    if(hitZ(nodeZ,p,r)){ stats.miss.node++; return false; }
+    if(hitZ(solidZ,p,r)){ stats.miss.solid++; return false; }
+    if(tall && (hitZ(tallZ,p,r) || inCone(u,v))){ stats.miss.tall++; return false; }
+    if(gap) for(const q of list) if(q._gap && Math.hypot(q.u-u, q.v-v) < q._gap+gap){ stats.miss.gap++; return false; }
+    return true;
+  };
+  const add=(p)=>{ list.push(p); return p; };
+  /* 0. остановки — первыми: павильон, знак и площадка занимают свой кусок тротуара, газона и полосы */
+  const stops=[], paveZ=[], zig=markSink(), KEEP=stopKeep();
+  for(const S of CITY_STOPS){
+    const r=spec.roads.find(x=>streetName(x)===S.street && String(x.a)===String(S.a));
+    if(!r){ console.warn('[props] остановка: нет улицы «'+S.street+'» от '+S.a); continue; }
+    const A=pt(r.a), f=fuv(r._yaw), rt=ruv(r._yaw), sx=S.side, dir=sx>0 ? 1 : -1;
+    const at=(t,x)=>({u:A.u+f.u*t+rt.u*sx*x, v:A.v+f.v*t+rt.v*sx*x});
+    const L=S.kind==='bus' ? STOP_ZONE : 0, travel=dir>0 ? r._yaw : angNorm(r._yaw+PI);
+    /* от заданной точки — ближайшее место, где знак и павильон вне перекрёстка и треугольников видимости, а до
+       кармана экзамена и цели уровня не меньше 15 м (stopKeep) */
+    const clearOf=(t)=>{ const a=at(t,r._hw-1.65), b=at(t+dir*Math.max(L,STOP_PAV_AT+STOP_PAV_L/2),r._hw-1.65);
+      for(const k of KEEP){
+        /* на той же стороне улицы: место у тротуара напротив остановкой не занято */
+        const lat=(k.u-A.u)*rt.u+(k.v-A.v)*rt.v;
+        if(lat*sx<=0 || Math.abs(lat)>r._hw+1) continue;
+        const du=b.u-a.u, dv=b.v-a.v, l2=du*du+dv*dv||1, q=clamp(((k.u-a.u)*du+(k.v-a.v)*dv)/l2,0,1);
+        if(Math.hypot(k.u-a.u-du*q, k.v-a.v-dv*q) < 15+k.l/2) return false; } return true; };
+    let t0=null;
+    for(let d=0; d<=40 && t0===null; d+=1) for(const sg0 of (d ? [1,-1] : [1])){
+      const t=S.t+sg0*d, tp=t+dir*STOP_PAV_AT, te=at(t+dir*L, r._hw-0.75);
+      if(Math.min(t,tp)<0 || Math.max(t,tp)>r._len) continue;
+      /* зигзаг может уйти за стык кусков улицы (у [42,0] улица идёт прямо), но не на перекрёсток */
+      if(inZ(nodeZ, te.u, te.v)) continue;
+      const a=at(t, r._hw+LAMP_LAT), b=at(tp, r._hw+STOP_PAV_X);
+      if(fits(a.u,a.v,0.3,true,0) && fits(b.u,b.v,0,true,0,{w:STOP_PAV_W+0.4, l:STOP_PAV_L+0.4, yaw:r._yaw}) && clearOf(t)){ t0=t; break; } }
+    if(t0===null){ console.warn('[props] остановка на «'+S.street+'» не встала: нет места вне перекрёстков, треугольников и в 15 м от карманов'); continue; }
+    const tp=t0+dir*STOP_PAV_AT, sg=at(t0, r._hw+LAMP_LAT), pv=at(tp, r._hw+STOP_PAV_X);
+    add({kind:'prop', m:'stopsign', pic:S.kind, u:sg.u, v:sg.v, yaw:angNorm(travel+PI), s:1, solid:'pole', _gap:1.0});
+    add({kind:'prop', m:'stop', u:pv.u, v:pv.v, yaw:r._yaw, s:1, w:STOP_PAV_W, l:STOP_PAV_L, h:STOP_PAV_H, side:sx, solid:'stop', _gap:2.0});
+    const ur=at(tp+dir*(STOP_PAV_L/2+1.0), r._hw+STOP_PAV_X-0.5);
+    add({kind:'prop', m:'urn', u:ur.u, v:ur.v, yaw:r._yaw, s:1, solid:null, _gap:0.5});
+    /* площадка у павильона мощёная: газон под ней прерывается, деревья и фонари её обходят */
+    const ta=Math.min(tp, t0)-STOP_PAV_L/2-1, tb=Math.max(tp, t0)+STOP_PAV_L/2+1, cm=at((ta+tb)/2, r._hw+(LAWN_IN+BLD_SETBACK)/2);
+    const pz=rectPts(cm.u, cm.v, BLD_SETBACK-LAWN_IN, tb-ta, r._yaw); paveZ.push(pz);
+    zone(solidZ, pz);
+    /* 1.17 — жёлтый зигзаг в крайней полосе по длине места остановки автобуса: ближе 15 м от него стоять
+       нельзя (ПДД 12.4), поэтому CITY_STOPS обходит карманы экзамена и цели уровней */
+    let zone117=null;
+    if(L){
+      const x0=r._hw-0.25, x1=r._hw-1.25, n=Math.round(L/STOP_ZIG);
+      const pts=[]; for(let i=0;i<=n;i++) pts.push(at(t0+dir*i*L/n, i%2 ? x1 : x0));
+      for(let i=0;i<n;i++){ const P=pts[i], Q=pts[i+1], du=Q.u-P.u, dv=Q.v-P.v, l=Math.hypot(du,dv)||1, nu=-dv/l*0.06, nv=du/l*0.06;
+        markPoly(zig, 0, [{u:P.u+nu,v:P.v+nv},{u:Q.u+nu,v:Q.v+nv},{u:Q.u-nu,v:Q.v-nv},{u:P.u-nu,v:P.v-nv}]); }
+      const zc=at(t0+dir*L/2, r._hw-0.75); zone117=rectPts(zc.u, zc.v, 1.0, L, r._yaw);
+    }
+    stops.push({kind:S.kind, street:S.street, u:sg.u, v:sg.v, yaw:travel, sign:{u:sg.u, v:sg.v}, pav:{u:pv.u, v:pv.v}, len:L, zone:zone117});
+  }
+  /* 1. фонари — первыми: их шаг ровный, деревья встают между ними. На улице в две полосы — по обе стороны
+     напротив, в одну — по одной, вперемежку */
+  const wires=[];
+  for(const r of spec.roads){
+    const A=pt(r.a), f=fuv(r._yaw), rt=ruv(r._yaw), two=(r.lanes||1)>=2, off=r._hw+LAMP_LAT;
+    const at=(t,x,y)=>({u:A.u+f.u*t+rt.u*x, v:A.v+f.v*t+rt.v*x, y});
+    let i=0, prevT=null;
+    for(let t=LAMP_STEP/2; t<r._len; t+=LAMP_STEP, i++){
+      let pair=0;
+      for(const sx of (two ? [-1,1] : [i%2 ? 1 : -1])){
+        const u=A.u+f.u*t+rt.u*sx*off, v=A.v+f.v*t+rt.v*sx*off;
+        if(!fits(u,v,0.3,false,1.2)) continue;
+        /* консолью к оси улицы; на трамвайной улице это опора контактной сети с консолью освещения */
+        add({kind:'prop', m:r.tram ? 'ocs' : two ? 'lamp-b' : 'lamp-a', u, v, yaw:Math.atan2(-rt.u*sx, -rt.v*sx), s:1, solid:'pole', _gap:1.2});
+        stats.lamps++; pair++;
+      }
+      /* контактная сеть: поперечина между парой опор, над каждым путём — провод до прошлой пары */
+      if(r.tram && pair===2){
+        wires.push({a:at(t,-off,OCS_SPAN_Y), b:at(t,off,OCS_SPAN_Y)});
+        if(prevT!==null) for(const x of [-TRAM_HW/2, TRAM_HW/2]) wires.push({a:at(prevT,x,OCS_WIRE_Y), b:at(t,x,OCS_WIRE_Y)});
+        prevT=t;
+      }
+    }
+  }
+  for(const w of wires){
+    const du=w.b.u-w.a.u, dv=w.b.v-w.a.v, L=Math.hypot(du,dv);
+    add({kind:'prop', m:'wire', u:(w.a.u+w.b.u)/2, v:(w.a.v+w.b.v)/2, yaw:Math.atan2(du,dv), s:1, a:w.a, b:w.b, len:L, solid:null});
+    stats.wires=(stats.wires||0)+1;
+  }
+  /* 2. деревья в газоне, между ними — кусты или стриженая изгородь */
+  for(const r of spec.roads){
+    const A=pt(r.a), f=fuv(r._yaw), rt=ruv(r._yaw), name=streetName(r), sp=PROP_STREET[name]||'tree-a', hedge=!!PROP_HEDGE[name];
+    const ends=[r.a,r.b].filter(e=>!Array.isArray(e)).map(e=>spec.nodes[e]);
+    for(const sx of [-1,1]){
+      const rnd=bldRng('tree|'+r.name+'|'+String(r.a)+'|'+sx), off=r._hw+PROP_LAT, at=(t,x)=>({u:A.u+f.u*t+rt.u*sx*x, v:A.v+f.v*t+rt.v*sx*x});
+      const ts=[];
+      for(let t=2+rnd()*5; t<r._len-2; ){
+        const p=at(t,off), dn=ends.length ? Math.min(...ends.map(n=>Math.hypot(n.u-p.u, n.v-p.v))) : 1e9;
+        let m = rnd()<0.8 ? sp : PROP_HIGH[Math.floor(rnd()*PROP_HIGH.length)];
+        if(dn<PROP_NEAR_NODE && !PROP_HIGH.includes(m)) m='tree-a';
+        const D=propDim(m), s=Math.min(0.85+0.3*rnd(), D.r>0 ? PROP_CROWN_MAX/D.r : 1), yaw=rnd()*TAU, leaf=PROP_LEAF[Math.floor(rnd()*PROP_LEAF.length)];
+        if(rnd()<0.06 || !fits(p.u,p.v,0.6,true,2.4)){ t+=2; continue; }
+        add({kind:'prop', m, u:p.u, v:p.v, yaw, s, leaf, solid:'tree', _gap:2.4}); stats.trees++;
+        ts.push(t); t+=7.5+rnd()*2;
+      }
+      for(let i=0;i+1<ts.length;i++){
+        const a=ts[i], b=ts[i+1];
+        if(b-a<6) continue;
+        if(hedge){
+          /* изгородь — по внешнему краю газона, кусками по 3 м: длинная коробка сортируется по центру неверно */
+          const x=r._hw+LAWN_IN+LAWN_W-0.25;
+          for(let t=a+1.6; t+3<=b-1.6; t+=3.3){
+            const p=at(t+1.5, x);
+            if(!fits(p.u,p.v,0.25,true,0) || !fits(at(t,x).u,at(t,x).v,0.25,true,0) || !fits(at(t+3,x).u,at(t+3,x).v,0.25,true,0)) continue;
+            add({kind:'prop', m:'hedge', u:p.u, v:p.v, w:0.45, l:3.0, h:0.75, yaw:r._yaw, col:HEDGE_COL, tex:'hedge', solid:'hedge'}); stats.hedges++;
+          }
+        } else if(b-a>=8 && rnd()<0.4){
+          const n=2+Math.floor(rnd()*2), tm=(a+b)/2;
+          for(let j=0;j<n;j++){
+            const p=at(tm+(j-(n-1)/2)*1.1, off), m=rnd()<0.5 ? 'bush-b' : 'bush-c', D=propDim(m);
+            const s=Math.min(0.9+0.3*rnd(), PROP_BUSH_MAX/(D.r||0.8)), yaw=rnd()*TAU;
+            if(!fits(p.u,p.v,0.4,true,0.4)) continue;
+            add({kind:'prop', m, u:p.u, v:p.v, yaw, s, leaf:PROP_LEAF[(i+j)%PROP_LEAF.length], solid:null}); stats.bushes++;
+          }
+        }
+      }
+    }
+  }
+  /* скамейка с урной — у фасада, спинкой к дому, лицом к улице, на улицах в две полосы. После деревьев и у фасада:
+     поставленные раньше и у газона, скамейки заняли середины кварталов, и с Ленина ушли все деревья */
+  for(const r of spec.roads){
+    if((r.lanes||1)<2) continue;
+    const A=pt(r.a), f=fuv(r._yaw), rt=ruv(r._yaw);
+    for(const sx of [-1,1]){
+      const rnd=bldRng('bench|'+r.name+'|'+String(r.a)+'|'+sx), x=r._hw+BENCH_X;
+      /* одна на сторону в середине куска улицы: концы квартала заняты треугольниками видимости, а между стволами
+         через 8 м свободно ~2,6 м — место ищется рядом с серединой, а не одной точкой */
+      if(r._len<30) continue;
+      for(const t of [r._len/2+(rnd()-0.5)*4]){
+        for(let d=0; d<=8; d+=0.5){ let ok=false;
+          for(const tt of (d ? [t+d, t-d] : [t])){
+            /* урна в 2 м от середины скамьи: ближе грани урны и сиденья сортировались не в том порядке */
+            const b={u:A.u+f.u*tt+rt.u*sx*x, v:A.v+f.v*tt+rt.v*sx*x}, w={u:b.u+f.u*2.0, v:b.v+f.v*2.0};
+            if(!fits(b.u,b.v,0,true,0.6,{w:0.7, l:1.9, yaw:r._yaw}) || !fits(w.u,w.v,0.25,true,0.3)) continue;
+            add({kind:'prop', m:'bench', u:b.u, v:b.v, yaw:r._yaw, side:sx, s:1, solid:'bench', _gap:0.9});
+            add({kind:'prop', m:'urn', u:w.u, v:w.v, yaw:r._yaw, s:1, solid:null, _gap:0.4});
+            stats.benches=(stats.benches||0)+1; ok=true; break; }
+          if(ok) break; }
+      }
+    }
+  }
+  /* 3. островок кольца: дерево в центре, кольцо деревьев, кусты по краю и клумба. Кроны выше 3,4 м — въезжающий
+     смотрит налево под ними; стволы — внутри поребрика островка */
+  const beds=[];
+  const BED=['#c4484a','#e0b23c','#d277a6'];
+  for(const k in spec.nodes){ const nd=spec.nodes[k]; if(!nd.round) continue;
+    const rnd=bldRng('island|'+k), rIn=nd.round-7.0;
+    add({kind:'prop', m:'tree-b', u:nd.u, v:nd.v, yaw:rnd()*TAU, s:1, leaf:PROP_LEAF[0], solid:'tree'}); stats.island++;
+    for(let i=0;i<5;i++){ const a=i/5*TAU+0.3, rr=rIn-3.4;
+      add({kind:'prop', m:i%2 ? 'tree-e' : 'tree-a', u:nd.u+Math.cos(a)*rr, v:nd.v+Math.sin(a)*rr, yaw:rnd()*TAU, s:0.9,
+           leaf:PROP_LEAF[(i+1)%PROP_LEAF.length], solid:'tree'}); stats.island++; }
+    for(let i=0;i<10;i++){ const a=i/10*TAU, rr=rIn-1.5, m=['bush-b','bush-c'][i%2], D=propDim(m);
+      add({kind:'prop', m, u:nd.u+Math.cos(a)*rr, v:nd.v+Math.sin(a)*rr, yaw:rnd()*TAU, s:Math.min(1, PROP_BUSH_MAX/(D.r||0.8)),
+           leaf:PROP_LEAF[i%PROP_LEAF.length], solid:null}); stats.island++; }
+    /* клумба — по одной заливке на цвет: двенадцать секторов отдельными наклейками стоили двенадцати заливок */
+    const bp=[[],[],[]];
+    for(let i=0;i<12;i++){ const a0=i/12*TAU, a1=(i+1)/12*TAU, p=[];
+      for(const [a,rr] of [[a0,2.0],[a1,2.0],[a1,3.4],[a0,3.4]]) p.push({u:nd.u+Math.cos(a)*rr, v:nd.v+Math.sin(a)*rr});
+      bp[i%3].push(p); }
+    for(let c=0;c<3;c++) beds.push({polys:bp[c], fill:BED[c], far:true});
+  }
+  /* 4. газон: полоса вдоль каждой стороны каждой улицы, пока обе её кромки вне перекрёстка; кусками по 42 м с
+     перекрытием, как тротуар */
+  const lawns=[];
+  for(const r of spec.roads){
+    const A=pt(r.a), f=fuv(r._yaw), rt=ruv(r._yaw);
+    for(const sx of [-1,1]){
+      const x0=r._hw+LAWN_IN+0.05, x1=r._hw+LAWN_IN+LAWN_W-0.05;
+      const ok=(t)=>{ for(const x of [x0,x1]){ const u=A.u+f.u*t+rt.u*sx*x, v=A.v+f.v*t+rt.v*sx*x;
+        if(inZ(nodeZ,u,v)) return false; for(const z of paveZ) if(inConvex(z,u,v)) return false; } return true; };
+      const put=(t0,t1)=>{ const L=t1-t0; if(L<1) return; const n=Math.max(1,Math.ceil(L/42)), sl=L/n, xc=r._hw+LAWN_IN+LAWN_W/2;
+        for(let i=0;i<n;i++){ const tc=t0+sl*(i+0.5);
+          lawns.push({pts:rectPts(A.u+f.u*tc+rt.u*sx*xc, A.v+f.v*tc+rt.v*sx*xc, LAWN_W, sl+0.06, r._yaw), fill:LAWN_COL, far:true}); }
+        stats.lawnM+=L; };
+      let s0=null;
+      for(let t=0;t<=r._len+1e-6;t+=0.5){
+        const good=ok(t);
+        if(good && s0===null) s0=t;
+        if(s0!==null && (!good || t+0.5>r._len+1e-6)){ put(s0, good ? t : t-0.5); s0=null; }
+      }
+    }
+  }
+  /* 5. дворы: на решётке внутри пояса, дальше коридоров улиц — парковка, детская площадка, контейнеры, деревья.
+     Двор — одна группа с одной проверкой окклюзии: за домами его не видно, и лучи на каждую машину не нужны */
+  const ground=[];
+  if(hull && hull.length>2){
+    ground.push({pts:hull, fill:YARD_GROUND, far:true});
+    const inHull=(u,v)=>{ for(let i=0;i<hull.length;i++){ const P=hull[i], Q=hull[(i+1)%hull.length];
+      if((Q.u-P.u)*(v-P.v)-(Q.v-P.v)*(u-P.u) < 0) return false; } return true; };
+    let u0=1e9,u1=-1e9,v0=1e9,v1=-1e9; for(const q of hull){ u0=Math.min(u0,q.u); u1=Math.max(u1,q.u); v0=Math.min(v0,q.v); v1=Math.max(v1,q.v); }
+    const ry=bldRng('yards'), KINDS=['park','green','play','park','trash','green'];
+    for(let gu=u0+YARD_STEP/2; gu<u1; gu+=YARD_STEP) for(let gv=v0+YARD_STEP/2; gv<v1; gv+=YARD_STEP){
+      if(!inHull(gu,gv)) continue;
+      let best=1e9, yaw=0, far=true;
+      for(const r of spec.roads){ const A=pt(r.a), f=fuv(r._yaw);
+        const t=clamp((gu-A.u)*f.u+(gv-A.v)*f.v, 0, r._len), d=Math.hypot(A.u+f.u*t-gu, A.v+f.v*t-gv);
+        if(d<r._hw+BLD_SETBACK+6) far=false;
+        if(d<best){ best=d; yaw=r._yaw; } }
+      if(!far) continue;
+      const kind=KINDS[Math.floor(ry()*KINDS.length)], F=fuv(yaw), Rt=ruv(yaw);
+      const L=(a,x)=>({u:gu+F.u*a+Rt.u*x, v:gv+F.v*a+Rt.v*x});
+      if(kind==='green'){
+        for(let k=0;k<3;k++){ const p=L((k-1)*5, (ry()-0.5)*4), m=['tree-b','tree-a','pine','tree-c'][Math.floor(ry()*4)], D=propDim(m);
+          const s=0.9+0.3*ry(), yw=ry()*TAU, leaf=PROP_LEAF[Math.floor(ry()*PROP_LEAF.length)];
+          if(!fits(p.u,p.v,0.6,true,2.4)) continue;
+          add({kind:'prop', m, u:p.u, v:p.v, yaw:yw, s, leaf, solid:'tree', yard:true, _gap:2.4}); stats.yardTrees=(stats.yardTrees||0)+1; }
+        continue;
+      }
+      const box = kind==='park' ? {w:6.5, l:13} : kind==='play' ? {w:10, l:10} : {w:4, l:5.5};
+      if(!fits(gu,gv,0,true,0,{...box, yaw}) || !fits(gu,gv,0,true,3,{w:1,l:1,yaw})) continue;
+      const items=[], cols=[];
+      if(kind==='park'){
+        const n=3+Math.floor(ry()*3);
+        for(let k=0;k<n;k++){ const c=L((k-(n-1)/2)*2.6, 0); const cy=yaw+PI/2+(ry()<0.5 ? 0 : PI);
+          items.push({t:'car', u:c.u, v:c.v, yaw:cy, col:PALETTE[Math.floor(ry()*PALETTE.length)]});
+          cols.push({kind:'yard', u:c.u, v:c.v, hw:CAR.width/2, hl:CAR.length/2, yaw:cy, h:1.45, solid:true, _touch:false}); }
+        ground.push({pts:rectPts(gu,gv,box.w,box.l,yaw), fill:YARD_PAD, far:true});
+      } else if(kind==='play'){
+        const sb=L(-2.5,-2); items.push({t:'box', u:sb.u, y:0.12, v:sb.v, hw:1.5, hh:0.12, hl:1.5, yaw, col:[176,124,72]});
+        ground.push({pts:rectPts(sb.u,sb.v,2.6,2.6,yaw), fill:'#d8c38a', far:true});
+        const sw=L(2.5,0);
+        for(const a of [-1.3,1.3]){ const q=L(2.5+a,0); items.push({t:'box', u:q.u, y:1.1, v:q.v, hw:0.05, hh:1.1, hl:0.05, yaw, col:[196,64,56]}); }
+        items.push({t:'box', u:sw.u, y:2.2, v:sw.v, hw:0.05, hh:0.05, hl:1.4, yaw, col:[196,64,56]});
+        items.push({t:'box', u:sw.u, y:0.5, v:sw.v, hw:0.2, hh:0.03, hl:0.25, yaw, col:[232,186,52]});
+        const hs=L(-2,3); items.push({t:'box', u:hs.u, y:0.75, v:hs.v, hw:0.8, hh:0.75, hl:0.8, yaw, col:[64,120,190]});
+        items.push({t:'box', u:hs.u, y:1.65, v:hs.v, hw:1.0, hh:0.15, hl:1.0, yaw, col:[214,72,60]});
+        for(const q of [sw, hs]) cols.push({kind:'yard', u:q.u, v:q.v, hw:1.4, hl:1.4, yaw, h:2, solid:true, _touch:false});
+        ground.push({pts:rectPts(gu,gv,box.w,box.l,yaw), fill:'#8a8574', far:true});
+      } else {
+        for(let k=0;k<3;k++){ const c=L((k-1)*1.5, 0.5); items.push({t:'box', u:c.u, y:0.6, v:c.v, hw:0.55, hh:0.6, hl:0.7, yaw, col:[58,104,66]}); }
+        const bk=L(0,-1.6); items.push({t:'box', u:bk.u, y:0.75, v:bk.v, hw:0.04, hh:0.75, hl:2.6, yaw, col:[150,152,150]});
+        cols.push({kind:'yard', u:gu, v:gv, hw:2.2, hl:1.6, yaw, h:1.5, solid:true, _touch:false});
+        ground.push({pts:rectPts(gu,gv,box.w,box.l,yaw), fill:YARD_PAD, far:true});
+      }
+      add({kind:'prop', m:'yard', yk:kind, u:gu, v:gv, yaw, w:box.w, l:box.l, h:kind==='play' ? 2.4 : 1.6, items, cols, s:1, solid:null, _gap:3});
+      stats.yards=(stats.yards||0)+1;
+    }
+  }
+  for(const p of list){ delete p._gap; }
+  stats.lawnM=Math.round(stats.lawnM);
+  stats.stops=stops.length;
+  if(zig.polys.length) beds.push({polys:zig.polys.map(p=>p.pts), fill:STOP_ZIG_COL, far:true});
+  const res={list, lawns, beds, stats, stops, ground};
+  propCache.set(spec, res);
+  return res;
+}
+/* копия обустройства на уровень: знак или светофор уровня — не на месте дерева, и перед его лицом на 25 м
+   нет ни дерева, ни куста (#110: крона на высоте линз); стойке фонаря хватает зазора — она тоньше линзы */
+const PROP_FIXED={stop:1, stopsign:1, urn:1, wire:1, yard:1, ocs:1, bench:1};
+function propsForLevel(src, obs, g){
+  if(!src || !src.length) return [];
+  const keep=obs.filter(o=>o.kind==='sign' || o.kind==='light');
+  /* расстояние от оси ближайшей улицы: предмет дальше от неё, чем знак, линию взгляда из полос на знак не пересекает */
+  const axis=(u,v)=>{ let best=1e9; if(!g) return best;
+    for(const e of g.E){ const A=g.V[e.a], B=g.V[e.b], du=B.u-A.u, dv=B.v-A.v, L2=du*du+dv*dv; if(L2<1e-6) continue;
+      const t=clamp(((u-A.u)*du+(v-A.v)*dv)/L2,0,1); best=Math.min(best, Math.hypot(u-A.u-du*t, v-A.v-dv*t)); }
+    return best; };
+  const out=[];
+  for(const p0 of src){
+    /* остановка — целиком: без павильона или знака зигзаг 1.17 на асфальте остался бы ничьим; её место сверяет гейт */
+    if(PROP_FIXED[p0.m]){ out.push(propPrep({...p0})); continue; }
+    let drop=false;
+    for(const s of keep){
+      const du=p0.u-s.u, dv=p0.v-s.v, f=fuv(s.yaw), r=ruv(s.yaw), a=du*f.u+dv*f.v, l=du*r.u+dv*r.v;
+      const half=p0.m==='hedge' ? p0.l/2 : 0;
+      if(Math.hypot(du,dv)-half<2.5){ drop=true; break; }
+      if(p0.m.startsWith('lamp') || p0.m==='ocs' || p0.m==='wire' || p0.m==='hedge') continue;
+      if(a>-1 && a<PROP_CONE_L && Math.abs(l)<PROP_CONE_W){
+        const r0 = p0.m.startsWith('bush') ? 0.9 : 0.3;
+        if(axis(p0.u,p0.v)-r0 > axis(s.u,s.v)+0.1) continue;
+        drop=true; break; }
+    }
+    if(!drop) out.push(propPrep({...p0}));
+  }
+  return out;
+}
+function propPrep(p){
+  p._crad=undefined; p._sr=undefined; p._touch=false;
+  if(p.m==='hedge'){
+    p.hw=p.w/2; p.hl=p.l/2; p.small=false;
+    p._shadow=shadowPoly(p.u,p.v,p.w,p.l,p.yaw,p.h); p._shadow2=null;
+    p._col={kind:'hedge', u:p.u, v:p.v, hw:p.hw, hl:p.hl, yaw:p.yaw, h:p.h, solid:true, _touch:false};
+    return p;
+  }
+  if(p.m==='stop'){
+    p.hw=p.w/2; p.hl=p.l/2; p.small=false;
+    p._shadow=shadowPoly(p.u,p.v,p.w+0.3,p.l+0.3,p.yaw,p.h); p._shadow2=null;
+    p._col={kind:'stop', u:p.u, v:p.v, hw:p.hw, hl:p.hl, yaw:p.yaw, h:p.h, solid:true, _touch:false};
+    return p;
+  }
+  if(p.m==='wire'){
+    p.h=Math.max(p.a.y,p.b.y); p.w=0.3; p.l=p.len; p.hw=0.15; p.hl=p.len/2; p.small=false; p.cr=0; p.cy0=0;
+    p._shadow=null; p._shadow2=null; p._col=null;
+    return p;
+  }
+  if(p.m==='yard') return yardPrep(p);
+  if(p.m==='bench'){
+    p.h=0.92; p.w=0.6; p.l=1.9; p.hw=0.3; p.hl=0.95; p.small=true; p.cr=0; p.cy0=0;
+    p._shadow=shadowPoly(p.u,p.v,0.5,1.8,p.yaw,0.5); p._shadow2=null;
+    p._col={kind:'bench', u:p.u, v:p.v, hw:0.3, hl:0.95, yaw:p.yaw, h:p.h, solid:true, _touch:false};
+    return p;
+  }
+  if(p.m==='stopsign' || p.m==='urn'){
+    const sign=p.m==='stopsign';
+    p.h=sign ? SIGN_H : 0.76; p.w=p.l=sign ? 0.8 : 0.4; p.hw=p.hl=p.w/2; p.small=!sign; p.cr=0; p.cy0=0;
+    p._shadow=shadowPoly(p.u,p.v,sign ? 0.08 : 0.4,sign ? 0.08 : 0.4,0,sign ? SIGN_POST_H : p.h); p._shadow2=null;
+    p._col = sign ? {kind:'pole', u:p.u, v:p.v, hw:0.1, hl:0.1, yaw:0, h:p.h, solid:true, _touch:false} : null;
+    return p;
+  }
+  const D=propDim(p.m), s=p.s, lamp=p.m.startsWith('lamp') || p.m==='ocs';
+  p.h=D.h*s; p.cr=(D.r||0)*s; p.cy0=(D.y0||0)*s;
+  const reach = lamp ? (D.arm||2.6)*s : Math.max(0.3, p.cr);
+  p.w=p.l=2*reach+0.4; p.hw=p.hl=p.w/2;
+  p.small=p.m.startsWith('bush');
+  if(lamp){ p._shadow=shadowPoly(p.u,p.v,0.2,0.2,0,p.h); p._shadow2=null; }
+  else {
+    /* тень кроны — оболочка её круга на высоте низа и верха кроны, снесённого по лучу света; ствол — отдельной
+       полосой: оболочка всего вместе залила бы клин между стволом и кроной */
+    const r=Math.max(0.3, p.cr*0.92), q=[];
+    /* шесть точек на круг: тень заливается каждый кадр, и на телефоне десять точек в двух кругах были заметной долей кадра */
+    for(const y of [p.cy0, p.h]){ const d=y*SHADOW_K;
+      for(let i=0;i<6;i++){ const a=(i+0.5)/6*TAU; q.push({u:p.u+d+Math.cos(a)*r, v:p.v-d+Math.sin(a)*r}); } }
+    p._shadow=hull2(q);
+    p._shadow2 = p.cy0>0.5 ? shadowPoly(p.u,p.v,0.3*s,0.3*s,0,p.cy0) : null;
+  }
+  if(p.solid){
+    const hw = p.solid==='pole' ? 0.15 : 0.2*Math.max(0.85, s);
+    p._col={kind:p.solid==='pole' ? 'pole' : 'tree', u:p.u, v:p.v, hw, hl:hw, yaw:0, h:p.h, solid:true, _touch:false};
+  } else p._col=null;
+  return p;
+}
+/* касание обустройства — по сетке 8 м: машина проверяет только свои ячейки */
+const PROP_CELL=8;
+let propGrid=null, propStamp=0;
+const PROP_NEAR=[], PROP_HELD=[];
+function propKey(iu,iv){ return (iu+4096)*8192+(iv+4096); }
+function propGridBuild(){
+  propGrid=new Map(); PROP_HELD.length=0;
+  for(const p of (level.props||[])) for(const c of (p._cols || (p._col ? [p._col] : []))){
+    const r=Math.hypot(c.hw,c.hl);
+    for(let iu=Math.floor((c.u-r)/PROP_CELL); iu<=Math.floor((c.u+r)/PROP_CELL); iu++)
+      for(let iv=Math.floor((c.v-r)/PROP_CELL); iv<=Math.floor((c.v+r)/PROP_CELL); iv++){
+        const k=propKey(iu,iv); let a=propGrid.get(k); if(!a) propGrid.set(k, a=[]); a.push(c); } }
+}
+/* три на три ячейки вокруг машины (8 м больше её полудиагонали с запасом на ствол) плюс всё, что ещё держит
+   защёлку касания: без них защёлка не снималась бы, когда машина уехала за пределы ячеек */
+function propsNear(u, v){
+  PROP_NEAR.length=0;
+  if(!propGrid || !propGrid.size) return PROP_NEAR;
+  propStamp++;
+  const iu0=Math.floor(u/PROP_CELL), iv0=Math.floor(v/PROP_CELL);
+  for(let iu=iu0-1; iu<=iu0+1; iu++) for(let iv=iv0-1; iv<=iv0+1; iv++){
+    const a=propGrid.get(propKey(iu,iv)); if(!a) continue;
+    for(const c of a) if(c._q!==propStamp){ c._q=propStamp; PROP_NEAR.push(c); } }
+  let w=0;
+  for(const c of PROP_HELD) if(c._touch){ PROP_HELD[w++]=c; if(c._q!==propStamp){ c._q=propStamp; PROP_NEAR.push(c); } }
+  PROP_HELD.length=w;
+  return PROP_NEAR;
 }
 
 /* ---------- маршрут по улицам ----------
@@ -7058,7 +7573,9 @@ function shiftSel(step){
 const game = { t:0, hits:0, holdT:0, done:false, li:0, hitCd:0, flash:0, moved:false,
                hitMsg:'', hitMsgT:0, parked:false, parkT:0 };
 /* разбор касания: чем и обо что — именно это знание переносится на реальную машину */
-const OBST_NAME={car:'машину', wall:'стену', kerb:'бордюр', cone:'конус', tram:'трамвай'};
+const OBST_NAME={car:'машину', wall:'стену', kerb:'бордюр', cone:'конус', tram:'трамвай',
+                 tree:'дерево', pole:'столб', hedge:'изгородь', stop:'павильон остановки', bench:'скамейку',
+                 yard:'машину во дворе'};
 function hitReason(o){
   const c=bodyPos(), f=fuv(car.th), r=ruv(car.th);
   let best=null, bd=1e9;
@@ -7077,7 +7594,8 @@ function hitReason(o){
     ? (front ? 'Он выносит дальше всего при повороте.' : 'На дуге он уходит наружу и не виден в зеркала.')
     : (front ? 'При повороте передний угол выносит дальше всего — он идёт по габаритному радиусу 5,9 м.'
              : 'Задние колёса срезают внутрь, а задний угол на дуге уходит наружу — его не видно ни в одно зеркало.');
-  return {msg:'Задел '+who+' о '+(OBST_NAME[o.kind]||'препятствие')+'.', why};
+  const nm=OBST_NAME[o.kind]||'препятствие';
+  return {msg:'Задел '+who+(/^[аеиоуыэ]/.test(nm) ? ' об ' : ' о ')+nm+'.', why};
 }
 const CAM_CHASE=0, CAM_TOP=1, CAM_FP=2;
 /* граница видимости дороги из-за капота — считается из положения глаз водителя */
@@ -7228,6 +7746,11 @@ function loadLevel(i){
             marks: def.marks ? def.marks() : {} };
   level.bld = level.obs.filter(o=>o.kind==='bld');
   bldGridBuild();
+  /* обустройство рисуется уличными проходами вместе с препятствиями (окклюзия домами, отсечение), а в
+     level.obs не входит: касание — по своей сетке, датчики его не видят */
+  level.props = propsForLevel(b.city && b.city.props, b.obs, b.city && b.city.graph);
+  for(const p of level.props) level.rend.push(p);
+  propGridBuild();
   level.rampDec=[];
   if(level.ramps.length) rampBuild(level);
   decBounds(level.dec);
@@ -7269,6 +7792,8 @@ function restart(){
   setParked(false);
   trails = {fl:[],fr:[],rl:[],rr:[]}; trailT=0;
   for(const o of level.obs){ o.knocked=false; o._touch=false; o._hitByPlayer=false; }
+  for(const p of (level.props||[])){ if(p._col) p._col._touch=false; if(p._cols) for(const c of p._cols) c._touch=false; }
+  PROP_HELD.length=0;
   kerbHeld=[];
   for(const a of level.actors){ a.u=a.act.u0; a.v=a.act.v0; a.yaw=a.act.yaw0;
     a.act.i=0; a.act.started=!a.act.trig; a.act.done=false; a._vioFired=false;
@@ -7415,23 +7940,36 @@ function untouchFar(A,o){
   TR_BOX.u=o.u; TR_BOX.v=o.v; TR_BOX.hw=o.hw+TOUCH_REARM; TR_BOX.hl=o.hl+TOUCH_REARM; TR_BOX.yaw=o.yaw;
   if(!satMTV(A,TR_BOX)) untouch(o);
 }
+const COL_ST={hard:false, fresh:false, freshObj:null};
 function resolveCollisions(dt){
-  const A=carOBB(), f=fuv(car.th); let hard=false, fresh=false, freshObj=null;
-  for(const o of level.obs){
-    if(o.kind==='cone' && o.knocked) continue;
+  const A=carOBB(), f=fuv(car.th), st=COL_ST;
+  st.hard=false; st.fresh=false; st.freshObj=null;
+  for(const o of level.obs) collideOne(o, A, f, dt, st);
+  /* обустройство города — только из своих ячеек: сотни стволов и опор в level.obs стоили бы проверки на
+     каждом подшаге */
+  const pn=propsNear(A.u, A.v);
+  for(let i=0;i<pn.length;i++) collideOne(pn[i], A, f, dt, st);
+  if(st.fresh && game.hitCd<=0){
+    game.hits++; game.hitCd=0.25; game.flash=1; thud(st.hard?1:0.4);
+    if(st.freshObj){ const hr=hitReason(st.freshObj); game.hitMsg=hr.msg; game.hitWhy=hr.why; game.hitMsgT=3.2; }
+  }
+}
+function collideOne(o, A, f, dt, st){
+    if(o.kind==='cone' && o.knocked) return;
     /* прямоугольник — только грубый отсев, чтобы не гонять точную проверку по всем
        препятствиям уровня; касание объявляется по настоящему следу кузова */
-    if(!satMTV(A,o)){ untouchFar(A,o); continue; }
+    if(!satMTV(A,o)){ untouchFar(A,o); return; }
     const nq=obsShape(o);
     const m=polyMTV(carHullPts(A.u,A.v,car.th), CAR_HULL.length, obsBuf(o), nq);
     /* касание считаем по НАЧАЛУ контакта: без защёлки машина, стоящая на бордюре,
        набирала новое касание каждые полсекунды */
-    if(!m){ untouchFar(A,o); continue; }
+    if(!m){ untouchFar(A,o); return; }
     /* пока игрок не тронулся, чужая машина ему не «наезд»: защёлка ставится на любом
        пересечении OBB, кто бы ни двигался, и стоящий на старте получал аварийную ошибку
        за то, что поток прошёл вплотную */
     if(!o._touch && o.grp!==undefined && (kerbHeld[o.grp]=(kerbHeld[o.grp]||0)+1)>1) o._touch=true;
-    if(!o._touch){ o._touch=true; fresh=true; freshObj=o; if(o.act && game.moved) o._hitByPlayer=true;
+    if(!o._touch){ o._touch=true; st.fresh=true; st.freshObj=o; if(o.act && game.moved) o._hitByPlayer=true;
+      if(o._q!==undefined) PROP_HELD.push(o);
       /* актёра не начисляем здесь: его покроет vio collision-actor из детекторов.
          На демо штраф глушим: показ ведёт машину сам и снял бы попытку игрока */
       if(!o.act && !demo) hitPenalty(o); }
@@ -7443,16 +7981,11 @@ function resolveCollisions(dt){
       car.ru+=m.u*push; car.rv+=m.v*push;
       A.u+=m.u*push; A.v+=m.v*push;
       if(outward < 0) car.vel = 0;
-      hard=true;
+      st.hard=true;
     } else {
       if(o.kind==='cone') o.knocked=true;
       if(outward < 0) car.vel *= Math.exp(-2.5*dt);   /* трение о бордюр — по времени, не по кадрам */
     }
-  }
-  if(fresh && game.hitCd<=0){
-    game.hits++; game.hitCd=0.25; game.flash=1; thud(hard?1:0.4);
-    if(freshObj){ const hr=hitReason(freshObj); game.hitMsg=hr.msg; game.hitWhy=hr.why; game.hitMsgT=3.2; }
-  }
 }
 
 /* без выделения памяти: 36 лучей датчиков на каждое препятствие рядом — на телефоне массивы
@@ -8794,6 +9327,16 @@ function drawShadows(){
     if(Math.hypot(o._su-cu,o._sv-cv)-o._sr>55 || !camSees(o._su, 0, o._sv, o._sr)) continue;
     fillGroundPoly(o._shadow,'rgba(0,0,0,.22)',null,0,0.010);
   }
+  for(const o of (level.props||[])){
+    if(o._shadows){ if(!mirPassOn && Math.hypot(o.u-cu,o.v-cv)<PROP_SHADOW_D && camSees(o.u,0,o.v,o.w+o.l)) for(const q of o._shadows) fillGroundPoly(q,'rgba(0,0,0,.22)',null,0,0.010); continue; }
+    if(!o._shadow) continue;
+    if(o._sr===undefined){ let su=0, sv=0; for(const q of o._shadow){ su+=q.u; sv+=q.v; } su/=o._shadow.length; sv/=o._shadow.length;
+      let sr=0; for(const q of o._shadow) sr=Math.max(sr, Math.hypot(q.u-su, q.v-sv)); o._su=su; o._sv=sv; o._sr=sr; }
+    const d=Math.hypot(o._su-cu,o._sv-cv)-o._sr;
+    if(d>(o.small || mirPassOn ? PROP_SMALL_D : PROP_SHADOW_D) || !camSees(o._su, 0, o._sv, o._sr)) continue;
+    fillGroundPoly(o._shadow,'rgba(0,0,0,.20)',null,0,0.010);
+    if(o._shadow2 && d<PROP_LOD_D && !mirPassOn) fillGroundPoly(o._shadow2,'rgba(0,0,0,.20)',null,0,0.010);
+  }
   const c=bodyPos(); carShadow(c.u,c.v,car.th);
 }
 /* габаритные ориентиры: проекция бортов на асфальт, метки расстояния,
@@ -9136,7 +9679,7 @@ const HAZ_LIGHTS={hazard:true};
    и за спиной камеры — вершины, проекции, отбрасывание граней (уровень 1: из ~3900 граней препятствий
    в кадр попадало ~1000). Шар вокруг объекта против ближней и четырёх боковых плоскостей текущей
    камеры — у зеркала свои VP и cam. Радиус покрывает выступы: щит знака, табличку, зеркала машины */
-const CULL_PAD={car:0.15, sign:0.45, guide:1.15, light:0.3, tram:0.3, cone:0.1};
+const CULL_PAD={car:0.15, sign:0.45, guide:1.15, light:0.3, tram:0.3, cone:0.1, prop:0.1};
 function cullRad(o){
   const h = o.kind==='car' ? 1.9 : o.kind==='tram' ? 3.4 : o.h;
   return 0.5*Math.sqrt(o.w*o.w+h*h+o.l*o.l) + (CULL_PAD[o.kind]||0.05);
@@ -9306,8 +9849,10 @@ function bldOcc(o){
 let occPass=0, occVisPass=-1;
 const OCC_VIS=[], OCC_PART=[];
 function obsInView(o, cu, cv, maxD){
-  const du=o.u-cu, dv=o.v-cv;
-  if(du*du+dv*dv > maxD*maxD) return false;
+  /* мелочь и дворы отсекаются по своей дальности здесь, а не в emitProp: иначе за них считались лучи окклюзии */
+  const du=o.u-cu, dv=o.v-cv, lim = o.kind!=='prop' ? maxD
+    : o.small ? (mirPassOn ? 0 : Math.min(maxD, PROP_SMALL_D)) : (o.yard || o.m==='yard') ? (mirPassOn ? 0 : Math.min(maxD, YARD_D)) : maxD;
+  if(du*du+dv*dv > lim*lim) return false;
   return camSees(o.u, (o.kind==='car' ? 1.9 : o.kind==='tram' ? 3.4 : o.h)*0.5, o.v, o._crad || (o._crad=cullRad(o)));
 }
 /* дальний объект o заходит на экране на ближний p: угол между направлениями на центры меньше суммы угловых
@@ -9374,6 +9919,7 @@ function emitObstacle(o, cu, cv){
     if(o.kind==='guide'){ emitGuide(o); return; }
     if(o.kind==='light'){ emitTrafficLight(o); return; }
     if(o.kind==='rampside'){ emitRampSide(o); return; }
+    if(o.kind==='prop'){ emitProp(o, cu, cv); return; }
     pushBox(o.u,o.h/2,o.v,o.w/2,o.h/2,o.l/2,o.yaw,o.col,0,o);
   }
 }
@@ -9408,6 +9954,108 @@ function emitTrafficLight(o){
 /* столб кончается под щитом (щит от y SIGN_H−0,42−0,375): столб во весь рост сортировался по
    центроиду ближе щита и просвечивал сквозь него; с рёбрами это стало бросаться в глаза */
 const SIGN_POST_H=SIGN_H-0.42-0.375;
+/* обустройство: модель Kenney в своём кадре (lat, вверх, вперёд), масштаб s, поворот yaw. Дальше PROP_LOD_D — упрощённая
+   модель (у кого она есть), кусты — только ближе PROP_SMALL_D и на уровнях с detail. Без моделей — коробки */
+/* зеркало — прямоугольник в пару сотен пикселей, и проходов зеркал в кадре до трёх: там дерево всегда упрощённое,
+   а кустов нет. 15 м, а не 30: на телефоне вид из салона у кольца (уровень 30) иначе стоил +2,5 мс JS; тени дальше
+   PROP_SHADOW_D не рисуются, тень ствола — только ближе PROP_LOD_D */
+const PROP_LOD_D=15, PROP_SMALL_D=25, PROP_SHADOW_D=30;
+let mirPassOn=false;
+const PROP_SCRATCH=Array.from({length:49},()=>[]);
+function emitProp(o, cu, cv){
+  if(o.m==='hedge'){ pushBox(o.u,o.h/2,o.v,o.w/2,o.h/2,o.l/2,o.yaw,o.col,0,o); return; }
+  if(o.m.startsWith('lamp') || o.m==='ocs'){ emitLamp(o); return; }
+  if(o.m==='wire'){ emitWire(o); return; }
+  if(o.m==='yard'){ emitYard(o, cu, cv); return; }
+  if(o.m==='stopsign'){ emitSign(o); return; }
+  if(o.m==='stop'){ emitStop(o); return; }
+  const du=o.u-cu, dv=o.v-cv, d2=du*du+dv*dv;
+  /* двор — фон в разрывах рядов: дальше YARD_D его деревья и площадки не рисуются (на телефоне двор стоил 0,8 мс JS
+     из 1,6 всего обустройства на уровне 30) */
+  if(o.yard && d2>YARD_D*YARD_D) return;
+  if(o.m==='urn'){ if(!mirPassOn && d2<PROP_SMALL_D*PROP_SMALL_D && qDetail()) pushBox(o.u,0.38,o.v,0.2,0.38,0.2,o.yaw,URN_COL); return; }
+  if(o.m==='bench'){ if(!mirPassOn && d2<PROP_SMALL_D*PROP_SMALL_D && qDetail()) emitBench(o); return; }
+  if(o.small && (mirPassOn || d2>PROP_SMALL_D*PROP_SMALL_D || !qDetail())) return;
+  const P=propModel.M[o.m];
+  if(!P){ emitPropBox(o); return; }
+  const B = P.lod && (mirPassOn || d2>PROP_LOD_D*PROP_LOD_D) ? P.lod : P;
+  const s=o.s, F=fwd(o.yaw), R=rgt(o.yaw), cx=-o.u, cz=o.v, V=B.V, W=B.W;
+  for(let i=0,k=0;i<W.length;i++,k+=3){ const lat=V[k]*s, z=V[k+2]*s, w=W[i];
+    w.x=cx+R.x*lat+F.x*z; w.y=V[k+1]*s; w.z=cz+R.z*lat+F.z*z; }
+  for(const f of B.F){
+    const ix=f.i, q=PROP_SCRATCH[ix.length]; for(let j=0;j<ix.length;j++) q[j]=W[ix[j]];
+    const n=f.n, nw={x:R.x*n[0]+F.x*n[2], y:n[1], z:R.z*n[0]+F.z*n[2]};
+    pushFace(q, nw, f.m==='leaf' ? o.leaf : f.m==='wood' ? PROP_BARK : f.c, 0);
+  }
+}
+/* фонарь — коробками по размерам типовой опоры: стойка 8,5 м в два диаметра, консоль к оси улицы, светильник.
+   Фонарь из набора Kenney на этой высоте выходил брусом в 0,6 м толщиной */
+const LAMP_COL=[132,138,144], LAMP_HEAD=[70,74,80];
+function emitLamp(o){
+  const f=fuv(o.yaw), h=o.h, arm=o.m==='lamp-a' ? 1.6 : 2.2;
+  pushBox(o.u,1.6,o.v,0.11,1.6,0.11,o.yaw,LAMP_COL);
+  pushBox(o.u,3.2+(h-3.2)/2,o.v,0.07,(h-3.2)/2,0.07,o.yaw,LAMP_COL);
+  pushBox(o.u+f.u*(arm/2),h-0.08,o.v+f.v*(arm/2),0.04,0.04,arm/2+0.07,o.yaw,LAMP_COL);
+  pushBox(o.u+f.u*(arm+0.25),h-0.16,o.v+f.v*(arm+0.25),0.16,0.07,0.34,o.yaw,LAMP_HEAD);
+}
+/* павильон остановки: крыша на четырёх стойках, стекло сзади и с одного торца, рекламный щит с другого, скамья
+   у задней стенки. Детали стоят встык, а не друг в друге — вставленные одна в другую сортировка не различит */
+const STOP_ROOF=[66,96,132], STOP_FRAME=[86,92,100], STOP_GLASS=[172,200,216,0.42], STOP_AD=[234,232,220], STOP_BENCH=[124,88,62];
+const URN_COL=[64,74,66];
+function emitStop(o){
+  const f=fuv(o.yaw), r=ruv(o.yaw), ou=r.u*o.side, ov=r.v*o.side, L=o.l/2, Wd=o.w/2, H=o.h;
+  const P=(a,x)=>({u:o.u+f.u*a+ou*x, v:o.v+f.v*a+ov*x});
+  pushBox(o.u, H-0.06, o.v, Wd+0.15, 0.06, L+0.15, o.yaw, STOP_ROOF);
+  for(const a of [-L,L]) for(const x of [-Wd,Wd]){ const q=P(a,x); pushBox(q.u,(H-0.12)/2,q.v,0.04,(H-0.12)/2,0.04,o.yaw,STOP_FRAME); }
+  const gh=(H-0.32)/2, gy=0.2+gh;
+  const b=P(0,Wd); pushBox(b.u,gy,b.v,0.02,gh,L-0.05,o.yaw,STOP_GLASS);
+  const e=P(-L,0); pushBox(e.u,gy,e.v,Wd-0.05,gh,0.02,o.yaw,STOP_GLASS);
+  const ad=P(L+0.13,0); pushBox(ad.u,1.25,ad.v,Wd*0.75,0.9,0.07,o.yaw,STOP_AD);
+  const bn=P(0,Wd-0.32); pushBox(bn.u,0.46,bn.v,0.2,0.03,L*0.65,o.yaw,STOP_BENCH);
+  for(const a of [-L*0.5,L*0.5]){ const q=P(a,Wd-0.32); pushBox(q.u,0.215,q.v,0.15,0.215,0.03,o.yaw,STOP_FRAME); }
+}
+/* провод — тонкими короткими брусками: длинная грань сортируется по центру и легла бы поверх крон и опор у её концов */
+function emitWire(o){
+  const n=Math.max(1,Math.ceil(o.len/WIRE_SEG)), a=o.a, b=o.b;
+  for(let i=0;i<n;i++){ const t=(i+0.5)/n;
+    pushBox(a.u+(b.u-a.u)*t, a.y+(b.y-a.y)*t, a.v+(b.v-a.v)*t, WIRE_R, WIRE_R, o.len/n/2, o.yaw, WIRE_COL); }
+}
+/* скамейка лицом к улице: сиденье, спинка со стороны фасада, две опоры */
+function emitBench(o){
+  const f=fuv(o.yaw), r=ruv(o.yaw), ou=r.u*o.side, ov=r.v*o.side;
+  pushBox(o.u, 0.45, o.v, 0.22, 0.03, 0.9, o.yaw, STOP_BENCH);
+  pushBox(o.u+ou*0.24, 0.72, o.v+ov*0.24, 0.03, 0.2, 0.9, o.yaw, STOP_BENCH);
+  for(const a of [-0.7,0.7]) pushBox(o.u+f.u*a, 0.21, o.v+f.v*a, 0.2, 0.21, 0.04, o.yaw, STOP_FRAME);
+}
+/* двор: машины вблизи — моделью, дальше — двумя коробками (во двор смотрят издалека и в разрывы рядов), остальное —
+   коробками */
+function emitYard(o, cu, cv){
+  if(mirPassOn) return;
+  const du=o.u-cu, dv=o.v-cv, d2=du*du+dv*dv;
+  if(d2>YARD_D*YARD_D) return;
+  for(const it of o.items){
+    if(it.t==='car'){
+      if(d2<YARD_CAR_MODEL_D*YARD_CAR_MODEL_D) emitCarMesh(it.u,it.v,it.yaw,it.col,0,null,null);
+      /* дальше — кузов и крыша двумя коробками: силуэт emitCarLow — ~35 граней, а двор виден целиком */
+      else { pushBox(it.u,0.5,it.v,0.9,0.32,2.2,it.yaw,it.col); pushBox(it.u,1.06,it.v,0.78,0.24,1.1,it.yaw,YARD_CAR_TOP); } }
+    else if(d2<YARD_DETAIL_D*YARD_DETAIL_D || it.hh>0.5) pushBox(it.u,it.y,it.v,it.hw,it.hh,it.hl,it.yaw,it.col);
+  }
+}
+/* модель кузова у двора — только вблизи: двор виден издалека, а модель — 160–280 граней на машину */
+const YARD_D=50, YARD_DETAIL_D=40, YARD_CAR_MODEL_D=25, YARD_CAR_TOP=[48,56,66];
+function yardPrep(p){
+  p.hw=p.w/2; p.hl=p.l/2; p.small=false; p.cr=0; p.cy0=0; p._col=null;
+  p._cols=p.cols.map(c=>({...c, _touch:false}));
+  p._shadow=null; p._shadow2=null;
+  p._shadows=p.items.filter(it=>it.t==='car').map(it=>shadowPoly(it.u,it.v,CAR.width,CAR.length,it.yaw,1.45));
+  return p;
+}
+function emitPropBox(o){
+  const tr=0.12*o.s;
+  if(o.cy0>0.3) pushBox(o.u,o.cy0/2,o.v,tr,o.cy0/2,tr,o.yaw,PROP_BARK);
+  const r=Math.max(0.3,o.cr*0.75), h0=o.cy0, h1=o.h;
+  pushBox(o.u,(h0+h1)/2,o.v,r,(h1-h0)/2,r,o.yaw,o.leaf||PROP_LEAF[0]);
+}
 function emitSign(o){
   pushBox(o.u,SIGN_POST_H*0.5,o.v,0.035,SIGN_POST_H*0.5,0.035,o.yaw,[132,138,146]);
   const f=fwd(o.yaw), R=rgt(o.yaw), cx=-o.u, cz=o.v, y=SIGN_H-0.42;
@@ -9460,6 +10108,12 @@ function emitSign(o){
     case 'main':
       mk(diamond(0.37),[240,242,246],0.020,true);
       mk(diamond(0.27),[236,186,44],0.036);
+      break;
+    /* 5.16 «место остановки автобуса», 5.17 — трамвая: синий квадрат, белая кайма, силуэт картинкой */
+    case 'bus': case 'tram':
+      mk([[-0.36,0.36],[0.36,0.36],[0.36,-0.36],[-0.36,-0.36]],[240,242,246],0.020,true);
+      mk([[-0.32,0.32],[0.32,0.32],[0.32,-0.32],[-0.32,-0.32]],[28,78,164],0.036);
+      picq(0.29,0.29,0.052,signPic(o.pic),[28,78,164]);
       break;
     case 'ped':
       mk([[-0.31,0.31],[0.31,0.31],[0.31,-0.31],[-0.31,-0.31]],[38,88,196],0.020,true);
@@ -9731,14 +10385,14 @@ function mirrorBuf(rect, kind){
   return b;
 }
 function renderMirrorInto(b, rect, kind){
-  const mainCtx=ctx, mainScale=pxScale; ctx=b.g; pxScale=b.sc;
+  const mainCtx=ctx, mainScale=pxScale; ctx=b.g; pxScale=b.sc; mirPassOn=true;
   try{
     ctx.setTransform(b.sc,0,0,b.sc,0,0);
     setVP(0,0,rect.w,rect.h);
     const mc=mirrorCam(kind);
     setCam(mc.pos, mc.tgt, null, mc.fov);
     drawSceneInto({grid:false, trails:false, guides:opt.guides&&kind!=='center', maxD:qLevel<=1?60:46, cube:kind==='center'?mirBake:null});
-  } finally { ctx=mainCtx; pxScale=mainScale; }
+  } finally { ctx=mainCtx; pxScale=mainScale; mirPassOn=false; }
   b.fresh=true;
 }
 /* HUD-зеркало рисуется как зеркало, а не как панель интерфейса: безель градиентом, кромка
@@ -12237,7 +12891,8 @@ function edRebuild(){
   for(const o of obs){ u0=Math.min(u0,o.u-6); u1=Math.max(u1,o.u+6);
                        v0=Math.min(v0,o.v-6); v1=Math.max(v1,o.v+6); }
   level={ def:{name:'редактор', task:'', phases:null}, obs, rend:buildRenderList(obs), dec,
-          ramps:[], rampDec:[], city:null, actors:[], start:d.start, goal:d.goal, bounds:{u0,u1,v0,v1}, marks:{}, idealDraw:null };
+          ramps:[], rampDec:[], city:null, actors:[], start:d.start, goal:d.goal, bounds:{u0,u1,v0,v1}, marks:{}, idealDraw:null, props:[] };
+  propGridBuild();
   decBounds(level.dec);
   RAMP_ON=false;
   curPhase=null;

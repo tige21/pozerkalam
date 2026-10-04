@@ -282,8 +282,10 @@ const occl = await page.evaluate(([CITY, fault]) => {
         const em = new Map(seen.map(([o, s]) => [o, s]));
         const dist = (o) => Math.hypot(o.u + cam.pos.x, o.v - cam.pos.z);
         for (const o of level.rend) {
-          /* 60 м — внутри дальности уличного прохода на любом уровне качества: дальше объект мог не рисоваться вовсе */
-          if (dist(o) > 60) continue;
+          /* 60 м — внутри дальности уличного прохода на любом уровне качества: дальше объект мог не рисоваться вовсе.
+             У обустройства дальность своя: мелочь — PROP_SMALL_D, двор и его деревья — YARD_D */
+          const range = o.kind === 'prop' ? (o.small ? PROP_SMALL_D : (o.yard || o.m === 'yard') ? YARD_D : 60) : 60;
+          if (dist(o) > Math.min(60, range) - 0.5) continue;
           if (!camSees(o.u, (o.kind === 'car' ? 1.9 : o.kind === 'tram' ? 3.4 : o.h) * 0.5, o.v, o._crad || cullRad(o))) continue;
           const want = brute(o), st = em.get(o);
           /* видимый целиком может уйти в проход домов вслед за выглядывающим, которого он перекрывает на экране */

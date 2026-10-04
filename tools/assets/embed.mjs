@@ -50,9 +50,9 @@ const ASSETS = [
 /* модель кузова (tools/blender/models.py) — JSON в <template>: шаблон не исполняется и не
    попадает ни в скрипты страницы, ни в зеркало codegraph */
 const CAR_MESH = path.join(SRC, 'car-mesh.json');
-/* обустройство города (tools/blender/props.py): деревья, кусты, фонари, бак — тем же шаблоном */
+/* обустройство города (tools/blender/props.py): деревья и кусты — тем же шаблоном */
 const PROPS_MESH = path.join(SRC, 'props-mesh.json');
-const PROPS_NEED = ['tree-a', 'bush-a', 'lamp-a'];
+const PROPS_NEED = ['tree-a', 'bush-a'];
 
 const log = (m) => console.log('[embed] ' + m);
 

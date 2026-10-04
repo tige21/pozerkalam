@@ -49,6 +49,23 @@
       for (const o of level.obs) o._touch = false;
       ctx.touches = 0;
     }],
+    /* обустройство города: ближайший к точке ствол или опора, машина носом к нему со стороны точки */
+    [new RegExp('^кузов в ' + N + ' м перед (стволом дерева|опорой фонаря) у точки \\(' + N + ', ' + N + '\\)$'), (gap, what, u, v) => {
+      const kind = what === 'стволом дерева' ? 'tree' : 'pole';
+      let best = null, bd = 1e9;
+      for (const p of (level.props || [])) {
+        const c = p._col; if (!c || c.kind !== kind) continue;
+        const d = Math.hypot(c.u - +u, c.v - +v); if (d < bd) { bd = d; best = c; }
+      }
+      if (!best || bd > 12) throw new Error('у точки (' + u + ', ' + v + ') нет: ' + what);
+      const L = Math.hypot(+u - best.u, +v - best.v) || 1, du = (+u - best.u) / L, dv = (+v - best.v) / L;
+      const k = HALF_L + best.hw + +gap;
+      /* руль — прямо: сценарий раньше мог оставить его повёрнутым, и машина под газом уезжала в поребрик */
+      setBody(best.u + du * k, best.v + dv * k, Math.atan2(-du, -dv)); car.vel = 0; car.steer = 0; game.hitCd = 0;
+      for (const o of level.obs) o._touch = false;
+      for (const p of level.props) if (p._col) p._col._touch = false;
+      ctx.touches = 0; ctx.target = best;
+    }],
     [new RegExp('^режим экзамена ' + S + '$'), (mode) => {
       const m = mode === 'настоящий' ? 'real' : 'train';
       opt.examMode = m;
@@ -117,6 +134,11 @@
     [new RegExp('^загружен уровень ' + N + '$'), (n) => {
       if (game.li !== +n - 1) throw new Error('загружен уровень ' + (game.li + 1) + ', ожидали ' + n);
       if (paywallShown()) throw new Error('на экране пейволл');
+    }],
+    [/^машина не проехала насквозь$/, () => {
+      const c = bodyPos(), f = fuv(car.th), T = ctx.target;
+      const ahead = (T.u - c.u) * f.u + (T.v - c.v) * f.v;
+      if (ahead < HALF_L) throw new Error('препятствие уже не впереди бампера: ' + (+ahead.toFixed(2)) + ' м от центра кузова');
     }],
     [/^касания нет$/, () => { if (ctx.touches) throw new Error('засчитано касаний: ' + ctx.touches); }],
     [/^касание засчитано$/, () => { if (!ctx.touches) throw new Error('касание не засчитано'); }],
