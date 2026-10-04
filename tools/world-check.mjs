@@ -116,7 +116,7 @@ const cull = await page.evaluate((fault) => {
       const c = bodyPos(), all = rend0();
       for (let a = 0; a < 360; a += 45) for (const [r, h] of [[8, 3], [4, 1.4]]) {
         const pos = { x: -(c.u + Math.sin(rad(a)) * r), y: h, z: c.v + Math.cos(rad(a)) * r }, tgt = { x: -c.u, y: 0.8, z: c.v };
-        setVP(0, 0, W, H); setCam(pos, tgt, null, 58);
+        setVP(0, 0, W, H); setCam(pos, tgt, null, 58); lodSync();
         const culled = all.filter((o) => !sees(o.u, (o.kind === 'car' ? 1.9 : o.kind === 'tram' ? 3.4 : o.h) * 0.5, o.v, o._crad || cullRad(o)));
         window.camSees = () => true;
         let leak = 0, worst = null;

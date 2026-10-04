@@ -45,12 +45,12 @@ let bad = 0;
 {
   const r = await page.evaluate(() => {
     loadLevel(LEVELS.findIndex(d => d.traffic)); hideOv(); paused = true;
-    const cnt = f => { faces.length = 0; setCam({ x: -6, y: 3, z: -6 }, { x: 0, y: 0.7, z: 0 }, null, 60);
+    const cnt = f => { faces.length = 0; setCam({ x: -6, y: 3, z: -6 }, { x: 0, y: 0.7, z: 0 }, null, 60); lodSync();
       f(); const n = faces.length; faces.length = 0; return n; };
     const a = level.actors.find(x => x.act);
     /* дальняя машина — по направлению взгляда, за TRAF_LOD: в 1000 м вбок она за пирамидой взгляда,
        и отсечение (camSees) по праву её не рисует */
-    setVP(0, 0, W, H); setCam({ x: -6, y: 3, z: -6 }, { x: 0, y: 0.7, z: 0 }, null, 60);
+    setVP(0, 0, W, H); setCam({ x: -6, y: 3, z: -6 }, { x: 0, y: 0.7, z: 0 }, null, 60); lodSync();
     const far = { u: -(cam.pos.x + cam.f.x * 90), v: cam.pos.z + cam.f.z * 90 };
     let low = 0; const L = emitCarLow; emitCarLow = (...x) => { low++; return L(...x); };
     const ou = a.u, ov = a.v; a.u = far.u; a.v = far.v;

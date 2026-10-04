@@ -1778,7 +1778,7 @@ function emitCarBody(u,v,th,col){
   const sill=[44,48,54], glass=[42,52,64], pillar=[38,42,48];
   const bump=[(col[0]*0.84)|0,(col[1]*0.84)|0,(col[2]*0.84)|0];
   const NP=CAR_SECS[0].pts.length;
-  const du=(-cam.pos.x)-u, dv=cam.pos.z-v, camDist=Math.hypot(du,dv);
+  const camDist=lodD(u, v);
   /* вблизи борта заливаются градиентом по нормалям сечения (только боковые рёбра: у крыши и капота
      нормаль ещё наклонена по z, и сечения её не знают); дальше — плоские грани с материалом */
   const Q=QUALITY[qLevel];
@@ -1815,7 +1815,7 @@ function emitCarDoors(u,v,th,arches,dy){
   const F=fwd(th), R=rgt(th), cx=-u, cz=v, d=dy||0;
   const P=(lat,y,z)=>({x:cx+R.x*lat+F.x*z, y:y+d, z:cz+R.z*lat+F.z*z});
   const f=fuv(th), r=ruv(th), du=(-cam.pos.x)-u, dv=cam.pos.z-v;
-  const camLat=du*r.u+dv*r.v, camZ=du*f.u+dv*f.v, camDist=Math.hypot(du,dv);
+  const camLat=du*r.u+dv*r.v, camZ=du*f.u+dv*f.v, camDist=lodD(u, v);
   const Q=QUALITY[qLevel];
   /* из салона этой же машины накладки не рисуем: со сдвигом bias верх ручки пробивался бы
      сквозь карту двери */
@@ -1875,7 +1875,7 @@ function emitMirrorHousing(P, F, R, sg, col, kind){
   const M=MIR_H, li=sg*M.lin, lo=sg*M.lout, ym=(M.y0+M.y1)*0.5, zm=(M.zb+M.zf)*0.5, lm=(li+lo)*0.5;
   const ref=P(lm, ym, zm);
   /* дальше 40 м блик и отражение не видны, а pow на каждую грань — виден (как в emitCarBody) */
-  const dx=cam.pos.x-ref.x, dz=cam.pos.z-ref.z, near=QUALITY[qLevel].cars && dx*dx+dz*dz<1600;
+  const near=QUALITY[qLevel].cars && lodD2(-ref.x, ref.z)<1600;
   const paint=near?MO.paint:undefined, plastic=near?MO.plastic:undefined;
   /* наружная косынка: чёрный треугольник в переднем углу окна на обшивке (lat 0,903, bias — накладка
      на борт), к нему и «прикручен» кожух; снаружи — как у настоящей двери */
@@ -2907,7 +2907,7 @@ function emitCarModel(u,v,th,col,lit,body){
   const inCab=!!lit.own && camInsideCabin(), ky=inCab && B.cabinK<1 ? B.cabinK : 1;
   for(let i=0,k=0;i<WB.length;i++,k+=3){ const lat=V[k], z=V[k+2], w=WB[i];
     w.x=cx+R.x*lat+F.x*z; w.y=V[k+1]*ky; w.z=cz+R.z*lat+F.z*z; }
-  const dx=-cam.pos.x-u, dz=cam.pos.z-v, d2=dx*dx+dz*dz, Q=QUALITY[qLevel];
+  const d2=lodD2(u, v), Q=QUALITY[qLevel];
   /* блик и отражение — до 40 м: pow на каждую грань виден в JS-времени кадра */
   const mats=Q.cars && d2<1600;
   const paint=mats?MO.paint:undefined, glass=mats?{mat:'tint'}:undefined, plastic=mats?MO.plastic:undefined;
@@ -3017,8 +3017,7 @@ function emitCarMesh(u, v, th, col, st, lights, look){
   const P=(lat,y,z)=>({x:cx+R.x*lat+F.x*z, y:y, z:cz+R.z*lat+F.z*z});
   const lit = lights || {};
   /* своя машина — всегда модель: её капот виден из салона, борт — в боковых зеркалах */
-  const mdx=-cam.pos.x-u, mdz=cam.pos.z-v;
-  const model = carModel.state==='ready' && (lit.own || mdx*mdx+mdz*mdz < CAR_MODEL_D*CAR_MODEL_D);
+  const model = carModel.state==='ready' && (lit.own || lodD2(u, v) < CAR_MODEL_D*CAR_MODEL_D);
   /* кузов — по виду машины (look.body); своя — всегда седан */
   const body = model ? carBody(look && look.body || 'sedan') : null, dy = body ? body.dy : 0;
   const style = look && look.style || 'a';
@@ -9215,11 +9214,37 @@ function applyMirPreset(i){
   mirWrite(); mirNoteT=3.0;
   toast('Зеркала «'+p.name+'» · '+p.tip, 4.2);
 }
+/* центр детализации: от него, а не от камеры, решается модель или упрощение у машин и деревьев, мелочь у тротуара,
+   ручки дверей, блик краски и разрезка домов. В виде сзади камера ходит вокруг машины по кругу ~9 м, и расстояние от
+   камеры до стоящих предметов менялось с каждым поворотом — деревья и чужие машины переключали модель прямо на глазах
+   (владелец: «у деревьев под разными углами меняются текстуры, и у машины, когда камеру от 3 лица поворачиваю»). От
+   центра облёта поворот его не меняет. В салоне, в зеркалах и у инструментов со своей камерой (updateCamera подменён)
+   центра облёта нет — счёт от камеры, как раньше.
+   Дальность — меньшая из двух, до центра и до камеры: детализация никогда не грубее, чем от камеры (отъехавшая на 20 м
+   камера иначе показывала дерево в 2 м перед собой дальней моделью). Ближе к камере, чем к машине, лежит только полоса
+   в половину радиуса облёта перед камерой, и на порогах (15 м и дальше) её точки уже за краем кадра — у видимого
+   предмета побеждает расстояние до машины, и облёт его не меняет. Так — только для компактных предметов: у дома, его
+   тени и 42-метрового куска разметки центр бывает за кадром, когда край в кадре, и там меньшим становилось расстояние до
+   камеры — тень дома на старте экзамена появлялась и пропадала при облёте. Протяжённые меряются от центра (lodPD) */
+let camPivot=null;
+const CAM_PIVOT={u:0, v:0}, LOD_P={u:0, v:0}, LOD_C={u:0, v:0};
+function lodSync(){
+  LOD_C.u=-cam.pos.x; LOD_C.v=cam.pos.z;
+  if(!mirPassOn && camPivot){ LOD_P.u=camPivot.u; LOD_P.v=camPivot.v; }
+  else { LOD_P.u=LOD_C.u; LOD_P.v=LOD_C.v; }
+}
+function lodD2(u, v){
+  const a=u-LOD_P.u, b=v-LOD_P.v, c=u-LOD_C.u, d=v-LOD_C.v;
+  return Math.min(a*a+b*b, c*c+d*d);
+}
+function lodD(u, v){ return Math.sqrt(lodD2(u, v)); }
+function lodPD(u, v){ return Math.hypot(u-LOD_P.u, v-LOD_P.v); }
 function updateCamera(dt){
   if(editor){ camSm=null;
     setCam({x:-editor.cam.u,y:editor.cam.h,z:editor.cam.v},
            {x:-editor.cam.u,y:0,z:editor.cam.v}, fwd(0), 48); return; }
   const c=bodyPos(), m=opt.camMode;
+  if(m!==CAM_FP){ CAM_PIVOT.u=c.u; CAM_PIVOT.v=c.v; camPivot=CAM_PIVOT; }
   if(m===CAM_TOP){ camSm=null;
     setCam({x:-c.u,y:23,z:c.v},{x:-c.u,y:0,z:c.v}, fwd(opt.camYaw), 48); return; }
   if(m===CAM_FP){ camSm=null;
@@ -9318,27 +9343,26 @@ function carShadow(u,v,th){
 }
 /* полигоны препятствий статичны и посчитаны в loadLevel/edRebuild — в кадре только заливка */
 function drawShadows(){
-  const cu=-cam.pos.x, cv=cam.pos.z;
   for(const o of level.obs){
-    if(o.kind!=='bld' && Math.hypot(o.u-cu,o.v-cv)>55) continue;
+    if(o.kind!=='bld' && lodPD(o.u,o.v)>55) continue;
     /* статист движется — кэш _shadow оставил бы тень на месте старта. Дальнюю машину
        потока оставляем без тени: она и сама рисуется коробкой */
     if(o.kind==='tram'){ fillGroundPoly(shadowPoly(o.u,o.v,o.w,o.l,o.yaw,TRAM_H),'rgba(0,0,0,.22)',null,0,0.010); continue; }
-    if(o.act){ if(Math.hypot(o.u-cu,o.v-cv)<=trafLod()) carShadow(o.u,o.v,o.yaw); continue; }
+    if(o.act){ if(lodD(o.u,o.v)<=trafLod()) carShadow(o.u,o.v,o.yaw); continue; }
     if(!o._shadow || o.knocked) continue;
     /* тень — по своему описанному кругу: тень дома в 16 этажей ложится на 19 м, и по расстоянию до
        центра дома она пропадала бы, ещё лёжа поперёк улицы; за пирамидой взгляда — мимо, как сам дом */
     if(o._sr===undefined){ let su=0, sv=0; for(const q of o._shadow){ su+=q.u; sv+=q.v; } su/=o._shadow.length; sv/=o._shadow.length;
       let sr=0; for(const q of o._shadow) sr=Math.max(sr, Math.hypot(q.u-su, q.v-sv)); o._su=su; o._sv=sv; o._sr=sr; }
-    if(Math.hypot(o._su-cu,o._sv-cv)-o._sr>55 || !camSees(o._su, 0, o._sv, o._sr)) continue;
+    if(lodPD(o._su,o._sv)-o._sr>55 || !camSees(o._su, 0, o._sv, o._sr)) continue;
     fillGroundPoly(o._shadow,'rgba(0,0,0,.22)',null,0,0.010);
   }
   for(const o of (level.props||[])){
-    if(o._shadows){ if(!mirPassOn && Math.hypot(o.u-cu,o.v-cv)<PROP_SHADOW_D && camSees(o.u,0,o.v,o.w+o.l)) for(const q of o._shadows) fillGroundPoly(q,'rgba(0,0,0,.22)',null,0,0.010); continue; }
+    if(o._shadows){ if(!mirPassOn && lodD(o.u,o.v)<PROP_SHADOW_D && camSees(o.u,0,o.v,o.w+o.l)) for(const q of o._shadows) fillGroundPoly(q,'rgba(0,0,0,.22)',null,0,0.010); continue; }
     if(!o._shadow) continue;
     if(o._sr===undefined){ let su=0, sv=0; for(const q of o._shadow){ su+=q.u; sv+=q.v; } su/=o._shadow.length; sv/=o._shadow.length;
       let sr=0; for(const q of o._shadow) sr=Math.max(sr, Math.hypot(q.u-su, q.v-sv)); o._su=su; o._sv=sv; o._sr=sr; }
-    const d=Math.hypot(o._su-cu,o._sv-cv)-o._sr;
+    const d=lodD(o._su,o._sv)-o._sr;
     if(d>(o.small || mirPassOn ? PROP_SMALL_D : PROP_SHADOW_D) || !camSees(o._su, 0, o._sv, o._sr)) continue;
     fillGroundPoly(o._shadow,'rgba(0,0,0,.20)',null,0,0.010);
     if(o._shadow2 && d<PROP_LOD_D && !mirPassOn) fillGroundPoly(o._shadow2,'rgba(0,0,0,.20)',null,0,0.010);
@@ -9578,10 +9602,10 @@ function emitCornerPosts(){
    один проход мерить бессмысленно — рисуют все, а платит за них общий бюджет */
 let decDrawn=0;
 function drawDecals(maxD){
-  const c=camGroundUV(), lim=maxD||1e9;
+  const lim=maxD||1e9;
   for(const d of level.dec){
     /* асфальт и тротуары (far) — до дальности домов: улица не обрывается в 85 м перед домом в 200 */
-    if(d._r!==undefined && Math.hypot(d._u-c.u, d._v-c.v)-d._r > (d.far ? BLD_MAXD : lim)) continue;
+    if(d._r!==undefined && lodPD(d._u, d._v)-d._r > (d.far ? BLD_MAXD : lim)) continue;
     /* вне пирамиды взгляда — тоже мимо: шар описывает многоугольник, 0,3 м — на толщину линии в
        пикселях; на эстакаде разметка поднята склоном, и шар у земли её бы не описал */
     if(d._r!==undefined && !RAMP_ON && !camSees(d._u, 0, d._v, d._r+0.3)) continue;
@@ -9601,11 +9625,6 @@ function fillGroundPolys(polys, fill, y){
   }
   if(any){ ctx.fillStyle=fill; ctx.fill(); }
 }
-/* точка, от которой меряется дальность: центр камеры на земле, а не позиция машины —
-   в виде сверху и в зеркалах камера стоит совсем не там, где кузов.
-   Координаты лежат в cam.pos, как и в emitObstacles: cam.x не существует, и отсечение
-   молча не работало — hypot(NaN) сравнивался как false, и город рисовался целиком */
-function camGroundUV(){ return {u:-cam.pos.x, v:cam.pos.z}; }
 function decBounds(dec){
   for(const d of dec){
     const p=d.polys ? d.polys.flat() : d.pts; if(!p||!p.length){ d._r=undefined; continue; }
@@ -9722,11 +9741,10 @@ function facRange(d){ return d<facFarD(); }
    мельче вдвое не делим */
 const FAC_PERSP_PX=4, FAC_DEPTH=6, FAC_CELLS_MAX=512, FAC_MIN_PX=6;
 function emitBuildings(){
-  const cu=-cam.pos.x, cv=cam.pos.z;
   fogFar=true;
   try{
     for(const o of level.bld){
-      const rd=o._crad || (o._crad=cullRad(o)), d=Math.hypot(o.u-cu, o.v-cv);
+      const rd=o._crad || (o._crad=cullRad(o)), d=lodPD(o.u, o.v);
       if(d-rd > BLD_MAXD || !camSees(o.u, o.h*0.5, o.v, rd)) continue;
       emitBuilding(o, d);
     }
@@ -9855,10 +9873,16 @@ function bldOcc(o){
 let occPass=0, occVisPass=-1;
 const OCC_VIS=[], OCC_PART=[];
 function obsInView(o, cu, cv, maxD){
-  /* мелочь и дворы отсекаются по своей дальности здесь, а не в emitProp: иначе за них считались лучи окклюзии */
-  const du=o.u-cu, dv=o.v-cv, lim = o.kind!=='prop' ? maxD
-    : o.small ? (mirPassOn ? 0 : Math.min(maxD, PROP_SMALL_D)) : (o.yard || o.m==='yard') ? (mirPassOn ? 0 : Math.min(maxD, YARD_D)) : maxD;
-  if(du*du+dv*dv > lim*lim) return false;
+  /* мелочь и дворы отсекаются по своей дальности здесь, а не в emitProp: иначе за них считались лучи окклюзии. Все
+     дальности — от центра детализации (lodD), иначе куст в 20 м и дерево в 80 м от машины пропадали и появлялись при
+     повороте камеры; пирамида взгляда — от камеры */
+  const d2=lodD2(o.u, o.v);
+  if(d2 > maxD*maxD) return false;
+  if(o.kind==='prop' && (o.small || o.yard || o.m==='yard')){
+    if(mirPassOn) return false;
+    const lim = o.small ? PROP_SMALL_D : YARD_D;
+    if(d2 > lim*lim) return false;
+  }
   return camSees(o.u, (o.kind==='car' ? 1.9 : o.kind==='tram' ? 3.4 : o.h)*0.5, o.v, o._crad || (o._crad=cullRad(o)));
 }
 /* дальний объект o заходит на экране на ближний p: угол между направлениями на центры меньше суммы угловых
@@ -9910,7 +9934,7 @@ function emitObstacle(o, cu, cv){
       /* машина потока дальше TRAF_LOD — упрощённым силуэтом: лофт из 13 сечений стоит около
          двухсот граней, а на телефоне кадр упирается именно в число граней. Вблизи и у
          припаркованных всё по-прежнему */
-      if(o.act && Math.hypot(o.u-cu,o.v-cv)>trafLod()){ emitCarLow(o.u,o.v,o.yaw,o.col); return; }
+      if(o.act && lodD(o.u,o.v)>trafLod()){ emitCarLow(o.u,o.v,o.yaw,o.col); return; }
       emitCarMesh(o.u,o.v,o.yaw,o.col,0,o.hazard ? HAZ_LIGHTS : null,o); return; }
     if(o.kind==='cone'){
       if(o.knocked){ pushBox(o.u,0.09,o.v,0.30,0.09,0.30,0.6,[196,72,26]); return; }
@@ -9975,7 +9999,7 @@ function emitProp(o, cu, cv){
   if(o.m==='yard'){ emitYard(o, cu, cv); return; }
   if(o.m==='stopsign'){ emitSign(o); return; }
   if(o.m==='stop'){ emitStop(o); return; }
-  const du=o.u-cu, dv=o.v-cv, d2=du*du+dv*dv;
+  const d2=lodD2(o.u, o.v);
   /* двор — фон в разрывах рядов: дальше YARD_D его деревья и площадки не рисуются (на телефоне двор стоил 0,8 мс JS
      из 1,6 всего обустройства на уровне 30) */
   if(o.yard && d2>YARD_D*YARD_D) return;
@@ -10037,7 +10061,7 @@ function emitBench(o){
    коробками */
 function emitYard(o, cu, cv){
   if(mirPassOn) return;
-  const du=o.u-cu, dv=o.v-cv, d2=du*du+dv*dv;
+  const d2=lodD2(o.u, o.v);
   if(d2>YARD_D*YARD_D) return;
   for(const it of o.items){
     if(it.t==='car'){
@@ -10281,6 +10305,7 @@ function drawRampDecks(){
   }
 }
 function drawSceneInto(o){
+  lodSync();
   drawSky(); drawGround(o.grid); drawDecals(o.maxD); if(RAMP_ON) drawRampDecks();
   drawShadows(); drawGoal();
   if(o.trails) drawTrails();
@@ -10480,6 +10505,7 @@ function render(dt){
   setVP(0,0,W,H);
   carRampSync();
   decDrawn=0;
+  camPivot=null;
   updateCamera(dt);
   saveViewCam();
   if(editor){
@@ -10500,6 +10526,8 @@ function render(dt){
     const mb=Math.round(r.center.y+r.center.h);
     if(opt.mirrors && mb!==mirBot){ mirBot=mb; document.documentElement.style.setProperty('--mirbot', mb+'px'); }
   }
+  /* центр облёта живёт один кадр: инструмент, рисующий сцену своей камерой между кадрами, считает от неё */
+  camPivot=null;
   setVP(0,0,W,H);
   if(game.flash>0){
     ctx.fillStyle='rgba(220,40,40,'+(game.flash*0.28).toFixed(3)+')';
