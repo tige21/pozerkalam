@@ -7091,6 +7091,7 @@ function loadLevel(i){
             bounds:{u0:u0-(b.city?12:3), u1:u1+(b.city?12:3), v0:v0-(b.city?12:3), v1:v1+(b.city?12:3)},
             marks: def.marks ? def.marks() : {} };
   level.bld = level.obs.filter(o=>o.kind==='bld');
+  bldGridBuild();
   decBounds(level.dec);
   RAMP_ON = level.ramps.length>0;
   if(def.phases) for(const p of def.phases){
@@ -9069,29 +9070,160 @@ function facOf(o, shop){
   const d={}; d[wa]=mk(wall, Lw, cs[wa]); d[ea]=mk(endT, Le, cs[ea]);
   return o[key]=d;
 }
+/* дома — свой проход, сброшенный раньше уличного (@render-buildings-under-street), поэтому всё, что стоит
+   на соседней улице ЗА домом — бордюр, столб, машина потока, — рисовалось поверх дома: «дорога идёт
+   сквозь здания» (владелец, 04.10.2026). Уличный объект, все проверочные точки которого закрыты домом от
+   камеры, не рисуется. Луч камера → точка проверяется против коробок домов; дома лежат в сетке BG_CELL, луч
+   обходит только свои ячейки. Объект, выглядывающий из-за угла хоть одной точкой, рисуется целиком —
+   кусок бордюра в 3,5 м на силуэте дома остаётся мелочью рядом с прежней улицей сквозь весь квартал */
+const BG_CELL=24;
+let bldGrid=null, bgStamp=0;
+function bldGridBuild(){
+  bldGrid=null; const B=level.bld; if(!B || !B.length) return;
+  let u0=1e9, u1=-1e9, v0=1e9, v1=-1e9;
+  for(const o of B){ const f=fuv(o.yaw), r=ruv(o.yaw), eu=Math.abs(f.u)*o.l/2+Math.abs(r.u)*o.w/2, ev=Math.abs(f.v)*o.l/2+Math.abs(r.v)*o.w/2;
+    o._bf=f; o._br=r; o._be=[o.u-eu, o.u+eu, o.v-ev, o.v+ev]; o._bs=0;
+    if(o._be[0]<u0)u0=o._be[0]; if(o._be[1]>u1)u1=o._be[1]; if(o._be[2]<v0)v0=o._be[2]; if(o._be[3]>v1)v1=o._be[3]; }
+  const nu=Math.max(1,Math.ceil((u1-u0)/BG_CELL)), nv=Math.max(1,Math.ceil((v1-v0)/BG_CELL)), cells=[];
+  for(let i=0;i<nu*nv;i++) cells.push([]);
+  for(const o of B){ const e=o._be;
+    for(let i=Math.floor((e[0]-u0)/BG_CELL); i<=Math.floor((e[1]-u0)/BG_CELL); i++)
+      for(let j=Math.floor((e[2]-v0)/BG_CELL); j<=Math.floor((e[3]-v0)/BG_CELL); j++)
+        if(i>=0 && i<nu && j>=0 && j<nv) cells[i*nv+j].push(o); }
+  bldGrid={src:B, u0, v0, nu, nv, cells};
+}
+/* отрезок камера → точка через коробку дома (низ на земле, верх на o.h), кроме самых концов */
+function bldSegHit(o, cu,cy,cv, du,dy,dv){
+  const f=o._bf, r=o._br, ru=cu-o.u, rv=cv-o.v;
+  let t0=1e-3, t1=1-1e-3;
+  const sl=(p,d,h)=>{ if(Math.abs(d)<1e-12){ if(p<-h||p>h) t1=-1; return; }
+    let a=(-h-p)/d, b=(h-p)/d; if(a>b){ const q=a; a=b; b=q; } if(a>t0) t0=a; if(b<t1) t1=b; };
+  sl(ru*f.u+rv*f.v, du*f.u+dv*f.v, o.l/2); if(t0>t1) return false;
+  sl(ru*r.u+rv*r.v, du*r.u+dv*r.v, o.w/2); if(t0>t1) return false;
+  sl(cy-o.h/2, dy, o.h/2);
+  return t0<=t1;
+}
+/* обход ячеек сетки вдоль отрезка (Amanatides–Woo) */
+function bldRayHit(cu,cy,cv, pu,py,pv){
+  const G=bldGrid, du=pu-cu, dy=py-cy, dv=pv-cv, stamp=++bgStamp;
+  /* ячейка 24 м шире коридора улицы: дома рядов по бокам попадают в каждую ячейку вдоль луча, и рамка отрезка
+     отсекает их до проверки слоями */
+  const su0=Math.min(cu,pu), su1=Math.max(cu,pu), sv0=Math.min(cv,pv), sv1=Math.max(cv,pv);
+  let i=Math.floor((cu-G.u0)/BG_CELL), j=Math.floor((cv-G.v0)/BG_CELL);
+  const ie=Math.floor((pu-G.u0)/BG_CELL), je=Math.floor((pv-G.v0)/BG_CELL);
+  const si=du>0?1:-1, sj=dv>0?1:-1;
+  const tdu=du!==0 ? BG_CELL/Math.abs(du) : 1e9, tdv=dv!==0 ? BG_CELL/Math.abs(dv) : 1e9;
+  let tu = du!==0 ? ((G.u0+(i+(si>0?1:0))*BG_CELL)-cu)/du : 1e9, tv = dv!==0 ? ((G.v0+(j+(sj>0?1:0))*BG_CELL)-cv)/dv : 1e9;
+  for(let k=0;k<64;k++){
+    if(i>=0 && i<G.nu && j>=0 && j<G.nv) for(const o of G.cells[i*G.nv+j]){
+      if(o._bs===stamp) continue; o._bs=stamp;
+      const e=o._be; if(e[1]<su0 || e[0]>su1 || e[3]<sv0 || e[2]>sv1) continue;
+      if(bldSegHit(o, cu,cy,cv, du,dy,dv)) return true;
+    }
+    if(i===ie && j===je) break;
+    if(tu<tv){ if(tu>1) break; tu+=tdu; i+=si; } else { if(tv>1) break; tv+=tdv; j+=sj; }
+  }
+  return false;
+}
+const BH_PT=[0,0,0, 0,0,0, 0,0,0, 0,0,0], BH_A=[-1,1,1,-1], BH_B=[-1,-1,1,1], BH_THIN=0.3;
+/* 0 — все точки видны, 1 — часть закрыта домом, 2 — закрыты все */
+function bldOcc(o){
+  if(!bldGrid || bldGrid.src!==level.bld) return 0;
+  const cu=-cam.pos.x, cy=cam.pos.y, cv=cam.pos.z;
+  let n=0;
+  if(o.kind==='light' || o.kind==='sign'){
+    const top = o.kind==='light' ? LIGHT_H : SIGN_H;
+    BH_PT[0]=o.u; BH_PT[1]=top; BH_PT[2]=o.v; BH_PT[3]=o.u; BH_PT[4]=top*0.5; BH_PT[5]=o.v; n=2;
+  } else {
+    /* верхние углы следа: дом стоит от земли, и закрытая верхушка значит закрытый объект целиком. У узкого
+       (поребрик, 0,5 м) — концы оси: углы по ширине почти совпадают, а поребрик — девять из десяти проверок кадра */
+    const car=o.kind==='car', g=o.kind==='guide';
+    const hw = car ? CAR.width/2 : g ? GUIDE_HW : o.w/2, hl = car ? CAR.length/2 : o.l/2, h = car ? 1.45 : o.h;
+    const f=fuv(o.yaw), r=ruv(o.yaw), thin=Math.min(hw,hl)<=BH_THIN;
+    for(let k=0;k<4;k++){
+      if(thin && k>1) break;
+      const a = thin ? (hl>=hw ? (k ? hl : -hl) : 0) : BH_A[k]*hl, b = thin ? (hl>=hw ? 0 : (k ? hw : -hw)) : BH_B[k]*hw;
+      BH_PT[n*3]=o.u+f.u*a+r.u*b; BH_PT[n*3+1]=h; BH_PT[n*3+2]=o.v+f.v*a+r.v*b; n++; }
+  }
+  let hid=0;
+  for(let k=0;k<n;k++) if(bldRayHit(cu,cy,cv, BH_PT[k*3],BH_PT[k*3+1],BH_PT[k*3+2])) hid++;
+  return hid===0 ? 0 : hid===n ? 2 : 1;
+}
+/* объект, выглядывающий из-за дома, рисуется в проходе домов: там он сортируется вместе с гранями дома, и
+   дом закрывает свою часть. Целиком видимые остаются в уличном проходе — длинный фасад сортируется по
+   центру неверно против столба или машины перед ним (@render-buildings-under-street) */
+/* видимые целиком объекты этого прохода собираются здесь, и уличный проход берёт их готовыми: второй обход
+   всех объектов с теми же отсечениями стоил на экзамене треть цены окклюзии */
+let occPass=0, occVisPass=-1;
+const OCC_VIS=[], OCC_PART=[];
+function obsInView(o, cu, cv, maxD){
+  const du=o.u-cu, dv=o.v-cv;
+  if(du*du+dv*dv > maxD*maxD) return false;
+  return camSees(o.u, (o.kind==='car' ? 1.9 : o.kind==='tram' ? 3.4 : o.h)*0.5, o.v, o._crad || (o._crad=cullRad(o)));
+}
+/* дальний объект o заходит на экране на ближний p: угол между направлениями на центры меньше суммы угловых
+   радиусов их шаров отсечения */
+function occCovers(p, o, cu, cy, cv){
+  const pu=p.u-cu, pv=p.v-cv, py=(p.kind==='car' ? 1.9 : p.kind==='tram' ? 3.4 : p.h)*0.5-cy;
+  const ou=o.u-cu, ov=o.v-cv, oy=(o.kind==='car' ? 1.9 : o.kind==='tram' ? 3.4 : o.h)*0.5-cy;
+  const dp=Math.sqrt(pu*pu+py*py+pv*pv), d=Math.sqrt(ou*ou+oy*oy+ov*ov);
+  if(d<=dp || dp<1e-6) return false;
+  const c=(pu*ou+py*oy+pv*ov)/(dp*d), a=Math.asin(Math.min(1,p._crad/dp))+Math.asin(Math.min(1,o._crad/d));
+  return a>=Math.PI || c>Math.cos(a);
+}
+function emitObstaclesBehind(maxD){
+  occPass++; OCC_VIS.length=0; OCC_PART.length=0; occVisPass=-1;
+  if(!bldGrid || bldGrid.src!==level.bld) return;
+  const cu=-cam.pos.x, cy=cam.pos.y, cv=cam.pos.z;
+  for(const o of level.rend){
+    if(!obsInView(o, cu, cv, maxD)) continue;
+    o._occP=occPass; o._occ=bldOcc(o);
+    if(o._occ===1){ emitObstacle(o, cu, cv); OCC_PART.push(o); }
+    else if(o._occ===0) OCC_VIS.push(o);
+  }
+  /* выглядывающий объект сброшен раньше уличного прохода, и видимый объект дальше него лёг бы поверх: поребрик
+     в 83 м — полосой по машине в 77 м за углом дома. Такой уходит в проход домов вслед за ним, и по цепочке —
+     перекрытые уже ушедшими */
+  for(let k=0;k<OCC_PART.length;k++){
+    const p=OCC_PART[k];
+    for(let i=OCC_VIS.length-1;i>=0;i--){
+      const o=OCC_VIS[i];
+      if(!occCovers(p, o, cu, cy, cv)) continue;
+      o._occ=3; emitObstacle(o, cu, cv); OCC_PART.push(o);
+      OCC_VIS[i]=OCC_VIS[OCC_VIS.length-1]; OCC_VIS.pop();
+    }
+  }
+  occVisPass=occPass;
+}
 function emitObstacles(maxD){
   const cu=-cam.pos.x, cv=cam.pos.z;
-  for(const o of level.rend){
-    if(Math.hypot(o.u-cu,o.v-cv) > maxD) continue;
-    if(!camSees(o.u, (o.kind==='car' ? 1.9 : o.kind==='tram' ? 3.4 : o.h)*0.5, o.v, o._crad || (o._crad=cullRad(o)))) continue;
+  if(occVisPass===occPass){
+    occVisPass=-1;
+    for(let i=0;i<OCC_VIS.length;i++) emitObstacle(OCC_VIS[i], cu, cv);
+    return;
+  }
+  for(const o of level.rend) if(obsInView(o, cu, cv, maxD)) emitObstacle(o, cu, cv);
+}
+function emitObstacle(o, cu, cv){
+  {
     if(o.kind==='car'){
       /* машина потока дальше TRAF_LOD — упрощённым силуэтом: лофт из 13 сечений стоит около
          двухсот граней, а на телефоне кадр упирается именно в число граней. Вблизи и у
          припаркованных всё по-прежнему */
-      if(o.act && Math.hypot(o.u-cu,o.v-cv)>trafLod()){ emitCarLow(o.u,o.v,o.yaw,o.col); continue; }
-      emitCarMesh(o.u,o.v,o.yaw,o.col,0,o.hazard ? HAZ_LIGHTS : null,o); continue; }
+      if(o.act && Math.hypot(o.u-cu,o.v-cv)>trafLod()){ emitCarLow(o.u,o.v,o.yaw,o.col); return; }
+      emitCarMesh(o.u,o.v,o.yaw,o.col,0,o.hazard ? HAZ_LIGHTS : null,o); return; }
     if(o.kind==='cone'){
-      if(o.knocked){ pushBox(o.u,0.09,o.v,0.30,0.09,0.30,0.6,[196,72,26]); continue; }
+      if(o.knocked){ pushBox(o.u,0.09,o.v,0.30,0.09,0.30,0.6,[196,72,26]); return; }
       pushBox(o.u,0.05,o.v,0.24,0.05,0.24,0,[206,88,26]);
       pushBox(o.u,0.19,o.v,0.15,0.09,0.15,0,[236,104,26]);
       pushBox(o.u,0.35,o.v,0.11,0.07,0.11,0,[242,242,238]);
       pushBox(o.u,0.52,o.v,0.07,0.10,0.07,0,[236,104,26]);
-      continue;
+      return;
     }
-    if(o.kind==='sign'){ emitSign(o); continue; }
-    if(o.kind==='tram'){ emitTram(o); continue; }
-    if(o.kind==='guide'){ emitGuide(o); continue; }
-    if(o.kind==='light'){ emitTrafficLight(o); continue; }
+    if(o.kind==='sign'){ emitSign(o); return; }
+    if(o.kind==='tram'){ emitTram(o); return; }
+    if(o.kind==='guide'){ emitGuide(o); return; }
+    if(o.kind==='light'){ emitTrafficLight(o); return; }
     pushBox(o.u,o.h/2,o.v,o.w/2,o.h/2,o.l/2,o.yaw,o.col,0,o);
   }
 }
@@ -9222,7 +9354,12 @@ function drawSceneInto(o){
   if(o.guides) drawGuides();
   /* дома — отдельным проходом под всем уличным: с улицы дом всегда позади знака, светофора и машины,
      а сортировка 30-метрового фасада по центру ошибалась бы на половину его длины */
-  if(level.bld && level.bld.length){ emitBuildings(); flushFaces(); }
+  if(level.bld && level.bld.length){
+    emitBuildings();
+    edgeOn=true;
+    try{ emitObstaclesBehind(o.maxD); } finally { edgeOn=false; }
+    flushFaces();
+  }
   if(curPhase) drawMarks(curPhase._marks, curS, !!o.labels, !!(demo&&demo.say>0));
   else drawMarks(examMarks(), curS, !!o.labels, false);
   edgeOn=true;

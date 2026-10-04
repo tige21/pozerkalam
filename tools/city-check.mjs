@@ -9,10 +9,10 @@
    светофорах и не заходят в треугольники видимости; проход домов рисуется раньше уличного, дальний дом
    растворён в дымке, а внутри прохода нет перевёрнутых пар граней.
      PW_DIR=/tmp/pw node tools/city-check.mjs
-     FAULT=edge|bldclear|bldsight|bldpass|fade|kerbgap|kerbin|kerbpole — сломать нарочно и увидеть красный:
+     FAULT=edge|bldclear|bldsight|bldpass|fade|kerbgap|kerbin|kerbpole|occl|occchain — сломать нарочно и увидеть красный:
        без внешнего пояса, тупиков и концов перспективы; дом на улице; дом в треугольнике видимости; дома в
        общем проходе; общий туман у дальних домов; каждая пятая коробка поребрика выкинута; поребрик шире на
-       0,7 м внутрь; стойка поставлена на поребрик
+       0,7 м внутрь; стойка поставлена на поребрик; окклюзия выключена; без цепочки за выглядывающим
    Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена. */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -218,6 +218,99 @@ const sort = await page.evaluate((CITY) => {
 }, CITY);
 check('внутри прохода домов нет перевёрнутых пар граней — сзади и из салона (@render-buildings-sort)',
   sort.length && sort.every((r) => r.errors === 0), JSON.stringify(sort.filter((r) => r.errors !== 0).slice(0, 6)) + ` из ${sort.length} кадров`);
+
+/* ---- улица не сквозь дома: что нарисовано поверх домов, видно целиком; что за домом — не нарисовано;
+   выглядывающее из-за угла — в проходе домов. Сверка — перебором лучей по ВСЕМ домам, без сетки игры ---- */
+const occl = await page.evaluate(([CITY, fault]) => {
+  if (fault === 'occl') window.bldOcc = () => 0;
+  if (fault === 'occchain') window.occCovers = () => false;
+  /* экранная рамка коробки объекта — для проверки порядка: уличный объект дальше выглядывающего не ложится на него */
+  const scr = (o) => {
+    const car = o.kind === 'car', hw = car ? CAR.width / 2 : (o.w || 0.3) / 2, hl = car ? CAR.length / 2 : (o.l || 0.3) / 2, h = car ? 1.45 : o.h || 1;
+    const f = fuv(o.yaw || 0), r = ruv(o.yaw || 0); let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for (const a of [-1, 1]) for (const b of [-1, 1]) for (const z of [0, h]) {
+      const c = toCam({ x: -(o.u + f.u * hl * a + r.u * hw * b), y: z, z: o.v + f.v * hl * a + r.v * hw * b });
+      if (c.d < NEAR) return null;
+      const q = toScreen(c); x0 = Math.min(x0, q.x); x1 = Math.max(x1, q.x); y0 = Math.min(y0, q.y); y1 = Math.max(y1, q.y);
+    }
+    return [x0, x1, y0, y1];
+  };
+  const pts = (o) => {
+    if (o.kind === 'light' || o.kind === 'sign') { const top = o.kind === 'light' ? LIGHT_H : SIGN_H; return [[o.u, top, o.v], [o.u, top * 0.5, o.v]]; }
+    const car = o.kind === 'car', g = o.kind === 'guide', hw = car ? CAR.width / 2 : g ? GUIDE_HW : o.w / 2, hl = car ? CAR.length / 2 : o.l / 2, h = car ? 1.45 : o.h;
+    const f = fuv(o.yaw), r = ruv(o.yaw);
+    /* узкий объект (поребрик) — концы своей оси, остальные — верхние углы следа */
+    const Q = Math.min(hw, hl) <= 0.3 ? (hl >= hw ? [[-1, 0], [1, 0]] : [[0, -1], [0, 1]]) : [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+    return Q.map(([a, b]) => [o.u + f.u * hl * a + r.u * hw * b, h, o.v + f.v * hl * a + r.v * hw * b]);
+  };
+  /* отрезок камера → точка против коробки дома — своё вычисление, не bldSegHit игры: отрезок переводится в оси
+     коробки и отсекается по трём парам граней (Лианг — Барски), концы отрезка не считаются */
+  const segHit = (b, cu, cy, cv, pu, py, pv) => {
+    const f = fuv(b.yaw), r = ruv(b.yaw);
+    const a0 = [(cu - b.u) * f.u + (cv - b.v) * f.v, (cu - b.u) * r.u + (cv - b.v) * r.v, cy];
+    const a1 = [(pu - b.u) * f.u + (pv - b.v) * f.v, (pu - b.u) * r.u + (pv - b.v) * r.v, py];
+    const lo = [-b.l / 2, -b.w / 2, 0], hi = [b.l / 2, b.w / 2, b.h];
+    let t0 = 1e-3, t1 = 1 - 1e-3;
+    for (let k = 0; k < 3; k++) {
+      const d = a1[k] - a0[k];
+      if (Math.abs(d) < 1e-12) { if (a0[k] < lo[k] || a0[k] > hi[k]) return false; continue; }
+      let ta = (lo[k] - a0[k]) / d, tb = (hi[k] - a0[k]) / d;
+      if (ta > tb) [ta, tb] = [tb, ta];
+      t0 = Math.max(t0, ta); t1 = Math.min(t1, tb);
+      if (t0 > t1) return false;
+    }
+    return true;
+  };
+  const brute = (o) => {
+    const cu = -cam.pos.x, cy = cam.pos.y, cv = cam.pos.z, P = pts(o);
+    let hid = 0;
+    for (const [pu, py, pv] of P) if (level.bld.some((b) => segHit(b, cu, cy, cv, pu, py, pv))) hid++;
+    return hid === 0 ? 0 : hid === P.length ? 2 : 1;
+  };
+  const out = { frames: 0, front: 0, behind: 0, skipped: 0, chained: 0, order: 0, bad: [] };
+  const oE = emitObstacle, oB = emitObstaclesBehind, oO = emitObstacles;
+  let stage = '', seen = null;
+  window.emitObstaclesBehind = function () { stage = 'behind'; try { return oB.apply(this, arguments); } finally { stage = ''; } };
+  window.emitObstacles = function () { stage = 'street'; try { return oO.apply(this, arguments); } finally { stage = ''; } };
+  window.emitObstacle = function (o) { if (VP.w === W && seen) seen.push([o, stage]); return oE.apply(this, arguments); };
+  try {
+    for (const [li, u, v, th] of [[28, 8.15, -60, 0], [28, 2.5, -20, 0], [31, 8.15, -100, 0], [29, 52, -4.95, Math.PI / 2]]) {
+      loadLevel(li); doAct('start'); paused = true; opt.camMode = CAM_CHASE; opt.mirrors = false; setBody(u, v, th); car.vel = 0;
+      for (let y = 0; y < 360; y += 30) {
+        opt.camYaw = th + rad(y); camSm = null; render(0.016);
+        seen = []; render(0.016); out.frames++;
+        const em = new Map(seen.map(([o, s]) => [o, s]));
+        const dist = (o) => Math.hypot(o.u + cam.pos.x, o.v - cam.pos.z);
+        for (const o of level.rend) {
+          /* 60 м — внутри дальности уличного прохода на любом уровне качества: дальше объект мог не рисоваться вовсе */
+          if (dist(o) > 60) continue;
+          if (!camSees(o.u, (o.kind === 'car' ? 1.9 : o.kind === 'tram' ? 3.4 : o.h) * 0.5, o.v, o._crad || cullRad(o))) continue;
+          const want = brute(o), st = em.get(o);
+          /* видимый целиком может уйти в проход домов вслед за выглядывающим, которого он перекрывает на экране */
+          const ok = want === 0 ? st === 'street' || (st === 'behind' && o._occ === 3) : want === 1 ? st === 'behind' : st === undefined;
+          if (want === 0 && st === 'street') out.front++; if (want === 0 && st === 'behind') out.chained++; if (want === 1 && st === 'behind') out.behind++; if (want === 2 && st === undefined) out.skipped++;
+          if (!ok && out.bad.length < 6) out.bad.push({ lvl: li + 1, yaw: y, kind: o.kind, at: [+o.u.toFixed(1), +o.v.toFixed(1)], want, got: st || 'нет' });
+          else if (!ok) out.bad.push(0);
+        }
+        /* порядок: всё, что нарисовано в проходе домов, сброшено раньше уличного — уличный объект дальше него
+           и заходящий на него на экране лёг бы поверх */
+        const B = seen.filter(([, s]) => s === 'behind').map(([o]) => [o, scr(o), dist(o)]).filter(([, b]) => b);
+        for (const [o, st] of seen) {
+          if (st !== 'street') continue;
+          const so = scr(o), d = dist(o); if (!so) continue;
+          const hit = B.find(([p, b, dp]) => d > dp && so[0] < b[1] && so[1] > b[0] && so[2] < b[3] && so[3] > b[2]);
+          if (!hit) continue;
+          out.order++;
+          if (out.bad.length < 6) out.bad.push({ lvl: li + 1, yaw: y, order: `${o.kind} ${d.toFixed(0)} м поверх ${hit[0].kind} ${hit[2].toFixed(0)} м` }); else out.bad.push(0);
+        }
+        seen = null;
+      }
+    }
+  } finally { window.emitObstacle = oE; window.emitObstaclesBehind = oB; window.emitObstacles = oO; }
+  return { frames: out.frames, front: out.front, behind: out.behind, chained: out.chained, skipped: out.skipped, order: out.order, n: out.bad.length, bad: out.bad.slice(0, 6) };
+}, [CITY, FAULT]);
+check('улица не видна сквозь дома: объект за домом не рисуется, выглядывающий — в проходе домов, видимый — поверх, дальний не ложится на выглядывающий (@render-buildings-occlude)',
+  occl.frames >= 40 && occl.front > 100 && occl.skipped > 20 && occl.behind > 5 && occl.n === 0, JSON.stringify(occl));
 
 /* ---- поребрик: уровни, где его ставит kerbsFromAsphalt (23–32); общий город — один раз ---- */
 /* KALL — все уровни с поребриком из генератора (столбы у каждого уровня свои: светофоры экзамена есть
