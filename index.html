@@ -400,10 +400,31 @@ body.compact #bar .k{font-size:10px;letter-spacing:.3px}
 body.compact #bar .v{font-size:12px}
 body.compact #bar .cell.opt{display:none}
 body.compact #hint{display:none}
+/* телефон (владелец, 04.10.2026: «экран маленький, плашки мешают»): плашек панели нет — числа цели живут в чипе
+   подсказки, зазоры — в пилюле у ближнего угла и в звуке парктроника; подсказка — одна строка без плашки,
+   действие обрезается многоточием, чип цели виден всегда; тап раскрывает полный текст на 4 с */
+body.touch #bar{display:none}
+/* строка — наверху, на месте плашек под салонным зеркалом: внизу между рулём и газом на 568–932 px она
+   ложилась на «ВИД» и «ГАЗ» (touch-check) */
+body.touch.compact #coach{top:56px;bottom:auto}
+body.touch.compact.mir #coach{top:calc(var(--mirbot,70px) + 6px)}
+body.touch #coach:not(.open){background:none;border:none;box-shadow:none;padding:2px 4px;max-width:58vw;
+  display:flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;font-size:13px;
+  text-shadow:0 1px 2px #000,0 0 6px rgba(0,0,0,.9);pointer-events:auto}
+body.touch #coach:not(.open) .cm{min-width:0;overflow:hidden;text-overflow:ellipsis}
+body.touch #coach:not(.open) .cg,body.touch #coach:not(.open) .ci,body.touch #coach:not(.open) .cgear,
+body.touch #coach:not(.open) .cw,body.touch #coach:not(.open) .cbl{flex:none}
+body.touch #coach.k-stop:not(.open) .cm{color:#ffa3ab}
+body.touch #coach.k-hit:not(.open) .cm{color:#ffbf85}
+body.touch #coach.k-almost:not(.open) .cm{color:#ffe27a}
+body.touch #coach.k-ok:not(.open) .cm{color:#93f0b4}
+body.touch #coach.open{pointer-events:auto}
 body.hud-min #topleft,body.hud-min #hint{display:none}
 body.hud-min #bar .cell.opt{display:none}
 body.hud-off #topleft,body.hud-off #topright,body.hud-off #bar,
 body.hud-off #coach,body.hud-off #hint{display:none}
+/* строка подсказки телефона сильнее правила выше по весу селектора — «скрыть все панели» её не гасило */
+body.touch.hud-off #coach{display:none}
 @media (max-height:420px){
   body.compact #bar{top:54px}
   body.compact.mir #bar{top:calc(var(--mirbot,54px) + 4px)}
@@ -9858,17 +9879,19 @@ function coachCard(kind, icon, main, goal, ph){
   const wheel=ph&&ph.wheel, move=ph&&ph.move, why=(ph&&ph.why)||'';
   /* смена карточки сворачивает ручное «почему»: раскрытие живёт на одной подсказке */
   const mainKey=kind+'|'+icon+'|'+main;
-  if(mainKey!==coachMainKey){ coachMainKey=mainKey; coachWhyOpen=false; }
+  /* раскрытая строка телефона живёт свои 4 с: в тексте бывают живые числа («через 60 м»), и сброс по смене
+     текста сворачивал её на следующем метре */
+  if(mainKey!==coachMainKey){ coachMainKey=mainKey; if(!coachLineOpen) coachWhyOpen=false; }
   const compact=document.body.classList.contains('compact');
   /* XOR: авто-раскрытие — это дефолт, Slash/«?» переключают ОТНОСИТЕЛЬНО него,
      иначе новичку первые 3 запуска блок не свернуть вовсе */
   const open=!!why && (coachWhyOpen !== (!compact && runsCnt<=3));
   const gsig=goal ? (goal.metric||'')+'|'+(goal.target!==undefined?goal.target:'')+'|'+(goal.text||'') : '';
-  const key=mainKey+'|'+gsig+'|'+(wheel||'')+'|'+(move||'')+'|'+(ph&&ph.blinker||'')+'|'+(open?'W':'w')+why;
+  const key=mainKey+'|'+gsig+'|'+(wheel||'')+'|'+(move||'')+'|'+(ph&&ph.blinker||'')+'|'+(open?'W':'w')+(coachLineOpen?'O':'o')+why;
   if(key===coachKey) return;
   coachKey=key;
   const el=$('coach');
-  el.className='k-'+kind+(why?' haswhy':'');
+  el.className='k-'+kind+(why?' haswhy':'')+(coachLineOpen?' open':'');
   let m=null;
   if(goal && goal.metric){
     m=COACH_METRICS[goal.metric];
@@ -9895,6 +9918,13 @@ function coachCard(kind, icon, main, goal, ph){
     coachGoal = m ? {def:goal, m, start:null, pct:-1,
       el:el.querySelector('.cg'), vEl:el.querySelector('.cgv'), bEl:el.querySelector('.cgb i')} : null;
   } else coachGoal=null;
+}
+/* телефонная строка подсказки раскрыта тапом: полный текст и «почему», сама сворачивается через 4 с */
+let coachLineOpen=false, coachLineT=0;
+function coachLineToggle(){
+  coachLineOpen=!coachLineOpen; coachWhyOpen=coachLineOpen; coachKey='';
+  clearTimeout(coachLineT);
+  if(coachLineOpen) coachLineT=setTimeout(()=>{ coachLineOpen=false; coachWhyOpen=false; coachKey=''; },4000);
 }
 function coachWhyToggle(){
   coachWhyOpen=!coachWhyOpen; coachKey='';
@@ -10090,6 +10120,8 @@ function tutTick(){
 $('coach').addEventListener('click', e=>{
   const fin=e.target.closest('.cfin');
   if(fin){ fin.blur(); initAudio(); finishLevel(); return; }
+  /* на телефоне плашек нет — подсвечивать нечего, и тап по чипу (пол-строки) раскрывает подсказку */
+  if(document.body.classList.contains('touch')){ coachLineToggle(); return; }
   if(e.target.closest('.cg') && coachGoal && coachGoal.m.cell){
     const cell=$(coachGoal.m.cell).closest('.cell');
     if(cell){ cell.classList.remove('pulse'); void cell.offsetWidth; cell.classList.add('pulse'); }

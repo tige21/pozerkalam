@@ -91,6 +91,43 @@ for (const [W, H] of sizes) {
 }
 check('тач-полоса не перекрывается ни на одном телефоне', layoutBad.length === 0, layoutBad.join(' | '));
 
+/* телефон (владелец, 04.10.2026): плашек панели нет, подсказка — одна строка без плашки, тап раскрывает полный
+   текст. Уровень 29 со старта — длинная карточка: строка обязана остаться одной, раскрытие — расти; «почему»
+   проверяется, когда оно у карточки есть */
+const hud = { tiles: [], line: [], tap: [] };
+for (const [W, H] of sizes) {
+  const p3 = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 2, hasTouch: true, isMobile: true });
+  await p3.goto(url);
+  await p3.evaluate(() => { for (const k of ['trainer_seen', 'trainer_hint', 'trainer_drive']) localStorage.setItem(k, '1'); localStorage.setItem('trainer_runs', '9'); });
+  await p3.reload(); await p3.waitForTimeout(400);
+  const r = await p3.evaluate(async () => {
+    setTouch(true); loadLevel(28); doAct('start'); hideOv(); paused = true; updateHUD();
+    const bar = document.getElementById('bar'), c = document.getElementById('coach');
+    const shown = [...bar.querySelectorAll('.cell')].filter((e) => e.getBoundingClientRect().width > 0 && getComputedStyle(e).display !== 'none').length;
+    const cs = getComputedStyle(c), r0 = c.getBoundingClientRect();
+    const bg = cs.backgroundColor, closed = { h: r0.height, bg, wrap: cs.whiteSpace, len: c.textContent.length };
+    /* тап по чипу цели — он занимает пол-строки, и раскрывать обязан так же, как тап по тексту. Уровень 6 в D:
+       у его карточки чип с ячейкой панели — на компьютере тап по нему подсвечивает ячейку, на телефоне ячейки нет */
+    loadLevel(5); doAct('start'); hideOv(); paused = true; game.moved = true; car.sel = 'D'; car.gear = 1; phaseTick(0.5); phaseTick(0.5); updateHUD();
+    const h0 = c.getBoundingClientRect().height, chip = c.querySelector('.cg'); (chip || c).click(); updateHUD();
+    const r1 = c.getBoundingClientRect(), open = { chip: !!chip && !!(coachGoal && coachGoal.m.cell), cls: c.classList.contains('open'), h0, h: r1.height, why: !c.classList.contains('haswhy') || !!c.querySelector('.cwhy') };
+    /* «скрыть все панели» гасит и строку подсказки */
+    for (let k = 0; k < 4 && !document.body.classList.contains('hud-off'); k++) cycleHud();
+    updateHUD();
+    closed.hudOff = getComputedStyle(c).display;
+    for (let k = 0; k < 4 && document.body.classList.contains('hud-off'); k++) cycleHud();
+    return { shown, closed, open };
+  });
+  if (r.shown) hud.tiles.push(`${W}x${H}: плашек ${r.shown}`);
+  const transparent = /rgba\(0, 0, 0, 0\)|transparent/.test(r.closed.bg);
+  if (!transparent || r.closed.wrap !== 'nowrap' || r.closed.h > 30 || r.closed.hudOff !== 'none') hud.line.push(`${W}x${H}: ${JSON.stringify(r.closed)}`);
+  if (!r.open.chip || !r.open.cls || r.open.h <= r.open.h0 || !r.open.why) hud.tap.push(`${W}x${H}: ${JSON.stringify(r.open)}`);
+  await p3.close();
+}
+check('телефон: плашек панели нет (@app-hud-mobile-no-tiles)', hud.tiles.length === 0, hud.tiles.join(' | '));
+check('телефон: подсказка — одна строка без плашки (@app-hud-mobile-hint-line)', hud.line.length === 0, hud.line.join(' | '));
+check('телефон: тап раскрывает полный текст подсказки и «почему» (@app-hud-mobile-hint-tap)', hud.tap.length === 0, hud.tap.join(' | '));
+
 check('в консоли нет ошибок', errors.length === 0, errors.join(' | '));
 
 const failed = results.filter(r => !r.ok);
