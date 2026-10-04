@@ -5,7 +5,10 @@
    не сервер (его гоняет server/test_account.py).
    Запуск (playwright-core во временной папке, см. cockpit-shots.mjs):
      PW_DIR=/tmp/pw node tools/account-check.mjs
-   Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена. */
+   Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена.
+   FAULT=offer выключает предложение курса — краснеют @acct-offer-once/-free/-skip и @an-offer-events;
+   FAULT=offersite показывает его на любой площадке — @acct-offer-site-only; FAULT=offerbuyer — и
+   купившему — @acct-offer-not-buyer. */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -32,7 +35,16 @@ function findChrome() {
   console.error('Chromium не найден'); process.exit(2);
 }
 
-const SRC = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+const FAULT = process.env.FAULT || '';
+const SRC0 = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+/* поломки предложения курса: каждая обязана покрасить свою проверку, иначе та зелёная по построению */
+const FAULTS = {
+  offer: ['const OFFER={ on:true', 'const OFFER={ on:false'],
+  offersite: ["  if(pl!=='web' && pl!=='pwa') return 'площадка '+pl;\n  if(anFramed()) return 'во фрейме';\n", ''],
+  offerbuyer: ["  if(entitled(PAYWALL.product)) return 'курс уже куплен';\n", ''],
+};
+const SRC = FAULTS[FAULT] ? SRC0.replace(FAULTS[FAULT][0], FAULTS[FAULT][1]) : SRC0;
+if (FAULTS[FAULT] && SRC === SRC0) { console.error(`FAULT=${FAULT}: заменяемая строка не найдена в index.html`); process.exit(2); }
 
 /* те же вставки, что делает деплой; rybbit — тег как в деплое, auth — список провайдеров */
 function pageHtml({ rybbit = true, auth = null } = {}) {
@@ -418,11 +430,17 @@ const ovText = (page) => page.evaluate(() => document.getElementById('overlay').
   const after = await page.evaluate(() => ({ li: game.li, ov: document.getElementById('overlay').style.display, ent: acct.ent.length }));
   check('«Восстановить покупку»: /me с курсом открывает закрытый уровень (@acct-paywall-restore)',
     before.li !== 19 && before.restore && after.li === 19 && after.ov === 'none' && after.ent === 1, JSON.stringify({ before, after }));
+  const buyer = await page.evaluate(() => { delete window.PAYWALL_FORCE; openLevel(20, 'pick');
+    return { li: game.li, offer: !!document.querySelector('#overlay .offer') }; });
+  const views = await rbEvents(page, 'offer_view');
+  check('у кого курс уже есть, тот предложения не видит — ни после восстановления, ни на следующем уровне (@acct-offer-not-buyer)',
+    after.li === 19 && buyer.li === 20 && !buyer.offer && views.length === 0, JSON.stringify({ buyer, views }));
   await ctx.close();
 }
 
 {
-  const { ctx, page } = await openGame({ rybbit: false });
+  /* предложение курса уже показано: иначе на первом входе в экзамен вместо брифа стоит оно */
+  const { ctx, page } = await openGame({ rybbit: false, storage: { pz_offer: '1' } });
   const r = await page.evaluate(() => {
     doAct('start'); showLevelPick();
     const i = LEVELS.findIndex(l => l.examRoute);
@@ -432,6 +450,89 @@ const ovText = (page) => page.evaluate(() => document.getElementById('overlay').
   });
   check('экзамен с карточки выбора открывается с брифом маршрута (@exam-brief-on-pick)',
     r.shown && r.brief, JSON.stringify(r));
+  await ctx.close();
+}
+
+/* предложение курса — фальшивая дверь (#280): спрашивает, считает ответ, ничего не закрывает */
+const offerState = (page) => page.evaluate(() => {
+  const ov = document.getElementById('overlay');
+  return { li: game.li, shown: ov.style.display !== 'none', offer: !!ov.querySelector('.offer'), text: ov.textContent,
+    take: !!ov.querySelector('[data-act="offer-take"]'), skip: !!ov.querySelector('[data-act="offer-skip"]'),
+    go: !!ov.querySelector('[data-act="offer-go"]'), key: localStorage.getItem('pz_offer') };
+});
+/* без кнопки клик ничего не делает: при FAULT=offer гейт обязан сказать «ПРОВАЛ», а не упасть */
+const clickAct = (target, act) => target.evaluate(a => { const b = document.querySelector('#overlay [data-act="' + a + '"]'); if (b) b.click(); return !!b; }, act);
+let offerViewA = [], offerClickA = [];
+{
+  const { ctx, page, errors, apiCalls } = await openGame({ auth: ['vk', 'yandex'], api: mockApi({}) });
+  await page.evaluate(() => { doAct('start'); showLevelPick(); document.querySelector('.lvcard[data-lvl="19"]').click(); });
+  const first = await offerState(page);
+  await clickAct(page, 'offer-take');
+  const thanks = await offerState(page);
+  await clickAct(page, 'offer-go');
+  const went = await offerState(page);
+  await page.evaluate(() => openLevel(20, 'pick'));
+  const second = await offerState(page);
+  offerViewA = await rbEvents(page, 'offer_view');
+  offerClickA = await rbEvents(page, 'offer_click');
+  const locks = await page.evaluate(() => ({ payOn: PAY_ON, locked: LEVELS.filter((_, i) => levelLocked(i)).length }));
+  check('первый вход в уровни 20–32 — предложение «Площадка, город и экзамен — 249 ₽ навсегда», на автомате; второй вход — без него (@acct-offer-once)',
+    first.shown && first.offer && /Площадка, город и экзамен — 249 ₽ навсегда/.test(first.text) && /на автомате/.test(first.text)
+      && first.take && first.skip && first.li !== 19 && first.key === '1' && second.li === 20 && !second.shown && offerViewA.length === 1,
+    JSON.stringify({ first: { li: first.li, offer: first.offer, key: first.key }, second: { li: second.li, shown: second.shown }, views: offerViewA.length }));
+  check('«Беру за 249 ₽»: оплату не подключили, списаний нет, замков нет, «Поехали» открывает уровень (@acct-offer-free)',
+    thanks.offer && /Оплату ещё не подключили/.test(thanks.text) && /Списаний не будет/.test(thanks.text) && thanks.go && thanks.li !== 19
+      && went.li === 19 && !went.shown && !locks.payOn && locks.locked === 0 && apiCalls.every(c => !/pay|purchase|order/i.test(c.path)),
+    JSON.stringify({ thanks: { offer: thanks.offer, go: thanks.go }, went: { li: went.li, shown: went.shown }, locks, api: apiCalls.map(c => c.path) }));
+  check('консоль чиста на предложении курса', realErrors(errors).length === 0, realErrors(errors).slice(0, 2).join(' | '));
+  await ctx.close();
+}
+
+{
+  const { ctx, page } = await openGame({ auth: ['vk', 'yandex'], api: mockApi({}) });
+  await page.evaluate(() => { doAct('start'); openLevel(19, 'pick'); });
+  const shown = await offerState(page);
+  await clickAct(page, 'offer-skip');
+  const after = await offerState(page);
+  const skips = await rbEvents(page, 'offer_skip');
+  check('«Пока бесплатно» сразу открывает уровень (@acct-offer-skip)',
+    shown.offer && after.li === 19 && !after.shown, JSON.stringify({ shown: shown.offer, li: after.li, ov: after.shown }));
+  const ok = (e) => e && e.li === 20 && e.via === 'pick' && e.price === 249;
+  check('ответ на предложение уходит в аналитику: offer_view, offer_click, offer_skip с уровнем 20, «pick» и ценой 249 (@an-offer-events)',
+    offerViewA.length === 1 && ok(offerViewA[0]) && offerClickA.length === 1 && ok(offerClickA[0]) && skips.length === 1 && ok(skips[0]),
+    JSON.stringify({ view: offerViewA, click: offerClickA, skip: skips }));
+  await ctx.close();
+}
+
+{
+  const { ctx, page } = await openGame({ auth: ['vk', 'yandex'], api: mockApi({}) });
+  await page.evaluate(() => { window.PAYWALL_FORCE = [19]; doAct('start'); openLevel(19, 'pick'); });
+  const r = await page.evaluate(() => ({ paywall: !!document.querySelector('#overlay .paywall'), offer: !!document.querySelector('#overlay .offer'),
+    key: localStorage.getItem('pz_offer'), li: game.li }));
+  const views = await rbEvents(page, 'offer_view');
+  check('на закрытом уровне — пейволл, предложения нет (@acct-offer-paywall-first)',
+    r.paywall && !r.offer && r.key === null && r.li !== 19 && views.length === 0, JSON.stringify({ ...r, views: views.length }));
+  await ctx.close();
+}
+
+{
+  /* та же страница на четырёх площадках: на сайте предложение было бы (проверено выше), здесь — нет */
+  const { ctx, page } = await openGame({ auth: ['vk', 'yandex'], api: mockApi({}) });
+  const probe = (target) => target.evaluate(() => { localStorage.removeItem('pz_offer'); doAct('start'); openLevel(19, 'pick');
+    return { li: game.li, offer: !!document.querySelector('#overlay .offer') }; });
+  const res = {};
+  res.ya = await page.evaluate(() => { window.BUILD = 'ya-test'; return true; }).then(() => probe(page));
+  await page.goto(PAGE + '?vk_app_id=1&vk_platform=mobile_web'); await page.waitForTimeout(300);
+  res.vk = await probe(page);
+  await page.goto(PAGE + '?r=tg#tgWebAppData=x'); await page.waitForTimeout(300);
+  res.tg = await probe(page);
+  await page.route('https://frame.test/', r => r.fulfill({ status: 200, contentType: 'text/html', body: '<iframe src="' + PAGE + '?r=frame" style="width:1200px;height:700px;border:0"></iframe>' }));
+  await page.goto('https://frame.test/'); await page.waitForTimeout(500);
+  const frame = page.frames().find(f => f.url().startsWith(PAGE));
+  res.frame = frame ? await probe(frame) : null;
+  const views = (await rbEvents(page, 'offer_view')).length;
+  check('в Яндекс Играх, VK, Telegram и во фрейме предложения нет, уровень открывается сразу (@acct-offer-site-only)',
+    ['ya', 'vk', 'tg', 'frame'].every(k => res[k] && res[k].li === 19 && !res[k].offer) && views === 0, JSON.stringify({ ...res, views }));
   await ctx.close();
 }
 

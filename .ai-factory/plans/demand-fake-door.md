@@ -54,14 +54,14 @@ Open questions:
 
 ### Phase 2: Предложение в игре
 
-- [ ] **Task 2: состояние и решение «показать или нет»** (depends on 1). В `index.html`, секция пейволла рядом с `PAYWALL`/`levelLocked`:
+- [x] **Task 2: состояние и решение «показать или нет»** (depends on 1). В `index.html`, секция пейволла рядом с `PAYWALL`/`levelLocked`:
   - `const OFFER={ on:true, price:249, from:19, to:31, key:'pz_offer' }` — индексы уровней 20–32;
-  - `offerDue(i)`: `OFFER.on`; `window.OFFER_FORCE` для гейтов; иначе `anPlatform()` ∈ {`web`, `pwa`}, не во фрейме, `location.protocol==='https:'` (все прочие гейты открывают игру с `file://` и не должны его видеть), уровень в диапазоне и не `custom`, не `levelLocked(i)`, ключ `pz_offer` не стоит (чтение в `try/catch`: в приватном окне хранилище бросает — тогда не показывать);
-  - встроить в `openLevel` после проверки `levelLocked`: `if(offerDue(i)){ offerShow(i, via); return; }`.
+  - `offerWhyNot(i)` (пустая строка — показать, иначе причина для лога): `OFFER.on`; `anPlatform()` ∈ {`web`, `pwa`}, не во фрейме, `location.protocol==='https:'` (все прочие гейты открывают игру с `file://` и не должны его видеть), уровень в диапазоне и не `custom`, не `levelLocked(i)`, ключ `pz_offer` не стоит (чтение в `try/catch`: в приватном окне хранилище бросает — тогда не показывать);
+  - встроить в `openLevel` после проверки `levelLocked`: `offerWhyNot(i)` пуст → `offerShow(i, via)`.
   Логи: под `AN_DEBUG` — `console.info('[pay] предложение не показано: <причина>')` один раз на вызов `openLevel`; без `pz_debug` — тишина.
   Files: `index.html`.
 
-- [ ] **Task 3: карточка и ответы** (depends on 2). В `index.html`:
+- [x] **Task 3: карточка и ответы** (depends on 2). В `index.html`:
   - `offerHTML(i)` по образцу `paywallHTML` (класс `.paywall`, без новой вёрстки): заголовок «Площадка, город и экзамен — 249 ₽ навсегда», что открывает (уровни 20–32: эстакада, город с кольцом и трамваем, экзамен-маршрут с протоколом), «один платёж, без подписки», «на автомате»; кнопки `data-act="offer-take"` «Беру за 249 ₽» и `data-act="offer-skip"` «Пока бесплатно»;
   - `offerShow(i, via)`: запомнить `offerLi`/`offerVia`, поставить `pz_offer` **до** показа (уход по Escape тоже считается показом), `track('offer_view', Object.assign(anLevel(i), {via, price:OFFER.price}))`, `showOv`;
   - `doAct`: `offer-take` → `track('offer_click', …)`, карточка «Записали. Оплату ещё не подключили — пока всё открыто бесплатно» с кнопкой «Поехали» (`data-act="offer-go"`); `offer-skip` → `track('offer_skip', …)` и `offer-go` → `openLevel(offerLi, offerVia)` (ключ уже стоит, повторного показа не будет);
@@ -70,13 +70,13 @@ Open questions:
   Логи: `console.info('[pay] предложение: показ, уровень N')`, `'[pay] предложение: беру'`, `'[pay] предложение: пока бесплатно'` — по одной строке на действие.
   Files: `index.html`.
 
-- [ ] **Task 4: проверки** (depends on 3). В `tools/account-check.mjs` (игра там уже отдаётся с `https://pozerkalam.space/play/` через подмену) — проверки с кодами из задачи 1 в имени:
+- [x] **Task 4: проверки** (depends on 3). В `tools/account-check.mjs` (игра там уже отдаётся с `https://pozerkalam.space/play/` через подмену) — проверки с кодами из задачи 1 в имени:
   - первый `openLevel(19,'pick')` — карточка с «249 ₽» и «на автомате», событие `offer_view` с `li:20`, `price:249`; второй `openLevel(20,'pick')` — уровень загружен, карточки нет (`@acct-offer-once`);
   - «Беру» → событие `offer_click`, карточка «оплату ещё не подключили», «Поехали» → `level` = 20; ни одного запроса к `/api/` с оплатой; «Пока бесплатно» на чистом профиле → `offer_skip` и уровень (`@acct-offer-free`, `@an-offer-events`);
   - `PAYWALL_FORCE=[19]` → пейволл, `offer_view` нет (`@acct-offer-paywall-first`);
   - `BUILD='ya-…'`, `?vk_app_id=…`, `#tgWebApp…`, страница во фрейме → карточки нет (`@acct-offer-site-only`);
   - существующие проверки (`@acct-paywall-*`, `@an-level-start-once`) остаются зелёными: где они открывают уровни 20–32, профиль заранее несёт `pz_offer`.
-  Проверка обязана краснеть: прогнать с `OFFER.on=false` (или `FAULT=offer` по образцу других гейтов) и убедиться, что `@acct-offer-once` падает.
+  Проверка обязана краснеть: `FAULT=offer` (предложение выключено) красит `@acct-offer-once/-free/-skip` и `@an-offer-events`, `FAULT=offersite` — `@acct-offer-site-only`, `FAULT=offerbuyer` — `@acct-offer-not-buyer` (добавлен при реализации: после «Восстановить покупку» предложение мелькало у купившего).
   Затем: `PW_DIR=/tmp/pw node tools/account-check.mjs`, `node tools/gherkin-check.mjs`, `PW_DIR=/tmp/pw node tools/gherkin-run.mjs`, `node tools/qa-checklist.mjs`, `tools/mirror-script.sh --check`; для уверенности, что `file://`-гейты не задеты, — `PW_DIR=/tmp/pw node tools/crash-check.mjs` и `node tools/level-audit.mjs`.
   Логи: в гейте — по строке на проверку, как у остальных `check(...)`.
   Files: `tools/account-check.mjs`.
