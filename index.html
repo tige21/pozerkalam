@@ -516,8 +516,8 @@ body.fp #hint{display:none}
 </div>
 
 <div class="panel" id="topright">
-  <!-- секундомера во время занятия нет (#150): время показывают только итоги урока -->
-  <div class="big" id="hitsVal">касаний: 0</div>
+  <!-- ни секундомера (#150), ни счётчика касаний (владелец, 04.10.2026) во время занятия нет: время и
+       касания показывают только итоги урока -->
   <div class="sub" id="lvlIdx"></div>
 </div>
 <button type="button" id="restartBtn" class="sidebtn" title="Уровень заново (R)">⟲ заново</button>
@@ -7267,18 +7267,27 @@ function untouch(o){
   if(o._touch && o.grp!==undefined && kerbHeld[o.grp]>0) kerbHeld[o.grp]--;
   o._touch=false;
 }
+/* касание снимается, только когда машина отошла от препятствия на TOUCH_REARM: твёрдое препятствие
+   выталкивает кузов на глубину + 2 мм, на следующем подшаге пересечения уже нет, и газ вталкивал машину
+   обратно — упёршийся в стену набирал касание за касанием (68 за 3 с, @collision-push-once) */
+const TOUCH_REARM=0.10, TR_BOX={u:0,v:0,hw:0,hl:0,yaw:0};
+function untouchFar(A,o){
+  if(!o._touch) return;
+  TR_BOX.u=o.u; TR_BOX.v=o.v; TR_BOX.hw=o.hw+TOUCH_REARM; TR_BOX.hl=o.hl+TOUCH_REARM; TR_BOX.yaw=o.yaw;
+  if(!satMTV(A,TR_BOX)) untouch(o);
+}
 function resolveCollisions(dt){
   const A=carOBB(), f=fuv(car.th); let hard=false, fresh=false, freshObj=null;
   for(const o of level.obs){
     if(o.kind==='cone' && o.knocked) continue;
     /* прямоугольник — только грубый отсев, чтобы не гонять точную проверку по всем
        препятствиям уровня; касание объявляется по настоящему следу кузова */
-    if(!satMTV(A,o)){ untouch(o); continue; }
+    if(!satMTV(A,o)){ untouchFar(A,o); continue; }
     const nq=obsShape(o);
     const m=polyMTV(carHullPts(A.u,A.v,car.th), CAR_HULL.length, obsBuf(o), nq);
     /* касание считаем по НАЧАЛУ контакта: без защёлки машина, стоящая на бордюре,
        набирала новое касание каждые полсекунды */
-    if(!m){ untouch(o); continue; }
+    if(!m){ untouchFar(A,o); continue; }
     /* пока игрок не тронулся, чужая машина ему не «наезд»: защёлка ставится на любом
        пересечении OBB, кто бы ни двигался, и стоящий на старте получал аварийную ошибку
        за то, что поток прошёл вплотную */
@@ -9774,7 +9783,6 @@ function setClear(el,d){ setText(el, fmtClear(d)+' м');
 function updateHUD(){
   document.body.classList.toggle('fp', opt.camMode===CAM_FP);
   document.body.classList.toggle('mir', opt.mirrors);
-  setText($('hitsVal'), 'касаний: '+game.hits);
   if(MOB){
     document.querySelectorAll('#tgear span[data-gear]').forEach(el=>
       el.classList.toggle('on', el.dataset.gear===car.sel));

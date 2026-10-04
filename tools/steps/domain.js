@@ -83,6 +83,19 @@
       try { resolveCollisions(1 / 60); } finally { window.hitPenalty = orig; }
       ctx.touches += n;
     }],
+    /* как в frame(): два подшага физики на кадр 1/60, газ держится, кулдаун отсчитывается. Считаются
+       засчитанные наезды (hitPenalty) — по ним и счётчик в итогах уровня */
+    [new RegExp('^машина давит газом в препятствие ' + N + ' секунд[а-я]*$'), (secs) => {
+      const orig = window.hitPenalty; let n = 0;
+      window.hitPenalty = function () { n++; return orig.apply(this, arguments); };
+      car.sel = 'D'; car.gear = 1; game.moved = true;
+      try {
+        for (let k = 0; k < Math.round(+secs * 60); k++) {
+          input.fwd = true; stepCar(1 / 120); stepCar(1 / 120); game.hitCd -= 1 / 60;
+        }
+      } finally { input.fwd = false; window.hitPenalty = orig; }
+      ctx.touches += n;
+    }],
     [/^измеряются зазоры$/, () => { ctx.clear = clearances(); }],
     [new RegExp('^игрок открывает уровень ' + N + '$'), (n) => {
       ctx.before = game.li; hideOv(); openLevel(+n - 1, 'pick');
