@@ -80,6 +80,8 @@ ch "SELECT querystring, country, detected_client_signals, detected_header_heuris
 | `logout`, `account_delete`, `sync_fail` | аккаунт | `provider` / — / `reason` | — |
 | `paywall_view` | закрытый уровень | `li`, `kind`, `via`, `account` | — |
 | `purchase_start`, `purchase_restore` | пейволл | `product` | — |
+| `offer_view` | предложение курса на первом входе в уровни 20–32, раз на устройство, только сайт | `li`, `kind`, `via`, `price` | `offer-view` |
+| `offer_click` / `offer_skip` | ответ на предложение: «Беру за 249 ₽» / «Пока бесплатно» | `li`, `kind`, `via`, `price` | `offer-click` / — |
 
 `level_start` шлёт только действие игрока. Загрузка страницы, смена плотности потока и режима
 экзамена тоже зовут `loadLevel`, и раньше воронка считала их попытками (#181).
@@ -106,6 +108,16 @@ ch "SELECT querystring, country, detected_client_signals, detected_header_heuris
    по `code` — что валит.
 4. `perf` с `fps < 30` по устройствам — кому нужна оптимизация.
 
+**Предложение курса** (фальшивая дверь, #280, `docs/demand/fake-door.md`): `offer_view → offer_click`.
+Оплаты нет — клик означает намерение, а не покупку. Считать по уникальным сессиям: показ стоит
+раз на устройство, а повторный визит с очищенным хранилищем дал бы второй показ.
+
+```bash
+ch "SELECT event_name, uniqExact(session_id) AS sessions, count() AS n FROM events
+    WHERE site_id=3 AND event_name IN ('offer_view','offer_click','offer_skip') GROUP BY event_name"
+ch "DESCRIBE events"   # где лежат свойства событий (li, via, price) — для разреза по уровню и источнику
+```
+
 ## Отладка
 
 `localStorage.setItem('pz_debug','an')` — каждое событие пишется в консоль строкой
@@ -114,7 +126,7 @@ ch "SELECT querystring, country, detected_client_signals, detected_header_heuris
 ## Проверки
 
 ```bash
-PW_DIR=/tmp/pw node tools/account-check.mjs      # @an-*: app_open, level_start, level_win, без тега — тишина
+PW_DIR=/tmp/pw node tools/account-check.mjs      # @an-*: app_open, level_start, level_win, offer_*, без тега — тишина
 node tools/sw-check.mjs                          # @dist-sw-api-bypass: /rb/ мимо кэша SW
 PW_DIR=/tmp/pw REBUILD=1 node tools/yandex-check.mjs   # @dist-yandex-no-account
 ```

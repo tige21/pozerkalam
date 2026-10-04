@@ -6917,7 +6917,8 @@ function toast(msg,t){ note=msg; noteT=t||1.4; }
    track молчит. Имена событий snake_case, как в spark; Метрике уходят старые имена целей:
    цели в её интерфейсе настроены на них, переименование обнулило бы воронку */
 const METRIKA_GOAL={ level_start:'level-start', level_win:'win', level_fail:'level-fail',
-  exam_pass:'exam-pass', exam_fail:'exam-fail', demo_start:'demo-start', feedback_sent:'feedback-sent' };
+  exam_pass:'exam-pass', exam_fail:'exam-fail', demo_start:'demo-start', feedback_sent:'feedback-sent',
+  offer_view:'offer-view', offer_click:'offer-click' };
 const AN_RB=!!document.querySelector('script[src$="/rb/script.js"]');
 /* скрипт Rybbit async: события до его загрузки копятся (до 20) и досылаются не дольше 10 с —
    контракт адаптера spark (src/core/analytics/rybbit.ts); не загрузился — блокировщик или офлайн */
@@ -10770,6 +10771,67 @@ async function payRestore(){
   showOv(acctNoteHTML()+paywallHTML(li));
 }
 
+/* Фальшивая дверь (#280, фаза 4): пока оплаты нет, сайт спрашивает «беру за 249 ₽» и считает
+   ответы — это цифра для решения по M7. Ничего не закрывает и не списывает: после любого ответа
+   уровень открывается как раньше. Один раз на устройство — ключ pz_*, потому что trainer_* адаптер
+   ЯИ зеркалит в облако. Только сайт: в ЯИ покупки идут через их SDK, у VK и Telegram свои правила
+   цифровых покупок; гейты открывают игру с file:// и предложения не видят. offerSeen держит
+   «показано» и без хранилища, иначе при отказе записи offerGo → openLevel показывал бы его по кругу */
+const OFFER={ on:true, price:249, from:19, to:31, key:'pz_offer' };
+let offerLi=-1, offerVia='', offerSeen=false;
+function offerWhyNot(i){
+  if(!OFFER.on) return 'выключено';
+  const l=LEVELS[i];
+  if(!l || l.custom || i<OFFER.from || i>OFFER.to) return 'уровень вне курса';
+  if(levelLocked(i)) return 'уровень закрыт — пейволл';
+  /* без этой строки после «Восстановить покупку» предложение мелькало у того, кто уже заплатил:
+     acctRerender открывает уровень раньше payRestore, и первый openLevel показывал его */
+  if(entitled(PAYWALL.product)) return 'курс уже куплен';
+  if(location.protocol!=='https:') return 'не сайт ('+location.protocol+')';
+  const pl=anPlatform();
+  if(pl!=='web' && pl!=='pwa') return 'площадка '+pl;
+  if(anFramed()) return 'во фрейме';
+  if(offerSeen) return 'уже показано';
+  try{ if(localStorage.getItem(OFFER.key)==='1') return 'уже показано'; }catch(e){ return 'хранилище недоступно'; }
+  return '';
+}
+function offerHTML(){
+  return '<div class="offer"><h1>Площадка, город и экзамен — '+OFFER.price+' ₽ навсегда</h1>'
+    +'<p>Уровни 20–32: эстакада с ручником, задний ход, остановка у тротуара, город с кольцом '
+    +'и трамваем, экзамен-маршрут с командами инспектора и протоколом ошибок.</p>'
+    +'<p>Один платёж, без подписки — дешевле часа с инструктором. Машина на автомате.</p></div>'
+    +'<button data-act="offer-take">Беру за '+OFFER.price+' ₽</button>'
+    +'<button data-act="offer-skip" class="ghost">Пока бесплатно</button>';
+}
+function offerThanksHTML(){
+  return '<div class="offer"><h1>Записали</h1>'
+    +'<p>Оплату ещё не подключили, поэтому всё открыто бесплатно. Списаний не будет.</p></div>'
+    +'<button data-act="offer-go">Поехали</button>';
+}
+function offerProps(){ return Object.assign(anLevel(offerLi), {via:offerVia, price:OFFER.price}); }
+function offerShow(i, via){
+  offerLi=i; offerVia=via||''; offerSeen=true;
+  try{ localStorage.setItem(OFFER.key,'1'); }catch(e){}
+  console.info('[pay] предложение: показ, уровень '+(i+1));
+  track('offer_view', offerProps());
+  showOv(offerHTML());
+}
+function offerTake(){
+  console.info('[pay] предложение: беру');
+  track('offer_click', offerProps());
+  showOv(offerThanksHTML());
+}
+function offerSkip(){
+  console.info('[pay] предложение: пока бесплатно');
+  track('offer_skip', offerProps());
+  offerGo();
+}
+function offerGo(){
+  const i=offerLi;
+  offerLi=-1;
+  if(i>=0) openLevel(i, offerVia);
+}
+
 /* ---------- оверлеи ---------- */
 const ovEl=$('overlay'), ovCard=$('ovCard');
 let helpOpen=false;
@@ -10955,6 +11017,9 @@ function showLevelPick(){ showOv(levelPickHTML()); }
    бриф в тот же миг, и с карточки выбора маршрут перед стартом не видел никто */
 function openLevel(i, via){
   if(levelLocked(i)){ paywallShow(i, via); return; }
+  const offerWhy=offerWhyNot(i);
+  if(!offerWhy){ offerShow(i, via); return; }
+  if(AN_DEBUG && i>=OFFER.from && i<=OFFER.to) console.info('[pay] предложение не показано: '+offerWhy);
   loadLevel(i);
   if(!level.def.examRoute) hideOv();
   anLevelStart(via);
@@ -10976,6 +11041,9 @@ function doAct(a){
   if(a==='auth-delete-yes'){ authDelete(); return; }
   if(a==='pay-restore'){ payRestore(); return; }
   if(a==='pay-buy'){ payStart(PAYWALL.product); return; }
+  if(a==='offer-take'){ offerTake(); return; }
+  if(a==='offer-skip'){ offerSkip(); return; }
+  if(a==='offer-go'){ offerGo(); return; }
   /* «прервать» обязано выводить ИЗ экзамена. Раньше кнопка вела в 'again': маршрут
      начинался заново, игрок оставался в экзамене — со стороны это выглядело как
      «нажал прервать, ничего не произошло» */
