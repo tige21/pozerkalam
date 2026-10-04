@@ -80,7 +80,7 @@ ch "SELECT querystring, country, detected_client_signals, detected_header_heuris
 | `logout`, `account_delete`, `sync_fail` | аккаунт | `provider` / — / `reason` | — |
 | `paywall_view` | закрытый уровень | `li`, `kind`, `via`, `account` | — |
 | `purchase_start`, `purchase_restore` | пейволл | `product` | — |
-| `offer_view` | предложение курса на первом входе в уровни 20–32, раз на устройство, только сайт | `li`, `kind`, `via`, `price` | `offer-view` |
+| `offer_view` | предложение курса на первом входе в уровни 20–32, раз на устройство, только сайт (выключено с 05.10.2026, `OFFER.on`) | `li`, `kind`, `via`, `price` | `offer-view` |
 | `offer_click` / `offer_skip` | ответ на предложение: «Беру за 249 ₽» / «Пока бесплатно» | `li`, `kind`, `via`, `price` | `offer-click` / — |
 
 `level_start` шлёт только действие игрока. Загрузка страницы, смена плотности потока и режима

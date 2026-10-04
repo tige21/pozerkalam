@@ -11465,11 +11465,13 @@ async function payRestore(){
    уровень открывается как раньше. Один раз на устройство — ключ pz_*, потому что trainer_* адаптер
    ЯИ зеркалит в облако. Только сайт: в ЯИ покупки идут через их SDK, у VK и Telegram свои правила
    цифровых покупок; гейты открывают игру с file:// и предложения не видят. offerSeen держит
-   «показано» и без хранилища, иначе при отказе записи offerGo → openLevel показывал бы его по кругу */
-const OFFER={ on:true, price:249, from:19, to:31, key:'pz_offer' };
+   «показано» и без хранилища, иначе при отказе записи offerGo → openLevel показывал бы его по кругу.
+   Выключено 05.10.2026 решением владельца, пока не подключена оплата; window.OFFER_FORCE — только
+   для гейтов, как PAYWALL_FORCE: механизм проверяется и выключенным */
+const OFFER={ on:false, price:249, from:19, to:31, key:'pz_offer' };
 let offerLi=-1, offerVia='', offerSeen=false;
 function offerWhyNot(i){
-  if(!OFFER.on) return 'выключено';
+  if(!OFFER.on && !window.OFFER_FORCE) return 'выключено';
   const l=LEVELS[i];
   if(!l || l.custom || i<OFFER.from || i>OFFER.to) return 'уровень вне курса';
   if(levelLocked(i)) return 'уровень закрыт — пейволл';

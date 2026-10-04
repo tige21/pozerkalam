@@ -6,9 +6,10 @@
    Запуск (playwright-core во временной папке, см. cockpit-shots.mjs):
      PW_DIR=/tmp/pw node tools/account-check.mjs
    Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена.
-   FAULT=offer выключает предложение курса — краснеют @acct-offer-once/-free/-skip и @an-offer-events;
-   FAULT=offersite показывает его на любой площадке — @acct-offer-site-only; FAULT=offerbuyer — и
-   купившему — @acct-offer-not-buyer. */
+   Предложение курса выключено в игре (OFFER.on=false), его проверки включают его window.OFFER_FORCE.
+   FAULT=offer глушит его и с флагом — краснеют @acct-offer-once/-free/-skip и @an-offer-events;
+   FAULT=offeroff показывает его без флага — @acct-offer-off; FAULT=offersite — на любой площадке —
+   @acct-offer-site-only; FAULT=offerbuyer — и купившему — @acct-offer-not-buyer. */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -39,7 +40,8 @@ const FAULT = process.env.FAULT || '';
 const SRC0 = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 /* поломки предложения курса: каждая обязана покрасить свою проверку, иначе та зелёная по построению */
 const FAULTS = {
-  offer: ['const OFFER={ on:true', 'const OFFER={ on:false'],
+  offer: ["  if(!OFFER.on && !window.OFFER_FORCE) return 'выключено';\n", "  return 'выключено';\n"],
+  offeroff: ["  if(!OFFER.on && !window.OFFER_FORCE) return 'выключено';\n", ''],
   offersite: ["  if(pl!=='web' && pl!=='pwa') return 'площадка '+pl;\n  if(anFramed()) return 'во фрейме';\n", ''],
   offerbuyer: ["  if(entitled(PAYWALL.product)) return 'курс уже куплен';\n", ''],
 };
@@ -430,7 +432,7 @@ const ovText = (page) => page.evaluate(() => document.getElementById('overlay').
   const after = await page.evaluate(() => ({ li: game.li, ov: document.getElementById('overlay').style.display, ent: acct.ent.length }));
   check('«Восстановить покупку»: /me с курсом открывает закрытый уровень (@acct-paywall-restore)',
     before.li !== 19 && before.restore && after.li === 19 && after.ov === 'none' && after.ent === 1, JSON.stringify({ before, after }));
-  const buyer = await page.evaluate(() => { delete window.PAYWALL_FORCE; openLevel(20, 'pick');
+  const buyer = await page.evaluate(() => { delete window.PAYWALL_FORCE; window.OFFER_FORCE = true; openLevel(20, 'pick');
     return { li: game.li, offer: !!document.querySelector('#overlay .offer') }; });
   const views = await rbEvents(page, 'offer_view');
   check('у кого курс уже есть, тот предложения не видит — ни после восстановления, ни на следующем уровне (@acct-offer-not-buyer)',
@@ -465,7 +467,7 @@ const clickAct = (target, act) => target.evaluate(a => { const b = document.quer
 let offerViewA = [], offerClickA = [];
 {
   const { ctx, page, errors, apiCalls } = await openGame({ auth: ['vk', 'yandex'], api: mockApi({}) });
-  await page.evaluate(() => { doAct('start'); showLevelPick(); document.querySelector('.lvcard[data-lvl="19"]').click(); });
+  await page.evaluate(() => { window.OFFER_FORCE = true; doAct('start'); showLevelPick(); document.querySelector('.lvcard[data-lvl="19"]').click(); });
   const first = await offerState(page);
   await clickAct(page, 'offer-take');
   const thanks = await offerState(page);
@@ -490,7 +492,7 @@ let offerViewA = [], offerClickA = [];
 
 {
   const { ctx, page } = await openGame({ auth: ['vk', 'yandex'], api: mockApi({}) });
-  await page.evaluate(() => { doAct('start'); openLevel(19, 'pick'); });
+  await page.evaluate(() => { window.OFFER_FORCE = true; doAct('start'); openLevel(19, 'pick'); });
   const shown = await offerState(page);
   await clickAct(page, 'offer-skip');
   const after = await offerState(page);
@@ -506,7 +508,7 @@ let offerViewA = [], offerClickA = [];
 
 {
   const { ctx, page } = await openGame({ auth: ['vk', 'yandex'], api: mockApi({}) });
-  await page.evaluate(() => { window.PAYWALL_FORCE = [19]; doAct('start'); openLevel(19, 'pick'); });
+  await page.evaluate(() => { window.PAYWALL_FORCE = [19]; window.OFFER_FORCE = true; doAct('start'); openLevel(19, 'pick'); });
   const r = await page.evaluate(() => ({ paywall: !!document.querySelector('#overlay .paywall'), offer: !!document.querySelector('#overlay .offer'),
     key: localStorage.getItem('pz_offer'), li: game.li }));
   const views = await rbEvents(page, 'offer_view');
@@ -516,9 +518,21 @@ let offerViewA = [], offerClickA = [];
 }
 
 {
+  /* выключенное предложение (как сейчас на проде): без тестового флага его нет нигде */
+  const { ctx, page } = await openGame({ auth: ['vk', 'yandex'], api: mockApi({}) });
+  const r = await page.evaluate(() => { doAct('start'); openLevel(19, 'pick');
+    const ov = document.getElementById('overlay');
+    return { on: OFFER.on, li: game.li, offer: ov.style.display !== 'none' && !!ov.querySelector('.offer'), key: localStorage.getItem('pz_offer') }; });
+  const views = await rbEvents(page, 'offer_view');
+  check('выключенное предложение не показывается: уровень 20 открыт сразу, событий нет (@acct-offer-off)',
+    r.li === 19 && !r.offer && r.key === null && views.length === 0, JSON.stringify({ ...r, views: views.length }));
+  await ctx.close();
+}
+
+{
   /* та же страница на четырёх площадках: на сайте предложение было бы (проверено выше), здесь — нет */
   const { ctx, page } = await openGame({ auth: ['vk', 'yandex'], api: mockApi({}) });
-  const probe = (target) => target.evaluate(() => { localStorage.removeItem('pz_offer'); doAct('start'); openLevel(19, 'pick');
+  const probe = (target) => target.evaluate(() => { localStorage.removeItem('pz_offer'); window.OFFER_FORCE = true; doAct('start'); openLevel(19, 'pick');
     return { li: game.li, offer: !!document.querySelector('#overlay .offer') }; });
   const res = {};
   res.ya = await page.evaluate(() => { window.BUILD = 'ya-test'; return true; }).then(() => probe(page));

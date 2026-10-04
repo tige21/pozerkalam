@@ -6,7 +6,7 @@
 «авто» — исполняет `tools/gherkin-run.mjs`, человеку нужен как источник эталонных чисел.
 «руками» — закрыто инструментом в браузере, перед деплоем стоит пройти глазами.
 
-<!-- codes: 36275efdde50 -->
+<!-- codes: 3ee54d853ee6 -->
 
 ## acct
 
@@ -108,7 +108,7 @@
 
 ### Ответ «беру» ничего не списывает и не закрывает
 
-`acct-offer-free` · руками · `specs/features/acct/predlozhenie.feature:22`
+`acct-offer-free` · руками · `specs/features/acct/predlozhenie.feature:31`
 
 Ссылка: доска #280 (фаза 4 — фальшивая дверь), #31 (M7 · B2C-freemium); docs/demand/price.md;
 
@@ -121,7 +121,7 @@
 
 ### Тому, у кого курс уже есть, предложение не показывается
 
-`acct-offer-not-buyer` · руками · `specs/features/acct/predlozhenie.feature:43`
+`acct-offer-not-buyer` · руками · `specs/features/acct/predlozhenie.feature:52`
 
 Ссылка: доска #280 (фаза 4 — фальшивая дверь), #31 (M7 · B2C-freemium); docs/demand/price.md;
 
@@ -129,9 +129,19 @@
 - **Когда** игрок открывает уровень 20
 - **Тогда** открыт уровень 20 без предложения
 
+### Выключенное предложение не показывается никому
+
+`acct-offer-off` · руками · `specs/features/acct/predlozhenie.feature:17`
+
+Ссылка: доска #280 (фаза 4 — фальшивая дверь), #31 (M7 · B2C-freemium); docs/demand/price.md;
+
+- **Дано** сайт, предложение выключено, игрок ещё не видел его
+- **Когда** игрок открывает уровень 20
+- **Тогда** открыт уровень 20 без предложения, в аналитику ничего не ушло
+
 ### Предложение появляется при первом входе в уровни площадки, города и экзамена
 
-`acct-offer-once` · руками · `specs/features/acct/predlozhenie.feature:14`
+`acct-offer-once` · руками · `specs/features/acct/predlozhenie.feature:23`
 
 Ссылка: доска #280 (фаза 4 — фальшивая дверь), #31 (M7 · B2C-freemium); docs/demand/price.md;
 
@@ -143,7 +153,7 @@
 
 ### На закрытом уровне показан пейволл, а не предложение
 
-`acct-offer-paywall-first` · руками · `specs/features/acct/predlozhenie.feature:37`
+`acct-offer-paywall-first` · руками · `specs/features/acct/predlozhenie.feature:46`
 
 Ссылка: доска #280 (фаза 4 — фальшивая дверь), #31 (M7 · B2C-freemium); docs/demand/price.md;
 
@@ -153,7 +163,7 @@
 
 ### В Яндекс Играх, VK, Telegram и во фрейме предложения нет
 
-`acct-offer-site-only` · руками · `specs/features/acct/predlozhenie.feature:49`
+`acct-offer-site-only` · руками · `specs/features/acct/predlozhenie.feature:58`
 
 Ссылка: доска #280 (фаза 4 — фальшивая дверь), #31 (M7 · B2C-freemium); docs/demand/price.md;
 
@@ -164,7 +174,7 @@
 
 ### Ответ «пока бесплатно» сразу открывает уровень
 
-`acct-offer-skip` · руками · `specs/features/acct/predlozhenie.feature:31`
+`acct-offer-skip` · руками · `specs/features/acct/predlozhenie.feature:40`
 
 Ссылка: доска #280 (фаза 4 — фальшивая дверь), #31 (M7 · B2C-freemium); docs/demand/price.md;
 
