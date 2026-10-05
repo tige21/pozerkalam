@@ -69,7 +69,7 @@ ch "SELECT querystring, country, detected_client_signals, detected_header_heuris
 | Событие | Когда | Свойства | Цель Метрики |
 |---|---|---|---|
 | `app_open` | загрузка страницы, раз | `platform` (web, pwa, vk, tg, ya), `framed`, `mob`, `lang`, `runs`, `build`, `account`, `provider`, `utm_*`, `source` | — |
-| `level_start` | «Поехали», выбор уровня, «Следующий», цифра, «Заново», «отработать» из протокола | `li`, `kind`, `via` (start, pick, next, digit, again, train), `exam_mode` | `level-start` |
+| `level_start` | «Поехали», «Играть» в главном меню, выбор уровня, «Следующий», цифра, «Заново», «отработать» из протокола | `li`, `kind`, `via` (start, play, pick, next, digit, again, train), `exam_mode` | `level-start` |
 | `level_win` | зачёт | `li`, `kind`, `t`, `hits`, `clean`, `err_cm` (дриллы), `demo` | `win` |
 | `level_fail` | провал попытки на строгих уровнях | `li`, `kind`, `code` | `level-fail` |
 | `exam_pass` / `exam_fail` | конец экзамена | `route`, `mode`, `score` | `exam-pass` / `exam-fail` |

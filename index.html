@@ -165,6 +165,8 @@ body.needbrake .tdrive [data-hold="back"]{background:rgba(190,52,52,.8);border-c
   font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#dbe7f3}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px 26px}
 .lvgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:9px;margin-top:10px}
+/* вкладки «Уровни» прячут чужие сетки атрибутом hidden, а display:grid выше по весу его перебивал */
+.lvgrid[hidden]{display:none}
 /* карточка уровня — настоящая кнопка: div с onclick не попадал в Tab, и уровни 10–32 были
    недоступны с клавиатуры (цифры покрывают только 1–9). Сброс правил #overlay button ниже */
 /* flex-колонка, а не block: button центрирует содержимое по вертикали, и в ряду карточек
@@ -267,9 +269,9 @@ body.compact #overlay .gbseg button{width:auto;margin:0;padding:10px 16px;font-s
 @media (max-width:1040px){#topleft{max-width:26vw}
   #coach{left:calc(26vw + 24px);right:150px;font-size:13px}}
 /* ---------- экранное управление (телефон/планшет) ---------- */
-#touchui,#tmenu,#rotate,#thelp{display:none}
+#touchui,#rotate,#thelp{display:none}
 body.touch #touchui{display:block}
-.tcluster,#tview,#tmenubtn,#trestart,#tgear span{
+.tcluster,#tview,#trestart,#tgear span{
   position:fixed;z-index:9;border:1px solid rgba(255,255,255,.20);
   background:rgba(14,20,28,.62);backdrop-filter:blur(6px);
   color:#e8eef6;font-weight:700;letter-spacing:.4px;
@@ -323,8 +325,6 @@ body.touch #blinkers,body.touch #handbrake{display:none!important}
    четыре передачи и две стрелки поворотников, 6*44 + 5*5 = 289, половина 144,5. Старые ±101
    были посчитаны по четырём буквам, и ≡ с ⟲ ложились ровно на стрелки: поворотник на телефоне
    нажать было нечем, а ритуал поворотника оценивает детектор городских уровней и экзамена. */
-#tmenubtn{left:50%;transform:translateX(-197px);bottom:calc(12px + var(--bot,0px));width:44px;height:44px;
-  font-size:18px;border-radius:12px;display:flex;align-items:center;justify-content:center}
 #trestart{left:50%;transform:translateX(153px);bottom:calc(12px + var(--bot,0px));width:44px;height:44px;
   font-size:18px;border-radius:12px;display:flex;align-items:center;justify-content:center}
 
@@ -372,15 +372,6 @@ body.compact #edhint{left:168px;top:8px;font-size:11px;padding:5px 9px}
   box-shadow:0 3px 16px rgba(0,0,0,.5)}
 #thelp button{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
   margin:0;padding:13px 30px;font-size:16px}
-body.touch #tmenu.open{display:block;position:fixed;inset:0;z-index:14;
-  background:rgba(5,8,12,.86);backdrop-filter:blur(6px);overflow:auto;overscroll-behavior:contain;
-  padding:14px max(14px,env(safe-area-inset-right,0px)) calc(14px + env(safe-area-inset-bottom,0px)) max(14px,env(safe-area-inset-left,0px))}
-#tmenu .tm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:8px;max-width:760px;margin:0 auto}
-#tmenu button{margin:0;padding:9px 7px;font-size:12.5px;font-weight:600;border-radius:12px;
-  border:1px solid rgba(255,255,255,.18);background:rgba(20,28,38,.9);color:#dbe7f3}
-#tmenu button.on{background:#1b5faa;border-color:#58a0e0;color:#fff}
-#tmenu h3{font-size:12px;color:#9fd0ff;margin:8px 2px 4px;grid-column:1/-1}
-#tmenu .tm-close{grid-column:1/-1;background:#1b5faa;border-color:#3e83cf;color:#fff;font-size:15px;padding:13px}
 body.touch.portrait #rotate{display:flex;position:fixed;inset:0;z-index:30;
   align-items:center;justify-content:center;text-align:center;padding:28px;
   background:#0b0f14;color:#cfe0f0;font-size:17px;line-height:1.5}
@@ -421,7 +412,7 @@ body.touch #coach.k-ok:not(.open) .cm{color:#93f0b4}
 body.touch #coach.open{pointer-events:auto}
 body.hud-min #topleft,body.hud-min #hint{display:none}
 body.hud-min #bar .cell.opt{display:none}
-body.hud-off #topleft,body.hud-off #topright,body.hud-off #bar,
+body.hud-off #topleft,body.hud-off #lvlIdx,body.hud-off #bar,
 body.hud-off #coach,body.hud-off #hint{display:none}
 /* строка подсказки телефона сильнее правила выше по весу селектора — «скрыть все панели» её не гасило */
 body.touch.hud-off #coach{display:none}
@@ -441,7 +432,6 @@ body.touch.hud-off #coach{display:none}
   #thand{font-size:11.5px}
   #tgear span{width:40px;height:40px;font-size:15px}
   #tgear{gap:4px}
-  #tmenubtn{width:40px;height:40px;font-size:16px;transform:translateX(-177px)}
   #trestart{width:40px;height:40px;font-size:16px;transform:translateX(137px)}
   #tview{width:132px;height:32px;font-size:11px;bottom:calc(70px + var(--bot,0px))}
 }
@@ -461,18 +451,18 @@ body.touch.hud-off #coach{display:none}
   #thand{font-size:10.5px}
   #tgear span{width:36px;height:36px;font-size:14px}
   #tgear{gap:3px}
-  #tmenubtn{width:38px;height:38px;font-size:15px;transform:translateX(-160px)}
   #trestart{width:38px;height:38px;font-size:15px;transform:translateX(122px)}
   #tview{width:120px;height:30px;font-size:10.5px;bottom:calc(66px + var(--bot,0px))}
   #tview span{font-size:10px}
 }
-body.compact #overlay{padding:10px max(10px,env(safe-area-inset-right,0px)) 10px max(10px,env(safe-area-inset-left,0px))}
-body.compact #overlay .card{padding:14px 16px}
+/* только карточки: у главного меню и панелей разделов своя вёрстка, и вес этих правил ломал её на телефоне */
+body.compact #overlay.lay-card,body.compact #overlay.lay-pause{padding:10px max(10px,env(safe-area-inset-right,0px)) 10px max(10px,env(safe-area-inset-left,0px))}
+body.compact #overlay.lay-card .card{padding:14px 16px}
 body.compact #overlay h1{font-size:18px}
 body.compact #overlay h2{font-size:14px;margin:10px 0 5px}
 body.compact #overlay p{font-size:13px;line-height:1.45}
 body.compact #overlay li{font-size:12.5px;line-height:1.6}
-body.compact #overlay button{width:100%;margin-top:12px;padding:14px;font-size:16px}
+body.compact #overlay.lay-card button{width:100%;margin-top:12px;padding:14px;font-size:16px}
 body.compact #overlay .grid2{grid-template-columns:1fr 1fr;gap:2px 14px}
 /* на телефоне три хода итогов стоят в один ряд: столбиком во всю ширину «Следующий уровень»
    уезжал за нижний край, и главную кнопку надо было искать прокруткой */
@@ -495,11 +485,145 @@ body.fp #bar .cell{padding:4px 9px}
 body.fp #bar .k{font-size:9px;letter-spacing:.4px}
 body.fp #bar .v{font-size:13px}
 body.fp #hint{display:none}
+/* ---------- меню: главный экран, разделы, пауза ---------- */
+/* кнопка паузы — в углу плашки уровня; на телефоне вместо самой плашки. При «скрыть все панели»
+   остаётся: со скрытыми панелями выход в меню обязан быть */
+#topright{display:flex;align-items:center;gap:10px}
+#topright .sub{margin-top:0}
+#pauseBtn{margin:0;width:36px;height:36px;padding:0;border-radius:10px;pointer-events:auto;flex:none;
+  display:grid;place-items:center;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.18);color:#e8eef6}
+#pauseBtn svg{width:16px;height:16px;fill:currentColor}
+body.hud-off #topright{background:none;border:0;padding:0;backdrop-filter:none}
+body.touch #topright{padding:0;background:none;border:0;backdrop-filter:none}
+body.touch #lvlIdx{display:none}
+body.touch #pauseBtn{width:44px;height:44px;border-radius:12px;background:rgba(14,20,28,.62);
+  backdrop-filter:blur(6px);box-shadow:0 2px 14px rgba(0,0,0,.35)}
+body.touch #pauseBtn svg{width:18px;height:18px}
+body.ov #pauseBtn{visibility:hidden}
+/* в главном меню за оверлеем витрина, а не уровень: HUD не нужен, фон оверлея прозрачный, и тяга
+   по свободному месту доходит до канваса — машину крутят пальцем */
+body.menu #topleft,body.menu #topright,body.menu #coach,body.menu #bar,body.menu #hint,body.menu #touchui,
+body.menu #blinkers,body.menu #handbrake,body.menu .sidebtn{display:none!important}
+body.menu #overlay{background:none;backdrop-filter:none;pointer-events:none}
+body.menu #overlay.lay-card{background:rgba(4,7,11,.62);pointer-events:auto}
+#overlay.lay-main,#overlay.lay-panel{padding:0;align-items:stretch;justify-content:flex-start;overflow:hidden}
+#overlay.lay-main .card{max-width:none;width:100%;height:100%;margin:0;padding:0;background:none;border:0;border-radius:0;
+  -webkit-user-select:none;user-select:none}
+#overlay .card button,#overlay.lay-panel .card{pointer-events:auto}
+.mm{position:relative;height:100%;display:flex;flex-direction:column;gap:12px;
+  padding:max(18px,env(safe-area-inset-top)) max(22px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(28px,env(safe-area-inset-left))}
+.mm-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.mm-brand{display:flex;align-items:center;gap:12px;font-size:20px;color:#fff;text-shadow:0 1px 8px rgba(0,0,0,.5)}
+.mm-brand svg{width:60px;height:30px;flex:none}
+.mm-tools{display:flex;align-items:center;gap:8px}
+#overlay .mm-chip{margin:0;display:flex;align-items:center;gap:8px;height:44px;padding:0 14px 0 6px;border-radius:999px;
+  background:rgba(9,14,20,.74);border-color:rgba(255,255,255,.16);color:#e8eef6;font-size:14px;font-weight:600;max-width:46vw}
+.mm-chip .av,.pwho .av{display:grid;place-items:center;flex:none;width:32px;height:32px;border-radius:50%;
+  background:#1b5faa;color:#fff;font-size:14px;font-weight:700}
+.mm-chip .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mm-chip .in{color:#9fd0ff;font-weight:500}
+#overlay .mm-icon{margin:0;display:grid;place-items:center;width:44px;height:44px;padding:0;border-radius:50%;
+  background:rgba(9,14,20,.74);border-color:rgba(255,255,255,.16);color:#e8eef6}
+.mm-icon svg{width:21px;height:21px}
+.mm-col{display:flex;flex-direction:column;gap:8px;width:min(340px,42vw);margin:auto 0}
+#overlay .mm-play{margin:0 0 4px;display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:13px 20px;
+  border-radius:14px;text-align:left;box-shadow:0 8px 26px rgba(27,95,170,.38)}
+.mm-play b{font-size:22px;letter-spacing:.06em;text-transform:uppercase}
+.mm-play span{max-width:100%;font-size:13px;font-weight:500;color:#d4e6fb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#overlay .mm-item{margin:0;display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:11px 18px;
+  border-radius:12px;text-align:left;font-size:16px;background:rgba(9,14,20,.74);border-color:rgba(255,255,255,.14);color:#e8eef6}
+.mm-item span{font-size:12.5px;font-weight:500;color:#9fd0ff;white-space:nowrap}
+#overlay .mm-note{margin:0;max-width:min(340px,42vw);font-size:13px;color:#ffd27a}
+.mm-foot{display:flex;align-items:center}
+#overlay .mm-foot .linkbtn{min-height:34px;padding:6px 2px;color:#b9cadb}
+#overlay .mm-drag{position:absolute;right:max(22px,env(safe-area-inset-right));bottom:max(16px,env(safe-area-inset-bottom));
+  margin:0;font-size:13px;color:#93a7bd;transition:opacity .5s;pointer-events:none}
+#overlay .mm-drag.off{opacity:0}
+/* раздел — панель слева во всю высоту: шапка и вкладки стоят, листается тело */
+#overlay.lay-panel .card{max-width:none;width:min(560px,58vw);height:100%;margin:0;padding:0;display:flex;flex-direction:column;
+  border-radius:0 16px 16px 0;border-width:0 1px 0 0;background:rgba(10,15,22,.96)}
+.mhead{display:flex;align-items:center;gap:10px;flex:none;padding:max(14px,env(safe-area-inset-top)) 20px 6px max(16px,env(safe-area-inset-left))}
+#overlay .mback{margin:0;flex:none;width:44px;height:44px;padding:0;border-radius:12px;font-size:20px;
+  background:transparent;border-color:rgba(255,255,255,.16);color:#e8eef6}
+#overlay .mhead h1{margin:0;font-size:21px}
+.mtabs{display:flex;gap:6px;flex:none;overflow-x:auto;scrollbar-width:none;touch-action:pan-x;
+  padding:4px 20px 8px max(16px,env(safe-area-inset-left))}
+.mtabs::-webkit-scrollbar{display:none}
+#overlay .mtabs button{margin:0;flex:none;padding:8px 14px;border-radius:999px;font-size:13.5px;font-weight:500;white-space:nowrap;
+  background:transparent;border-color:rgba(255,255,255,.14);color:#b9cadb}
+#overlay .mtabs button.on{background:#1b5faa;border-color:#58a0e0;color:#fff;font-weight:600}
+.mbody{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior:contain;
+  padding:4px 20px max(20px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+#overlay .mnote{margin:2px 0 10px;font-size:13px;color:#93a7bd}
+#overlay .mok{margin:4px 0 10px;font-size:13.5px;color:#7ee3a4}
+#overlay .mbody > button{margin:14px 0 0}
+.mrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0}
+#overlay .mrow button{margin:0}
+#overlay button.linkbtn.danger{color:#ff9aa2}
+#overlay button:disabled{opacity:.4;cursor:default}
+.ptiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin:10px 0}
+.ptile{padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.045)}
+.ptile b{display:block;font-size:21px;color:#fff;font-variant-numeric:tabular-nums}
+.ptile span{display:block;margin-top:2px;font-size:12px;line-height:1.35;color:#93a7bd}
+.pwho{display:flex;align-items:center;gap:12px;margin:6px 0 4px}
+.pwho .av{width:46px;height:46px;font-size:19px}
+.pwho b{display:block;font-size:17px;color:#fff}
+/* строка настройки: название слева, переключатель справа; в узкой панели переключатель уходит под название */
+.srow{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 14px;padding:11px 0;
+  border-bottom:1px solid rgba(255,255,255,.07)}
+.srow .sl{flex:1 1 160px;font-size:14.5px;color:#e8eef6}
+.sd{display:block;margin-top:2px;font-size:12px;line-height:1.35;color:#93a7bd}
+#overlay .sw{margin:0;flex:none;position:relative;width:52px;height:30px;padding:0;border-radius:999px;
+  background:#2a3644;border-color:rgba(255,255,255,.18)}
+#overlay .sw::after{content:'';position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;
+  background:#cfe0f0;transition:transform .15s}
+#overlay .sw.on{background:#1b5faa;border-color:#58a0e0}
+#overlay .sw.on::after{transform:translateX(22px);background:#fff}
+.seg{display:flex;flex:none;border:1px solid rgba(255,255,255,.16);border-radius:10px;overflow:hidden}
+#overlay .seg button{margin:0;padding:8px 12px;border:0;border-radius:0;font-size:13px;font-weight:500;background:transparent;color:#b9cadb}
+#overlay .seg button+button{border-left:1px solid rgba(255,255,255,.12)}
+#overlay .seg button.on{background:#1b5faa;color:#fff;font-weight:600}
+.step{display:flex;align-items:center;gap:6px;flex:none}
+#overlay .step button{margin:0;width:38px;height:38px;padding:0;border-radius:10px;font-size:18px;
+  background:transparent;border-color:rgba(255,255,255,.16);color:#e8eef6}
+.step b{min-width:96px;text-align:center;font-size:13.5px;color:#fff}
+/* пауза — компактная карточка по центру поверх остановленной игры */
+#overlay.lay-pause .card{max-width:380px;padding:22px 22px 18px}
+#overlay .pkick{margin:0 0 2px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#93a7bd}
+#overlay.lay-pause h1{font-size:19px}
+.pstack{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+#overlay .pstack button{margin:0;width:100%;text-align:left}
+@media (max-height:460px){
+  .mm{gap:8px}
+  .mm-col{gap:6px}
+  #overlay .mm-play{padding:9px 16px}
+  .mm-play b{font-size:18px}
+  #overlay .mm-item{padding:8px 14px;font-size:14.5px}
+  .mm-brand{font-size:17px}
+  .mm-brand svg{width:48px;height:24px}
+  #overlay .mm-chip,#overlay .mm-icon{height:40px}
+  #overlay .mm-icon{width:40px}
+  .mhead{padding-top:max(8px,env(safe-area-inset-top))}
+  #overlay .mback{width:40px;height:40px}
+  /* семь кнопок паузы столбиком в 320 px высоты не помещаются — две колонки, «Продолжить» во всю ширину */
+  #overlay.lay-pause .card{max-width:520px;padding:14px 16px 12px}
+  .pstack{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px}
+  #overlay .pstack button{padding:8px 14px;font-size:14px}
+  #overlay .pstack button:first-child{grid-column:1/-1}
+}
+@media (max-height:420px){
+  body.touch #pauseBtn{width:38px;height:38px}
+}
+/* на низких экранах Профиль и Настройки остаются только в верхней строке (чип и шестерёнка):
+   шесть кнопок колонки в 360 px высоты не помещаются */
+@media (max-height:380px){
+  #overlay .mm-item[data-act="menu:profile"],#overlay .mm-item[data-act="menu:settings"]{display:none}
+  #overlay .mm-item{padding:7px 14px}
+}
 /* 568 px (iPhone SE 1/5s): между рулём и рядом передач 34 px — кнопке в 38 px места нет,
-   ⟲ ложился на ТОРМОЗ целиком и каждое торможение перезапускало уровень. Обе кнопки уходят
-   в правый верх, под счётчик касаний и над правым зеркалом (y 46–84) */
+   ⟲ ложился на ТОРМОЗ целиком и каждое торможение перезапускало уровень. Она уходит в правый
+   верх, под кнопку паузы и над правым зеркалом (y 46–84) */
 @media (max-width:600px){
-  #tmenubtn{left:auto;right:calc(58px + env(safe-area-inset-right));bottom:auto;top:46px;transform:none}
   #trestart{left:auto;right:calc(14px + env(safe-area-inset-right));bottom:auto;top:46px;transform:none}
 }
 /* hover только на устройствах с курсором: на тач-экране он залипал после тапа */
@@ -516,6 +640,11 @@ body.fp #hint{display:none}
   #edpal button:hover{border-color:rgba(159,208,255,.6)}
   #overlay button.oauth-vk:hover{background:#1a86ff}
   #overlay button.oauth-yandex:hover{background:#1c1c1c}
+  #overlay .mm-item:hover,#overlay .mm-chip:hover,#overlay .mm-icon:hover,#overlay .mback:hover,
+  #overlay .step button:not(:disabled):hover{background:rgba(30,42,58,.95);border-color:rgba(159,208,255,.45)}
+  #overlay .mtabs button:not(.on):hover,#overlay .seg button:not(.on):hover{color:#fff;background:rgba(159,208,255,.08)}
+  #overlay .mm-play:hover{background:#2571c4}
+  #pauseBtn:hover{background:rgba(159,208,255,.16);border-color:rgba(159,208,255,.45)}
 }
 /* поворотники продолжают мигать: это сигнал с цветом, а не декор */
 @media (prefers-reduced-motion:reduce){
@@ -523,6 +652,7 @@ body.fp #hint{display:none}
   #coach,#coach .cw,#overlay button.lvcard,button{transition:none}
   button:active{transform:none}
   #overlay button.oauth.busy::before{animation:none}
+  #overlay .sw::after,#overlay .mm-drag{transition:none}
 }
 </style>
 </head>
@@ -540,6 +670,7 @@ body.fp #hint{display:none}
   <!-- ни секундомера (#150), ни счётчика касаний (владелец, 04.10.2026) во время занятия нет: время и
        касания показывают только итоги урока -->
   <div class="sub" id="lvlIdx"></div>
+  <button type="button" id="pauseBtn" aria-label="Пауза и меню" title="Меню (Esc)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4.2" height="14" rx="1.2"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.2"/></svg></button>
 </div>
 <button type="button" id="restartBtn" class="sidebtn" title="Уровень заново (R)">⟲ заново</button>
 <button type="button" id="demoBtn" class="sidebtn" title="Показать, как выполняется манёвр">▶ демонстрация</button>
@@ -582,13 +713,11 @@ body.fp #hint{display:none}
     <span data-gear="N">N</span><span data-gear="D">D</span>
     <span data-blink="R">▶</span>
   </div>
-  <div id="tmenubtn">≡</div>
   <div id="trestart">⟲</div>
 </div>
 
 <div id="edui"><div id="edpal"></div><div id="edhint"></div></div>
 
-<div id="tmenu"><div class="tm-grid" id="tmGrid"></div></div>
 <div id="thelp"></div>
 
 <div id="rotate"><span style="font-size:44px;line-height:1">↻</span><br><br>Поверни телефон горизонтально —<br>тренажёр рассчитан на альбомную ориентацию.</div>
@@ -6378,7 +6507,7 @@ const LEVELS = [
     const dec=[stripe(0,-6,7,22,'rgba(255,255,255,.05)')];
     return { obs, dec, start:{u:0,v:-11,th:0}, goal:null }; } },
 
-{ name:'20 · Эстакада: трогание в горку',
+{ name:'20 · Эстакада: трогание в горку', pad:true,
   task:'Остановиться у стоп-линии на подъёме, зафиксировать машину ручником и тронуться с откатом не больше 0,3 м. Съехать и остановиться в зоне.',
   tip:'Ритуал: стоп у линии → ручник (J) → газ → как машина упёрлась в ручник, снимай его.',
   steps:[
@@ -6464,7 +6593,7 @@ const LEVELS = [
      hint:'Останови машину в зелёной зоне и включи P.', marks:['zone']}
   ] },
 
-{ name:'21 · Задний ход по коридору',
+{ name:'21 · Задний ход по коридору', pad:true,
   task:'Проехать 22 метра задним ходом по коридору из конусов шириной 2,6 м и остановиться в створе.',
   tip:'Корма рулит: куда крутишь руль, туда она и едет. Малый ход, взгляд в салонное зеркало, руль — миллиметрами.',
   steps:[
@@ -6525,7 +6654,7 @@ const LEVELS = [
      hint:'Останови машину в створе и включи P.', marks:['gate']}
   ] },
 
-{ name:'22 · Остановка у тротуара',
+{ name:'22 · Остановка у тротуара', pad:true,
   task:'По команде «остановитесь у тротуара»: правый поворотник, прижаться к бордюру и встать параллельно, в 0,25 м от поребрика.',
   tip:'Поворотник — до манёвра. Прижимайся по пологой дуге и выравнивайся вдоль бордюра заранее, а не у самой цели.',
   steps:[
@@ -7621,6 +7750,13 @@ const opt  = { guides:false, trails:false, sound:false, refs:2, marks:true, camM
                dist:9.0, fpYaw:0, fpPitch:rad(-2), fpFov:62, mirrors:true, mirScale:1, prev3rd:CAM_CHASE, gfx:'auto',
                examMode:'train', traffic:'normal',
                mirAdj:{left:{yaw:0,pitch:0}, right:{yaw:0,pitch:0}, center:{yaw:0,pitch:0}} };
+/* переключатели, которые помнят выбор игрока: и клавиша, и строка настроек пишут через setOpt.
+   Ключ показа зеркал — trainer_mirvis: trainer_mirrors уже занят их поворотом */
+const OPT_SAVED={ marks:'trainer_marks', guides:'trainer_guides', trails:'trainer_trails', mirrors:'trainer_mirvis', sound:'trainer_sound' };
+function setOpt(k, v){
+  opt[k]=!!v;
+  try{ localStorage.setItem(OPT_SAVED[k], v?'1':'0'); }catch(e){}
+}
 let level = null, paused = true, trails = null, trailT = 0;
 let dprCap = 2;
 /* уровни качества — регулятор по РЕАЛЬНОМУ интервалу кадра (rAF), а не по JS-времени: растеризация
@@ -8095,12 +8231,12 @@ function clearances(){
 const input = {};
 /* подсказка клавиш — столбик слева, одна команда на строку: одной строкой через « · » она
    тянулась через весь экран поверх миникарты и не читалась. Порядок — по важности для езды:
-   не влезающие в полосу строки уходят за последнюю, «H — справка», где есть полный список */
+   не влезающие в полосу строки уходят за последнюю, «H — помощь», где есть полный список */
 const HINT_AT=[['Enter','сменить направление D ⇄ R'],['W','газ'],['S / пробел','тормоз'],['P','паркинг'],
   ['Q / E','поворотники'],[', и .','селектор по одной']];
 const HINT_ALL=[['J','ручник'],['V','вид из салона'],['B','габариты (3 уровня)'],['O','ориентиры'],
-  ['U','настройка зеркал'],['I','панели'],['L','выбор уровня'],
-  ['H','справка и все клавиши']];
+  ['U','настройка зеркал'],['I','панели'],['L','выбор уровня'],['Esc','пауза и меню'],
+  ['H','помощь и все клавиши']];
 function syncHintLine(){
   const el=$('hint'); if(!el) return;
   el.innerHTML=HINT_AT.concat(HINT_ALL)
@@ -10501,7 +10637,91 @@ function renderMirror(rect, kind, draw, widget){
   ctx.restore();
 }
 let mirBot=-1;
+/* ---------- витрина: машина игрока на подиуме в главном меню ---------- */
+/* Та же модель седана и тот же рендер, что в игре, — своя студия вместо уровня. Всё студийное лежит
+   ниже y=0 (пол и подиум), машина выше, камера над ними: пол и подиум сливаются первым проходом,
+   машина вторым, и порядок граней между проходами точный — как у настила эстакады */
+const SHOW_R=2.9, SHOW_FLOOR=-0.30, SHOW_SPIN=rad(12), SHOW_HOLD=3;
+const SHOW_COL=[206,214,226];
+const showroom={ yaw:rad(-38), vel:SHOW_SPIN, holdT:0, dragged:false, drag:null, lx:0, lt:0, warned:false,
+  calm:(()=>{ try{ return matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(e){ return false; } })() };
+function showroomOn(){ return document.body.classList.contains('menu'); }
+/* где стоит машина: правее колонки главного меню или панели раздела — центр проекции сдвигается туда */
+function showroomVP(){
+  let x0=0;
+  if(ovEl.classList.contains('lay-main')) x0=Math.min(340, W*0.42)+40;
+  else if(ovEl.classList.contains('lay-panel')) x0=Math.min(560, W*0.58);
+  if(W-x0 < W*0.36) x0=Math.max(0, W*0.64);
+  setVP(x0, 0, W-x0, H);
+}
+function emitShowroomStage(){
+  const N=36, below={x:0, y:-10, z:0}, mid={x:0, y:SHOW_FLOOR*0.5, z:0};
+  const ring=(r,y)=>{ const out=[]; for(let i=0;i<N;i++){ const a=(i+0.5)/N*TAU; out.push({x:Math.cos(a)*r, y:y, z:Math.sin(a)*r}); } return out; };
+  /* пол — кольца с яркостью, падающей от подиума: пятно света в тёмной студии */
+  const RINGS=[3.0, 3.6, 4.6, 6.0, 8.0, 11, 15], C0=[34,46,60], C1=[9,13,19];
+  for(let k=0;k<RINGS.length-1;k++){
+    const a=ring(RINGS[k], SHOW_FLOOR), b=ring(RINGS[k+1], SHOW_FLOOR), t=k/(RINGS.length-2);
+    const col=[lerp(C0[0],C1[0],t), lerp(C0[1],C1[1],t), lerp(C0[2],C1[2],t)];
+    for(let i=0;i<N;i++){ const j=(i+1)%N; pushQuad(a[i],a[j],b[j],b[i],col,below,0,MO.emit); }
+  }
+  const inner=ring(3.0, SHOW_FLOOR);
+  pushPoly(inner, C0, below, 0, MO.emit);
+  /* подиум: борт, светящаяся кромка и верх */
+  const top=ring(SHOW_R, 0), bot=ring(SHOW_R, SHOW_FLOOR), lip=ring(SHOW_R, -0.05);
+  for(let i=0;i<N;i++){ const j=(i+1)%N;
+    pushQuad(lip[i],lip[j],bot[j],bot[i],[44,52,64],mid,0);
+    pushQuad(top[i],top[j],lip[j],lip[i],[110,176,240],mid,0.01,MO.emit); }
+  pushPoly(top, [58,66,78], below, 0);
+}
+function drawShowroom(dt){
+  const S=showroom;
+  if(!S.drag){
+    if(S.holdT>0){ S.holdT-=dt; S.vel*=Math.exp(-3*dt); }
+    else if(!S.calm) S.vel+=(SHOW_SPIN-S.vel)*Math.min(1, dt*1.2);
+    else S.vel*=Math.exp(-3*dt);
+    S.yaw=angNorm(S.yaw+S.vel*dt);
+  }
+  const g=ctx.createRadialGradient(W*0.62, H*0.48, 0, W*0.62, H*0.48, Math.max(W,H)*0.75);
+  g.addColorStop(0,'#1d2a3a'); g.addColorStop(0.55,'#0e151f'); g.addColorStop(1,'#06090e');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  const ramp=RAMP_ON, crU=carRampUse;
+  RAMP_ON=false; carRampUse=false;
+  try{
+    showroomVP();
+    /* камера отходит так, чтобы подиум с запасом влез в свободную часть экрана по ширине */
+    const fov=34, aspect=VP.w/VP.h, hHalf=Math.atan(Math.tan(rad(fov/2))*aspect);
+    const d=clamp(SHOW_R*1.32/Math.tan(hHalf), 6.2, 16), el=rad(16);
+    setCam({x:0, y:0.55+d*Math.sin(el), z:-d*Math.cos(el)}, {x:0, y:0.55, z:0}, null, fov);
+    camPivot={u:0, v:0}; lodSync();
+    emitShowroomStage();
+    flushFaces();
+    carShadow(0, 0, S.yaw);
+    if(carModel.state!=='ready' && !S.warned){ S.warned=true; console.warn('[menu] витрина без модели кузова — лофт'); }
+    emitCarMesh(0, 0, S.yaw, SHOW_COL, 0, {own:true}, {body:'sedan', style:'a'});
+    flushFaces();
+  } finally { RAMP_ON=ramp; carRampUse=crU; camPivot=null; setVP(0,0,W,H); }
+}
+/* тяга по свободному месту главного меню крутит машину: оверлей прозрачен для указателя, события
+   приходят на канвас раньше орбиты камеры */
+function showroomPtr(e, kind){
+  const S=showroom;
+  if(kind==='down'){ S.drag=e.pointerId; S.lx=e.clientX; S.lt=performance.now(); S.vel=0;
+    try{ canvas.setPointerCapture(e.pointerId); }catch(err){} return; }
+  if(S.drag!==e.pointerId) return;
+  if(kind==='move'){
+    const now=performance.now(), dx=e.clientX-S.lx, dtm=Math.max(1, now-S.lt);
+    const dyaw=-dx*0.0085;
+    S.yaw=angNorm(S.yaw+dyaw); S.vel=lerp(S.vel, dyaw/(dtm/1000), 0.5);
+    S.lx=e.clientX; S.lt=now;
+    if(!S.dragged && Math.abs(dx)>0){ S.dragged=true; const h=ovCard.querySelector('.mm-drag'); if(h) h.classList.add('off'); }
+    return; }
+  S.drag=null; S.holdT=SHOW_HOLD;
+  if(performance.now()-S.lt>80) S.vel=0;
+  S.vel=clamp(S.vel, -rad(540), rad(540));
+  try{ canvas.releasePointerCapture(e.pointerId); }catch(err){}
+}
 function render(dt){
+  if(showroomOn()){ drawShowroom(dt); return; }
   setVP(0,0,W,H);
   carRampSync();
   decDrawn=0;
@@ -11180,7 +11400,7 @@ async function authStart(provider){
     if(b.dataset.act==='auth:'+provider) b.classList.add('busy'); });
   const nonce=b64url(crypto.getRandomValues(new Uint8Array(32)));
   const mode=authMode();
-  const back=ovCard.innerHTML, backOpen=ovEl.style.display!=='none';
+  const back=ovSnap(), backOpen=ovEl.style.display!=='none';
   try{ sessionStorage.setItem('pz_nonce', nonce); sessionStorage.setItem('pz_ret', JSON.stringify({li:game.li})); }catch(e){}
   acctNote='';
   track('auth_start', {provider:provider, mode:mode});
@@ -11227,7 +11447,7 @@ async function authPollTick(){
 function authWaitEnd(){
   const w=authWait; if(!w) return;
   clearTimeout(w.timer); authWait=null;
-  if(w.backOpen) showOv(w.back); else hideOv();
+  if(w.backOpen) ovRestore(w.back); else hideOv();
 }
 /* игрок вернулся из вкладки входа — спросить сразу, не дожидаясь двух секунд таймера */
 document.addEventListener('visibilitychange', ()=>{
@@ -11277,12 +11497,12 @@ async function authDelete(){
   if(r.status!==200){
     console.warn('[auth] удаление аккаунта не прошло: '+r.status);
     acctNote='Удалить не получилось: нет связи с сервером. Попробуй позже.';
-    showOv(startHTML()); return; }
+    menuGo('profile', null, (acctBack && acctBack.from) || 'main'); return; }
   console.info('[auth] аккаунт удалён');
   track('account_delete', {});
   authDrop('');
   acctNote='Аккаунт удалён. Прогресс на этом устройстве остался.';
-  showOv(startHTML());
+  menuGo('profile', null, (acctBack && acctBack.from) || 'main');
 }
 async function authMe(){
   let r;
@@ -11310,7 +11530,7 @@ async function authBoot(){
   /* уровень, с которого уходили на вход: грузится за стартовым экраном, «Поехали» продолжит его */
   if(ok && ret && ret.li>0 && ret.li<LEVELS.length && !levelLocked(ret.li)){
     loadLevel(ret.li);
-    showOv(startHTML()); }
+    menuGo('main'); }
 }
 
 /* синк прогресса: слияние делает сервер (server/account.py merge), клиент отдаёт свой
@@ -11369,14 +11589,6 @@ function acctLineHTML(){
     +' · <button data-act="auth-delete" class="linkbtn">Удалить аккаунт</button></p>';
 }
 function acctNoteHTML(){ return acctNote ? '<p class="acctnote">'+esc(acctNote)+'</p>' : ''; }
-function acctStartHTML(){
-  if(!AUTH_ON) return '';
-  return acctNoteHTML() + (acct ? acctLineHTML() : acctBtnsHTML('Войди, и прогресс будет на телефоне и на компьютере.'));
-}
-function acctPickHTML(){
-  if(!AUTH_ON) return '';
-  return acctNoteHTML() + (acct ? acctLineHTML() : acctBtnsHTML('Войди, чтобы прогресс не потерялся при смене устройства.'));
-}
 /* после первой победы гостя — один раз и больше никогда: напоминание на каждом экране итогов
    превратилось бы в рекламу поверх результата */
 function acctNudgeHTML(){
@@ -11393,8 +11605,7 @@ function acctDeleteHTML(){
 /* открытый экран показывает состояние входа — перерисовать его, если он сейчас на экране */
 function acctRerender(){
   if(ovEl.style.display==='none' || authWait) return;
-  if(ovCard.querySelector('.lvgrid')) showOv(levelPickHTML());
-  else if(ovCard.querySelector('[data-act="start"]')) showOv(startHTML());
+  if(menu.scr) menuGo(menu.scr, menu.tab, menu.from);
   else if(ovCard.querySelector('.paywall')){
     if(paywallLi>=0 && !levelLocked(paywallLi)) openLevel(paywallLi,'unlock'); else showOv(acctNoteHTML()+paywallHTML(paywallLi)); }
   else {
@@ -11525,7 +11736,6 @@ function offerGo(){
 
 /* ---------- оверлеи ---------- */
 const ovEl=$('overlay'), ovCard=$('ovCard');
-let helpOpen=false;
 
 /* ---------- обратная связь ---------- */
 /* Отчёт уходит на свой сервер, а тот уже в Telegram. Токена бота в странице нет и быть
@@ -11627,7 +11837,7 @@ function openFeedback(src){
 function fbClose(){
   /* при game.done физика заморожена: закрыть форму в пустоту — оставить игрока без выхода */
   if(game.done){ doAct('resume'); return; }
-  if(fbBack==='start'){ showOv(startHTML()); return; }
+  if(fbBack==='start'){ menuGo('main'); return; }
   hideOv();
 }
 function fbSetKind(k){
@@ -11696,12 +11906,17 @@ function fbSend(){
     });
 }
 
-function showOv(html){ ovCard.innerHTML=html; ovEl.style.display='flex'; paused=true;
+/* lay — раскладка: card (карточка по центру — итоги, бриф, отзыв), main (главное меню без карточки),
+   panel (раздел меню панелью слева), pause. Вызов без lay — не экран меню */
+function showOv(html, lay){ ovCard.innerHTML=html; ovEl.style.display='flex'; paused=true;
+  ovEl.className='lay-'+(lay||'card');
+  if(!lay) menu.scr=null;
   document.body.classList.add('ov');
   for(const k in input) input[k]=false;
   ovCard.querySelectorAll('button').forEach(b=> b.onclick=()=>doAct(b.dataset.act));
-  ovCard.querySelectorAll('.lvcard').forEach(c=> c.onclick=()=> openLevel(+c.dataset.lvl,'pick')); }
-function showLevelPick(){ showOv(levelPickHTML()); }
+  ovCard.querySelectorAll('.lvcard').forEach(c=> c.onclick=()=> openLevel(+c.dataset.lvl,'pick'));
+  menuSync(); }
+function showLevelPick(){ menuGo('levels'); }
 /* Вход игрока в уровень. loadLevel остаётся сырым: его зовут старт страницы, редактор, смена
    потока и режима экзамена и все гейты tools/ — воронка (и замок пейволла) живут здесь.
    Экзамен открывает свой бриф маршрута, и его не закрываем: раньше вызывающий hideOv() гасил
@@ -11712,23 +11927,57 @@ function openLevel(i, via){
   if(!offerWhy){ offerShow(i, via); return; }
   if(AN_DEBUG && i>=OFFER.from && i<=OFFER.to) console.info('[pay] предложение не показано: '+offerWhy);
   loadLevel(i);
-  if(!level.def.examRoute) hideOv();
+  menu.root=null;
+  lastSave();
+  runCount();
+  if(!level.def.examRoute){ hideOv(); firstRunChain(); }
+  else menuSync();
   anLevelStart(via);
 }
-function hideOv(){ ovEl.style.display='none'; paused=false; helpOpen=false;
-  document.body.classList.remove('ov'); }
+function hideOv(){ ovEl.style.display='none'; paused=false;
+  menu.scr=null; menu.root=null;
+  document.body.classList.remove('ov'); menuSync(); }
 function doAct(a){
   if(!a) return;
   /* уровень уже пройден или провален: закрывать оверлей нельзя — физика стоит на game.done */
   if(a==='resume' && game.done){
     showOv(exam&&exam.done ? (exam.failed?examFailHTML():examPassHTML())
          : (attempt&&attempt.failed) ? levelFailHTML() : winHTML()); return; }
-  if(a==='pick'){ helpOpen=false; showLevelPick(); return; }
+  if(a==='pick'){ showLevelPick(); return; }
+  if(a==='back'){ menuBack(); return; }
+  if(a.indexOf('menu:')===0){ menuGo(a.slice(5)); return; }
+  if(a.indexOf('tab:')===0){ if(menu.scr) menuGo(menu.scr, a.slice(4), menu.from); return; }
+  if(a.indexOf('set:')===0){ const p=a.split(':'); setApply(p[1], p[2]);
+    if(menu.scr==='settings') menuGo('settings', menu.tab, menu.from); return; }
+  if(a==='mirreset'){ applyMirPreset(0); if(menu.scr==='settings') menuGo('settings', menu.tab, menu.from); return; }
+  if(a==='play'){ const pt=playTarget();
+    console.info('[menu] играть →', pt.i+1, LEVELS[pt.i].name, '·', pt.why);
+    /* экзамен всегда через бриф маршрута: продолжить его «Поехали» без брифа — значит ехать вслепую */
+    if(pt.i===game.li && !game.done && !level.def.examRoute){
+      hideOv(); lastSave(); if(runCount()) anLevelStart('play'); firstRunChain(); }
+    else openLevel(pt.i,'play');
+    return; }
+  if(a==='pause'){ if(!game.done) menuGo('pause'); return; }
+  if(a==='restart'){ restart(); hideOv(); return; }
+  if(a==='mainmenu'){ if(demo) stopDemo(); menuGo('main'); return; }
+  if(a==='editor'){ openEditor(editorSource()); return; }
+  if(a==='tour'){
+    try{ for(const k of ['trainer_hint','trainer_seen','trainer_drive']) localStorage.removeItem(k); }catch(e){}
+    console.info('[menu] обучение сброшено');
+    if(menu.root==='main'){ menu.note='Покажем, когда начнёшь уровень.'; menuGo('help', menu.tab, menu.from); }
+    else { hideOv(); firstRunChain(); }
+    return; }
+  if(a==='hint-guides'){ hideOv();
+    adsRewarded(()=>{ opt.guides=true;
+      toast('Идеальная траектория включена — смотри зелёно-оранжевую линию', 3.5); });
+    return; }
+  if(a==='exam-abort'){ showOv(examAbortHTML()); return; }
+  if(a==='exam-start'){ const ei=examLevelIdx(); if(ei>=0) openLevel(ei,'pick'); return; }
   if(a.indexOf('auth:')===0){ authStart(a.slice(5)); return; }
   if(a==='auth-cancel'){ const w=authWait; authWaitEnd(); if(w) console.info('[auth] вход отменён игроком'); return; }
   if(a==='auth-logout'){ authLogout(); return; }
-  if(a==='auth-delete'){ acctBack=ovCard.innerHTML; showOv(acctDeleteHTML()); return; }
-  if(a==='auth-delete-no'){ showOv(acctBack||startHTML()); return; }
+  if(a==='auth-delete'){ acctBack=ovSnap(); showOv(acctDeleteHTML()); return; }
+  if(a==='auth-delete-no'){ if(acctBack) ovRestore(acctBack); else menuGo('profile'); return; }
   if(a==='auth-delete-yes'){ authDelete(); return; }
   if(a==='pay-restore'){ payRestore(); return; }
   if(a==='pay-buy'){ payStart(PAYWALL.product); return; }
@@ -11738,14 +11987,18 @@ function doAct(a){
   /* «прервать» обязано выводить ИЗ экзамена. Раньше кнопка вела в 'again': маршрут
      начинался заново, игрок оставался в экзамене — со стороны это выглядело как
      «нажал прервать, ничего не произошло» */
-  if(a==='exam-exit'){ helpOpen=false; restart(); showLevelPick(); return; }
+  if(a==='exam-exit'){ restart(); menu.root='main'; menuGo('exam', null, 'main'); return; }
   if(a && a.indexOf('train:')===0){ openLevel(+a.slice(6),'train'); return; }
-  if(a==='help'){ helpOpen=true; showOv(helpHTML()); return; }
-  if(a==='task'){ helpOpen=false; showTask(); return; }
-  if(a==='demo'){ helpOpen=false; hideOv(); startDemo(); return; }
-  if(a==='touch'){ setTouch(!MOB); showOv(helpOpen? helpHTML() : startHTML()); return; }
+  if(a==='help'){ helpKey(); return; }
+  if(a==='task'){ showTask(); return; }
+  if(a==='demo'){ hideOv(); startDemo(); return; }
+  if(a.indexOf('exammode:')===0){
+    /* при загруженном экзамене setExamMode перезагружает уровень, а loadLevel открывает бриф поверх раздела */
+    const back = menu.scr==='exam' ? menu.from : null;
+    setExamMode(a.slice(9));
+    if(back!==null) menuGo('exam', null, back); return; }
   if(a==='exammode'){ setExamMode(examTrain()?'real':'train');
-    showOv(level.def.examRoute ? examBriefHTML() : (helpOpen? helpHTML() : startHTML())); return; }
+    if(level.def.examRoute) showOv(examBriefHTML()); else menuGo('main'); return; }
   if(a==='brief'){ hideOv(); return; }
   if(a==='route'){ if(examActive()) showOv(examBriefHTML()); return; }
   if(a && a.indexOf('feedback')===0){
@@ -11755,22 +12008,14 @@ function doAct(a){
   if(a==='fb-close'){ fbClose(); return; }
   if(a==='start'||a==='resume'){ hideOv();
     /* счётчик запусков: первые 3 «почему» в карточке раскрыто само, дальше — по «?» */
-    if(a==='start' && !game.runCounted){ game.runCounted=true; runsCnt++;
-      try{ localStorage.setItem('trainer_runs',String(runsCnt)); }catch(e){}
-      anLevelStart('start'); }
-    let seen=true, seenOnb=true;
-    try{ seen = localStorage.getItem('trainer_hint')==='1';
-         seenOnb = localStorage.getItem('trainer_seen')==='1'; }catch(e){}
-    if(MOB && !seen) setTimeout(showTouchHelp,180);
-    /* на телефоне тур HUD идёт после туториала кнопок (цепочка в closeTouchHelp) */
-    else if(!seenOnb) setTimeout(showOnboard,240);
-    else maybeStartTut();
+    if(a==='start'){ lastSave(); if(runCount()) anLevelStart('start'); }
+    firstRunChain();
   }
   else if(a==='next'){ adsInterstitial('next'); openLevel(game.li+1,'next'); }
   else if(a==='again'){ adsInterstitial('again'); restart(); hideOv(); anLevelStart('again'); }
 }
 function ctrlHTML(){ return ''
-  +'<h2>Управление</h2><div class="grid2"><ul>'
+  +'<div class="grid2"><ul>'
   +'<li><span class="kbd">W</span><span class="kbd">↑</span> газ (в сторону селектора)</li>'
   +'<li><span class="kbd">S</span><span class="kbd">↓</span> тормоз</li>'
   +'<li><span class="kbd">A</span><span class="kbd">←</span> крутить руль влево</li>'
@@ -11795,117 +12040,127 @@ function ctrlHTML(){ return ''
   +'<li><span class="kbd">L</span> выбрать уровень · <span class="kbd">1</span>…<span class="kbd">9</span> первые девять</li>'
   +'<li><span class="kbd">K</span> редактор своей площадки</li>'
   +'<li><span class="kbd">Y</span> завершить уровень, когда стоишь в зоне</li>'
-  +'<li><span class="kbd">R</span> заново · <span class="kbd">M</span> звук · <span class="kbd">H</span> справка</li>'
+  +'<li><span class="kbd">R</span> заново · <span class="kbd">M</span> звук · <span class="kbd">H</span> помощь</li>'
+  +'<li><span class="kbd">Esc</span> пауза и меню</li>'
   +'</ul></div>'; }
-/* уровней больше девяти, цифрами уже не покрыть — отдельный экран с карточками */
-function levelPickHTML(){
-  let s='<h1>Выбор уровня</h1>'+acctPickHTML()+readinessHTML()+'<div class="lvgrid">';
-  let drillHead=false, cityHead=false;
+/* уровни по жанрам: в одной сетке из 32 карточек дриллы на габариты и город терялись среди дворовых
+   манёвров. Карточки всех вкладок лежат в разметке, видна одна — гейты и вход по .lvcard[data-lvl]
+   находят любую */
+const LEVEL_TABS=[['yard','Двор'],['drill','Габариты'],['pad','Площадка'],['city','Город и экзамен'],['own','Свои ★']];
+const LEVEL_TAB_NOTE={
+  yard:'Параллельная парковка, карманы, развороты и выезды во дворе.',
+  drill:'Показание нужной стороны скрыто: остановись, где считаешь нужным, — и увидишь ошибку в сантиметрах. Попытка одна, повтор — R.',
+  pad:'Упражнения площадки экзамена: эстакада, задний ход по коридору, остановка у тротуара.',
+  city:'Грубая ошибка — столкновение, непропуск, красный — отменяет попытку, как на экзамене.',
+  own:'Твои площадки из редактора, до пяти.' };
+function levelTab(i){
+  const l=LEVELS[i];
+  if(!l) return 'yard';
+  if(l.custom) return 'own';
+  if(l.drill) return 'drill';
+  if(l.pad) return 'pad';
+  if(l.strict || l.examRoute) return 'city';
+  return 'yard';
+}
+function levelPickHTML(tab){
+  tab = tab || levelTab(game.li);
   /* «слабое место» подсвечивается только когда есть с чем сравнивать (при 0 % горели 12 карточек из 32)
-     и только у трёх уровней, которые названы в строке готовности: весь хвост слабых — это 13–15 карточек,
+     и только у трёх уровней, которые названы в разделе «Экзамен»: весь хвост слабых — это 13–15 карточек,
      и выделение переставало выделять */
   const rd=examReadiness(), weakSet=new Set(rd.pct>0?rd.weak.slice(0,3):[]);
+  const groups={};
   LEVELS.forEach((l,i)=>{
-    /* упражнения на габариты — другой жанр: там тренируется не траектория, а глазомер.
-       В общей сетке из 19 карточек они теряются, поэтому идут отдельным блоком */
-    if(l.drill && !drillHead){ drillHead=true;
-      s+='</div><h2>Чувство габаритов</h2>'
-        +'<p style="color:#93a7bd;font-size:12.5px;margin:-6px 0 8px">'
-        +'Показание нужной стороны скрыто: остановись там, где считаешь нужным, — '
-        +'и увидишь ошибку в сантиметрах. Попытка одна, повтор — R.</p><div class="lvgrid">'; }
-    if(l.strict && !cityHead){ cityHead=true;
-      s+='</div><h2>Город и экзамен</h2>'
-        +'<p style="color:#93a7bd;font-size:12.5px;margin:-6px 0 8px">'
-        +'Грубая ошибка — столкновение, непропуск, красный — отменяет попытку, как на экзамене.</p><div class="lvgrid">'; }
     const nm=l.custom ? l.name.replace(/^★\s*/,'') : (l.name.split('· ')[1] || l.name);
-    const pg=progOf(l.name), done=progPassed(l.name), locked=levelLocked(i);
-    s+='<button type="button" class="lvcard'+(i===game.li?' on':'')+(done?' pass':'')
+    const pg=progOf(l.name), done=progPassed(l.name), locked=levelLocked(i), g=levelTab(i);
+    groups[g]=(groups[g]||'')+'<button type="button" class="lvcard'+(i===game.li?' on':'')+(done?' pass':'')
       +(weakSet.has(i)?' weak':'')+(locked?' locked':'')+'" data-lvl="'+i+'">'
       +'<span class="n">'+(l.custom?'★':(i+1))+(done?' ✓':'')+(locked?' 🔒':'')+'</span>'
       +'<span class="t">'+nm+'</span>'
       +'<span class="d">'
       +(locked?'в курсе подготовки к экзамену':pg?progLine(l.name):esc(l.task||''))+'</span></button>';
   });
-  s+='</div><p style="margin-top:10px;color:#93a7bd;font-size:12.5px">'
-    +(MOB?'':'Первые девять — ещё и клавишами 1…9. ')+'★ — твои площадки из редактора.</p>'
-    +'<button data-act="resume" class="ghost">Назад</button>';
-  return s;
+  let s=menuHead('Уровни', LEVEL_TABS, tab)+'<div class="mbody"><p class="mnote">'+LEVEL_TAB_NOTE[tab]+'</p>';
+  for(const [k] of LEVEL_TABS) s+='<div class="lvgrid" data-tab="'+k+'"'+(k===tab?'':' hidden')+'>'+(groups[k]||'')+'</div>';
+  if(tab==='own'){
+    if(!groups.own) s+='<p class="mnote">Своих площадок пока нет. Собери двор в редакторе — он появится здесь.</p>';
+    s+='<button type="button" data-act="editor">Редактор площадок'+(MOB?'':' (K)')+'</button>';
+  }
+  if(tab==='yard' && !MOB) s+='<p class="mnote">Первые девять уровней открываются и клавишами 1…9.</p>';
+  return s+'</div>';
 }
 function touchCtrlHTML(){ return ''
-  +'<h2>Управление на экране</h2><ul>'
+  +'<ul>'
   +'<li><b>◀ ▶</b> слева — крутить руль, <b>0</b> — вернуть руль в ноль</li>'
   +'<li><b>ГАЗ</b> и <b>ТОРМОЗ</b> справа; из P выходи, держа ТОРМОЗ</li>'
   +'<li><b>P R N D</b> внизу — тап по букве, коробка как на автомате: в D и R машина ползёт без газа</li>'
   +'<li>Руль на месте идёт до упора ~'+LOCK_STILL_S+' с, в качении ~'+LOCK_ROLL_S+' с — крути его на ходу</li>'
-  +'<li><b>≡</b> — камеры, зеркала, подсказки, выбор уровня</li>'
+  +'<li><b>❚❚</b> справа вверху — пауза: задание, настройки, уровни</li>'
   +'<li>Провести пальцем по экрану — осмотреться, щипок двумя пальцами — приблизить</li>'
   +'</ul>'; }
+const LOGO_SVG='<svg viewBox="0 0 256 128" aria-hidden="true"><g fill="none"><rect x="10.5" y="24.5" width="235" height="79" rx="30" stroke="#fff" stroke-width="13"/><path d="M42 97H72L118 50H110Z" fill="#fff"/><path d="M214 97H184L138 50H146Z" fill="#fff"/><path d="M128 56 151 92 128 80 105 92Z" fill="#ffd63c"/></g></svg>';
+const ICON_GEAR='<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
+/* «Играть» ведёт туда, где игрок остановился: последний открытый уровень, пока он не пройден, иначе
+   первый непройденный после него. Хранится имя, а не номер — номера съезжают, когда вставляют уровни */
+function lastSave(){ try{ localStorage.setItem('trainer_last', LEVELS[game.li].name); }catch(e){} }
+function playTarget(){
+  let last=null;
+  try{ last=localStorage.getItem('trainer_last'); }catch(e){}
+  const li = last ? LEVELS.findIndex(l=>l.name===last) : -1;
+  if(li<0) return {i:0, why:last?'прошлого уровня больше нет':'первый запуск'};
+  if(!progPassed(LEVELS[li].name)) return {i:li, why:'прошлый уровень не пройден'};
+  for(let k=1;k<LEVELS.length;k++){
+    const j=(li+k)%LEVELS.length, l=LEVELS[j];
+    if(!l.custom && !progPassed(l.name) && !levelLocked(j)) return {i:j, why:'первый непройденный после прошлого'};
+  }
+  return {i:(li+1)%LEVELS.length, why:'всё пройдено — следующий по порядку'};
+}
+/* главный экран: одна громкая кнопка и пять разделов, без вводного текста — управление объясняют
+   обучение первого запуска и «Помощь». Стартовая карточка со стеной текста путала новичка */
 function startHTML(){
-  if(MOB) return ''
-    +'<svg viewBox="0 0 256 128" width="104" height="52" aria-hidden="true" style="display:block;margin:0 0 10px"><g fill="none"><rect x="10.5" y="24.5" width="235" height="79" rx="30" stroke="#fff" stroke-width="13"/><path d="M42 97H72L118 50H110Z" fill="#fff"/><path d="M214 97H184L138 50H146Z" fill="#fff"/><path d="M128 56 151 92 128 80 105 92Z" fill="#ffd63c"/></g></svg>'
-    +'<h1>По зеркалам</h1>'
-    +'<p style="margin:-4px 0 10px;color:#93a7bd">тренажёр манёвров и подготовки к экзамену</p>'
-    +'<button data-act="start">Поехали</button>'
-    +acctStartHTML()
-    +'<p>Держи телефон горизонтально. Карточка сверху ведёт манёвр: действие + до какого показания. '
-    +'Оранжевые стойки показывают, где реально габариты машины. '
-    +'Линии траекторий (дуги колёс, путь демо) — в меню, если захочется подсмотреть.</p>'
-    + touchCtrlHTML()
-    +'<button data-act="pick" class="ghost">Выбрать уровень</button>'
-  +'<button data-act="touch" class="ghost">'+(MOB?'Выключить экранное управление':'Включить экранное управление')+'</button>'
-    +'<button data-act="feedback:start" class="ghost">✉︎ Написать об ошибке или идее</button>';
-  /* стена текста про Аккермана на старте отпугивала до первой поездки:
-     4 буллета о главном, физика и полный список клавиш — в справке (H) */
-  return ''
-  +'<svg viewBox="0 0 256 128" width="132" height="66" aria-hidden="true" style="display:block;margin:0 0 10px"><g fill="none"><rect x="10.5" y="24.5" width="235" height="79" rx="30" stroke="#fff" stroke-width="13"/><path d="M42 97H72L118 50H110Z" fill="#fff"/><path d="M214 97H184L138 50H146Z" fill="#fff"/><path d="M128 56 151 92 128 80 105 92Z" fill="#ffd63c"/></g></svg>'
-  +'<h1>По зеркалам</h1>'
-  +'<p style="margin:-4px 0 10px;color:#93a7bd">тренажёр манёвров и подготовки к экзамену</p>'
-  +'<button data-act="start">Поехали</button>'
-  +acctStartHTML()
-  +readinessHTML()
-  +'<ul class="startlist" style="text-align:left">'
-  +'<li><b>Едешь так:</b> <span class="kbd">W</span> газ, <span class="kbd">S</span>/пробел тормоз, '
-  +'<span class="kbd">A</span>/<span class="kbd">D</span> руль (сам не возвращается, '
-  +'<span class="kbd">X</span> — в ноль).</li>'
-  +'<li><b>Коробка-автомат:</b> <span class="kbd">Enter</span> — D ⇄ R, из P выходи с зажатым тормозом.</li>'
-  +'<li><b>Карточка сверху ведёт манёвр:</b> действие + до какого показания. «?» объяснит почему.</li>'
-  +'<li><b>Запутался:</b> <span class="kbd">H</span> — справка с физикой и всеми клавишами, '
-  +'кнопка «демонстрация» покажет манёвр сама.</li>'
-  +'</ul>'
-  +'<button data-act="pick" class="ghost">Выбрать уровень (L)</button>'
-  +'<button data-act="help" class="ghost">Как это устроено (H)</button>'
-  +'<button data-act="touch" class="ghost">'+(MOB?'Выключить экранное управление':'Включить экранное управление')+'</button>'
-  +'<button data-act="feedback:start" class="ghost">✉︎ Написать об ошибке или идее</button>'; }
-function helpHTML(){
-  if(MOB) return '<h1>Справка</h1>'
-    +'<button data-act="resume">Продолжить</button>'
-    +'<p>Линии траекторий включаются в меню («Линии траекторий»): жёлтые дуги — путь <b>задних</b> колёс '
-    +'(срезают внутрь поворота), красные — углы кузова, зелёно-оранжевая линия — как едет демонстрация. '
-    +'Белый крестик — центр поворота, он всегда на линии задней оси.</p>'
-    + touchCtrlHTML()
-    +'<button data-act="pick" class="ghost">Выбрать уровень</button>'
-  +'<button data-act="touch" class="ghost">'+(MOB?'Выключить экранное управление':'Включить экранное управление')+'</button>'
-    +'<button data-act="task" class="ghost">Как парковаться на этом уровне</button>'
-    +'<button data-act="resume">Продолжить</button>';
-  return '<h1>Справка</h1>'
-  +'<p>Клавиша <span class="kbd">G</span> включает линии траекторий: жёлтые дуги — куда пойдут '
-  +'<b>задние</b> колёса (они всегда срезают внутрь поворота), красные пунктиры — углы кузова, '
-  +'зелёно-оранжевая линия — путь демонстрации. <span class="kbd">T</span> — след колёс. '
-  +'Белый крестик — центр поворота: он всегда лежит на линии задней оси.</p>'
-  +'<h2>Как устроена физика</h2>'
-  +'<p>Честная кинематика: рулевая трапеция Аккермана, машина поворачивает вокруг центра задней оси, '
-  +'минимальный радиус 3,8 м, габаритный — 5,9 м. Три зеркала — настоящие: отдельный проход камеры '
-  +'с зеркальным отражением. <b>Коробка как настоящая АКПП:</b> в D и R машина ползёт без газа, '
-  +'в P трансмиссия заблокирована, из P выходят только с зажатым тормозом. Клавиши «,» и «.» двигают селектор '
-  +'по одной позиции, буквы P R N D в панели кликабельны. <b>Скорость руления зависит от движения:</b> '
-  +'на месте до упора ~'+LOCK_STILL_S+' с, в качении вдвое быстрее (~'+LOCK_ROLL_S+' с) — в тесноте крути руль на ходу. '
-  +'Выше 8 км/ч кастор сам плавно возвращает руль к нулю. Камера следует за машиной, '
-  +'но угол держит тот, что задал ты мышью.</p>'
-  + ctrlHTML()
-  +'<button data-act="pick" class="ghost">Выбрать уровень (L)</button>'
-  +'<button data-act="touch" class="ghost">'+(MOB?'Выключить экранное управление':'Включить экранное управление')+'</button>'
-  +'<button data-act="task" class="ghost">Как парковаться на этом уровне</button>'
-  +'<button data-act="resume">Продолжить</button>'; }
+  const pt=playTarget(), rd=examReadiness();
+  const who = acct ? (acct.name || AUTH_NAMES[acct.provider] || 'Профиль') : 'Гость';
+  return '<div class="mm">'
+    +'<div class="mm-top"><div class="mm-brand">'+LOGO_SVG+'<b>По зеркалам</b></div>'
+    +'<div class="mm-tools">'
+    +'<button type="button" class="mm-chip" data-act="menu:profile" aria-label="Профиль: '+esc(who)+'">'
+      +'<span class="av" aria-hidden="true">'+esc(who.slice(0,1).toUpperCase())+'</span>'
+      +'<span class="nm">'+esc(who)+'</span>'+(AUTH_ON && !acct ? '<span class="in">войти</span>' : '')+'</button>'
+    +'<button type="button" class="mm-icon" data-act="menu:settings" aria-label="Настройки" title="Настройки">'+ICON_GEAR+'</button>'
+    +'</div></div>'
+    +'<nav class="mm-col" aria-label="Главное меню">'
+    +'<button type="button" class="mm-play" data-act="play" data-focus><b>Играть</b><span>'+LEVELS[pt.i].name+'</span></button>'
+    +'<button type="button" class="mm-item" data-act="menu:levels">Уровни</button>'
+    +'<button type="button" class="mm-item" data-act="menu:exam">Экзамен<span>готовность '+rd.pct+'&nbsp;%</span></button>'
+    +'<button type="button" class="mm-item" data-act="menu:profile">Профиль</button>'
+    +'<button type="button" class="mm-item" data-act="menu:settings">Настройки</button>'
+    +'<button type="button" class="mm-item" data-act="menu:help">Помощь</button>'
+    +'</nav>'
+    +(acctNote ? '<p class="mm-note acctnote">'+esc(acctNote)+'</p>' : '')
+    +'<div class="mm-foot"><button type="button" class="linkbtn" data-act="feedback:start">✉︎ Написать нам</button></div>'
+    +'<p class="mm-drag'+(showroom.dragged?' off':'')+'" aria-hidden="true">↻ потяни, чтобы повернуть машину</p>'
+    +'</div>';
+}
+const HELP_TABS=[['ctrl','Управление'],['how','Как устроено']];
+function menuHelpHTML(tab){
+  let s=menuHead('Помощь', HELP_TABS, tab)+'<div class="mbody">';
+  if(tab==='how') s+='<h2>Линии на асфальте</h2>'
+    +'<p>'+(MOB?'Включаются в настройках, вкладка «Подсказки»':'Клавиша <span class="kbd">G</span> или настройки, вкладка «Подсказки»')
+    +': жёлтые дуги — куда пойдут <b>задние</b> колёса (они всегда срезают внутрь поворота), красные пунктиры — '
+    +'углы кузова, зелёно-оранжевая линия — путь демонстрации. Белый крестик — центр поворота: он всегда лежит '
+    +'на линии задней оси.</p>'
+    +'<h2>Как устроена физика</h2>'
+    +'<p>Честная кинематика: рулевая трапеция Аккермана, машина поворачивает вокруг центра задней оси, '
+    +'минимальный радиус 3,8 м, габаритный — 5,9 м. Три зеркала — настоящие: отдельный проход камеры '
+    +'с зеркальным отражением. <b>Коробка как настоящая АКПП:</b> в D и R машина ползёт без газа, '
+    +'в P трансмиссия заблокирована, из P выходят только с зажатым тормозом. <b>Скорость руления зависит от движения:</b> '
+    +'на месте до упора ~'+LOCK_STILL_S+' с, в качении вдвое быстрее (~'+LOCK_ROLL_S+' с) — в тесноте крути руль на ходу. '
+    +'Выше 8 км/ч кастор сам плавно возвращает руль к нулю. Камера следует за машиной, '
+    +'но угол держит тот, что задал ты.</p>';
+  else s+=(MOB ? touchCtrlHTML() : ctrlHTML());
+  s+='<div class="mrow"><button type="button" class="ghost" data-act="tour">Показать обучение снова</button></div>';
+  if(menu.note) s+='<p class="mnote">'+menu.note+'</p>';
+  return s+'</div>';
+}
 function winHTML(){
   const p=game.prog, pr=precDef();
   /* у упражнения на габариты мерило — сантиметры, а не секунды: хвалить за время там,
@@ -11953,11 +12208,270 @@ function winActsHTML(){
     +'<span class="nextname">'+(nx.custom?'★ ':'')+esc(nx.name)+'</span></span></div>'
     +'<div class="acctslot">'+acctNudgeHTML()+'</div>'
     +'<p class="winfb"><button data-act="feedback:win" class="linkbtn">✉︎ Что-то не так — написать</button></p>'; }
-function toggleHelp(){
-  if(helpOpen){ hideOv(); return; }
-  if(!paused){ showOv(helpHTML()); helpOpen=true; return; }
-  /* экран победы не закрываем: игра стоит на game.done и без оверлея остаётся без выхода */
-  if(!game.done) hideOv();
+/* ---------- меню: главный экран, разделы, пауза ---------- */
+/* Экран меню — HTML-строка в том же #overlay: на showOv и doAct держатся инструменты tools/.
+   root='main' — игрок в главном меню (до входа в уровень или после «Главное меню»): за оверлеем тогда
+   не уровень, а машина на подиуме (body.menu). from — куда ведёт «Назад» из раздела: main, pause,
+   game (раздел открыт клавишей посреди уровня) или done (с итогов уровня, их держит game.done) */
+const menu={scr:null, tab:null, from:null, root:null, note:''};
+const MENU_SECTIONS={levels:'Уровни', exam:'Экзамен', profile:'Профиль', settings:'Настройки', help:'Помощь'};
+function menuSync(){
+  document.body.classList.toggle('menu', menu.root==='main' && ovEl.style.display!=='none');
+}
+function menuTabDefault(scr){
+  return scr==='levels' ? levelTab(game.li) : scr==='settings' ? 'screen' : scr==='help' ? 'ctrl' : null;
+}
+function menuGo(scr, tab, from){
+  if(scr==='main'){ menu.root='main'; from=null; }
+  else if(scr==='pause'){ menu.root=null; from=null; }
+  else if(from===undefined)
+    from = (menu.scr==='main' || menu.scr==='pause') ? menu.scr
+         : MENU_SECTIONS[menu.scr] ? menu.from
+         : game.done ? 'done' : menu.root==='main' ? 'main' : 'game';
+  tab = tab || menuTabDefault(scr);
+  if(scr!==menu.scr) menu.note='';
+  /* перерисовка того же экрана (переключатель, вкладка входа) не должна сбрасывать прокрутку и фокус */
+  const same = scr===menu.scr && tab===menu.tab, body=ovCard.querySelector('.mbody');
+  const top = same && body ? body.scrollTop : 0;
+  const ae=document.activeElement, focusAct = same && ae && ovCard.contains(ae) ? ae.dataset.act : null;
+  const html = scr==='main' ? startHTML() : scr==='pause' ? pauseHTML()
+    : scr==='levels' ? levelPickHTML(tab) : scr==='exam' ? menuExamHTML()
+    : scr==='profile' ? menuProfileHTML() : scr==='settings' ? menuSettingsHTML(tab) : menuHelpHTML(tab);
+  showOv(html, scr==='main' ? 'main' : scr==='pause' ? 'pause' : 'panel');
+  menu.scr=scr; menu.tab=tab; menu.from=from; menuSync();
+  const nb=ovCard.querySelector('.mbody'); if(nb && top) nb.scrollTop=top;
+  /* фокус — для клавиатуры: на телефоне клавиатуры нет, а рамка фокуса после тапа выглядит как залипшая кнопка */
+  const f=(focusAct && ovCard.querySelector('[data-act="'+focusAct+'"]')) || ovCard.querySelector('[data-focus]');
+  if(f && !MOB) try{ f.focus({preventScroll:true}); }catch(e){}
+  if(!same) console.info('[menu] экран', scr+(tab?':'+tab:''), from ? '← '+from : '');
+}
+function menuBack(){
+  if(menu.scr==='pause'){ doAct('resume'); return; }
+  if(!MENU_SECTIONS[menu.scr]) return;
+  const f=menu.from;
+  if(f==='main' || f==='pause') menuGo(f);
+  else if(f==='done' && game.done) doAct('resume');
+  else if(menu.root==='main') menuGo('main');
+  else doAct('resume');
+}
+/* снимок открытого экрана: вход через провайдера и окно удаления аккаунта возвращают туда, откуда
+   ушли. Экран меню собирается заново — вход мог поменять то, что на нём написано */
+function ovSnap(){
+  return { html:ovCard.innerHTML, lay:ovEl.className.replace('lay-',''), scr:menu.scr, tab:menu.tab, from:menu.from };
+}
+function ovRestore(s){
+  if(!s) return;
+  if(s.scr) menuGo(s.scr, s.tab, s.from); else showOv(s.html, s.lay==='card' ? undefined : s.lay);
+}
+function menuHead(title, tabs, cur){
+  return '<div class="mhead"><button type="button" class="mback" data-act="back" aria-label="Назад"'
+    +(tabs?'':' data-focus')+'>←</button><h1>'+title+'</h1></div>'
+    +(tabs ? '<div class="mtabs" role="tablist" aria-label="'+title+'">'+tabs.map(t=>
+      '<button type="button" role="tab" aria-selected="'+(t[0]===cur)+'"'+(t[0]===cur?' class="on" data-focus':'')
+      +' data-act="tab:'+t[0]+'">'+t[1]+'</button>').join('')+'</div>' : '');
+}
+/* вход в уровень из меню: счётчик запусков (первые три — «почему» в карточке раскрыто само) и цепочка
+   первого запуска — туториал кнопок, тур по HUD, гайд трогания. Раньше их запускал только «Поехали» */
+function runCount(){
+  if(game.runCounted) return false;
+  game.runCounted=true; runsCnt++;
+  try{ localStorage.setItem('trainer_runs',String(runsCnt)); }catch(e){}
+  return true;
+}
+function firstRunChain(){
+  let seen=true, seenOnb=true;
+  try{ seen = localStorage.getItem('trainer_hint')==='1';
+       seenOnb = localStorage.getItem('trainer_seen')==='1'; }catch(e){}
+  if(MOB && !seen) setTimeout(showTouchHelp,180);
+  /* на телефоне тур HUD идёт после туториала кнопок (цепочка в closeTouchHelp) */
+  else if(!seenOnb) setTimeout(showOnboard,240);
+  else maybeStartTut();
+}
+function examLevelIdx(){ return LEVELS.findIndex(l=>l.examRoute); }
+function menuExamHTML(){
+  const rd=examReadiness(), er=examRuns()||{routes:0}, ei=examLevelIdx();
+  let s=menuHead('Экзамен')+'<div class="mbody">'
+    +'<div class="ptiles">'
+    +'<div class="ptile"><b>'+rd.pct+'&nbsp;%</b><span>готовность: чистые заезды по '+EXAM_SET.length+' упражнениям экзамена</span></div>'
+    +'<div class="ptile"><b>'+er.routes+' из 3</b><span>маршрутов сдано в настоящем режиме</span></div></div>';
+  if(er.routes>=3) s+='<p class="mok">Экзамен сдан в настоящем режиме на всех трёх маршрутах — ты готов.</p>';
+  else if(er.train) s+='<p class="mnote">Репетиций в тренировочном режиме: '+er.train+'.</p>';
+  if(rd.weak.length) s+='<h2>Сначала отработай</h2><div class="mrow">'
+    +rd.weak.slice(0,3).map(i=>'<button type="button" class="ghost" data-act="train:'+i+'">'+LEVELS[i].name+'</button>').join('')+'</div>';
+  s+='<h2>Режим</h2><div class="seg" role="group" aria-label="Режим экзамена">'
+    +[['train','тренировочный'],['real','настоящий']].map(([k,t])=>{ const on=(k==='real')!==examTrain();
+      return '<button type="button" aria-pressed="'+on+'"'+(on?' class="on"':'')+' data-act="exammode:'+k+'">'+t+'</button>'; }).join('')
+    +'</div><p class="mnote">'+(examTrain()
+      ? 'Подсказки, навигация и разбор ошибок на месте. В готовность не идёт.'
+      : 'Инспектор молчит, грубая ошибка валит попытку. Сдай так каждый из трёх маршрутов.')+'</p>';
+  if(ei>=0) s+='<button type="button" data-act="exam-start" data-focus>Начать экзамен</button>';
+  return s+'</div>';
+}
+/* профиль — то, что продукт правда считает: пройденные уровни, чистые заезды, готовность, точность в
+   сантиметрах и маршруты экзамена. Вход и выход живут здесь, а не строкой на каждом экране */
+function profStats(){
+  const a=progAll(); let passed=0, total=0, clean=0, best=null;
+  LEVELS.forEach(l=>{
+    if(l.custom || l.examRoute) return;
+    total++;
+    const p=a[l.name]; if(!p) return;
+    if(progPassed(l.name)) passed++;
+    clean+=p.clean||0;
+    if(p.bestErr!==undefined && p.bestErr!==null && (best===null || p.bestErr<best)) best=p.bestErr;
+  });
+  return {passed, total, clean, best};
+}
+function menuProfileHTML(){
+  const st=profStats(), rd=examReadiness(), er=examRuns()||{routes:0};
+  const who = acct ? (acct.name || AUTH_NAMES[acct.provider] || 'без имени') : 'Гость';
+  let s=menuHead('Профиль')+'<div class="mbody">'
+    +'<div class="pwho"><span class="av" aria-hidden="true">'+esc(who.slice(0,1).toUpperCase())+'</span><span><b>'+esc(who)+'</b>'
+    +'<span class="sd">'+(acct ? 'вход через '+(AUTH_NAMES[acct.provider]||acct.provider) : 'прогресс хранится на этом устройстве')+'</span></span></div>'
+    +acctNoteHTML();
+  if(AUTH_ON && !acct) s+=acctBtnsHTML('Войди, и прогресс будет на телефоне и на компьютере.');
+  s+='<div class="ptiles">'
+    +'<div class="ptile"><b>'+st.passed+' из '+st.total+'</b><span>уровней пройдено</span></div>'
+    +'<div class="ptile"><b>'+st.clean+'</b><span>заездов без касаний</span></div>'
+    +'<div class="ptile"><b>'+rd.pct+'&nbsp;%</b><span>готовность к экзамену</span></div>'
+    +'<div class="ptile"><b>'+(st.best===null?'—':st.best+'&nbsp;см')+'</b><span>лучшая точность в габаритах</span></div>'
+    +'<div class="ptile"><b>'+er.routes+' из 3</b><span>маршрутов экзамена сдано</span></div></div>';
+  if(acct) s+='<div class="mrow"><button type="button" class="ghost" data-act="auth-logout">Выйти</button>'
+    +'<button type="button" class="linkbtn danger" data-act="auth-delete">Удалить аккаунт</button></div>';
+  if(acct && PAY_ON) s+='<div class="mrow"><button type="button" class="ghost" data-act="pay-restore">Восстановить покупку</button></div>';
+  return s+'</div>';
+}
+/* ---------- настройки ---------- */
+/* одна таблица на все переключатели: строка знает, как прочитать значение и как его применить.
+   Применение идёт теми же путями, что клавиши, — запись в localStorage не дублируется */
+const SET_TABS=[['screen','Экран'],['hints','Подсказки'],['mirrors','Зеркала'],['sound','Звук и поток']];
+function setGfx(v){
+  opt.gfx=v;
+  try{ localStorage.setItem('trainer_gfx', v); }catch(e){}
+  if(v==='max'){ qBest=0; qApply(0); }
+}
+function setHud(v){
+  hudMode=v;
+  try{ localStorage.setItem('trainer_hud', String(v)); }catch(e){}
+  applyHud();
+}
+function setRefs(v){
+  opt.refs=v;
+  try{ localStorage.setItem('trainer_refs', String(v)); }catch(e){}
+}
+/* пресет зеркал узнаётся по их фактическому повороту: номер пресета не хранится, а после тяги по
+   зеркалу ни один пресет уже не выбран */
+function mirPresetNow(){
+  const a=opt.mirAdj, near=(x,y)=>Math.abs(x-y)<1e-4;
+  return MIR_PRESETS.findIndex(p=> near(a.left.yaw,-p.out) && near(a.left.pitch,p.down) && near(a.right.yaw,p.out)
+    && near(a.right.pitch,p.down) && near(a.center.yaw,p.cyaw) && near(a.center.pitch,p.cpitch));
+}
+/* поток расставляется при загрузке уровня: смена плотности перезапускает городской уровень, экзамен
+   идёт в плотном всегда и не перезагружается — loadLevel экзамена открыл бы бриф поверх настроек */
+function setTraffic(v){
+  opt.traffic=v;
+  try{ localStorage.setItem('trainer_traffic', v); }catch(e){}
+  if(level && level.def && level.def.traffic && !level.def.examRoute) loadLevel(game.li);
+}
+function fullAvail(){ const el=document.documentElement; return !!(el.requestFullscreen || el.webkitRequestFullscreen); }
+const SETTINGS=[
+  {id:'gfx', tab:'screen', label:'Графика', kind:'seg', vals:[['auto','авто'],['max','максимум']],
+   desc:()=>opt.gfx==='max' ? 'Все детали всегда, кадры могут просесть' : 'Качество подстраивается под скорость кадра',
+   get:()=>opt.gfx, set:setGfx},
+  {id:'hud', tab:'screen', label:'Панели на экране', kind:'seg', vals:[[0,'все'],[1,'зазоры'],[2,'скрыть']],
+   get:()=>hudMode, set:setHud},
+  {id:'full', tab:'screen', label:'Во весь экран', kind:'switch', show:fullAvail, get:()=>isFull(), set:v=>{ if(v!==isFull()) toggleFull(); }},
+  {id:'touch', tab:'screen', label:'Экранное управление', kind:'switch', desc:()=>'Кнопки руля, газа и передач на экране',
+   get:()=>MOB, set:v=>setTouch(v)},
+  {id:'marks', tab:'hints', label:'Ориентиры манёвра', kind:'switch', desc:()=>'Линии и метки, по которым ведёт карточка',
+   get:()=>opt.marks, set:v=>setOpt('marks', v)},
+  {id:'refs', tab:'hints', label:'Габариты машины', kind:'seg', vals:[[0,'выкл'],[1,'рамка'],[2,'с метками']],
+   get:()=>opt.refs, set:setRefs},
+  {id:'guides', tab:'hints', label:'Линии траекторий', kind:'switch', desc:()=>'Дуги колёс и путь демонстрации',
+   get:()=>opt.guides, set:v=>setOpt('guides', v)},
+  {id:'trails', tab:'hints', label:'След колёс', kind:'switch', get:()=>opt.trails, set:v=>setOpt('trails', v)},
+  {id:'mirrors', tab:'mirrors', label:'Зеркала на экране', kind:'switch', get:()=>opt.mirrors, set:v=>setOpt('mirrors', v)},
+  {id:'mirscale', tab:'mirrors', label:'Размер зеркал', kind:'step', vals:MIR_SCALES.map(k=>[k, Math.round(k*100)+'%']),
+   get:()=>opt.mirScale, set:v=>setMirScale(v)},
+  {id:'mirpreset', tab:'mirrors', label:'Положение зеркал', kind:'step', vals:MIR_PRESETS.map((p,i)=>[i,p.name]),
+   desc:()=>{ const i=mirPresetNow(); return i<0 ? 'Твоя настройка: зеркала повёрнуты тягой' : MIR_PRESETS[i].tip; },
+   get:mirPresetNow, set:v=>applyMirPreset(v)},
+  {id:'sound', tab:'sound', label:'Звук', kind:'switch', get:()=>opt.sound, set:v=>setOpt('sound', v)},
+  {id:'traffic', tab:'sound', label:'Машины в городе', kind:'step', vals:TRAF_ORDER.map(k=>[k, TRAF_NAMES[k]]),
+   desc:()=>'На экзамене поток всегда плотный. Смена перезапускает городской уровень',
+   get:()=>opt.traffic, set:setTraffic}
+];
+function setRowHTML(s){
+  const v=s.get(), d=s.desc ? s.desc() : '';
+  const lbl='<span class="sl">'+s.label+(d ? '<span class="sd">'+esc(d)+'</span>' : '')+'</span>';
+  if(s.kind==='switch')
+    return '<div class="srow">'+lbl+'<button type="button" class="sw'+(v?' on':'')+'" role="switch" aria-checked="'+(!!v)
+      +'" aria-label="'+s.label+'" data-act="set:'+s.id+':'+(v?0:1)+'"></button></div>';
+  const ix=s.vals.findIndex(x=>x[0]===v);
+  if(s.kind==='seg')
+    return '<div class="srow">'+lbl+'<div class="seg" role="group" aria-label="'+s.label+'">'+s.vals.map((x,i)=>
+      '<button type="button" aria-pressed="'+(i===ix)+'"'+(i===ix?' class="on"':'')+' data-act="set:'+s.id+':'+i+'">'+x[1]+'</button>').join('')
+      +'</div></div>';
+  return '<div class="srow">'+lbl+'<div class="step">'
+    +'<button type="button" aria-label="'+s.label+': меньше" data-act="set:'+s.id+':'+Math.max(0,ix-1)+'"'+(ix<=0?' disabled':'')+'>−</button>'
+    +'<b>'+(ix>=0 ? s.vals[ix][1] : 'вручную')+'</b>'
+    +'<button type="button" aria-label="'+s.label+': больше" data-act="set:'+s.id+':'+Math.min(s.vals.length-1,ix+1)+'"'
+    +(ix>=s.vals.length-1?' disabled':'')+'>+</button></div></div>';
+}
+function menuSettingsHTML(tab){
+  let s=menuHead('Настройки', SET_TABS, tab)+'<div class="mbody">';
+  for(const x of SETTINGS) if(x.tab===tab && (!x.show || x.show())) s+=setRowHTML(x);
+  if(tab==='mirrors') s+='<div class="mrow"><button type="button" class="ghost" data-act="mirreset">Сбросить зеркала</button></div>'
+    +'<p class="mnote">Зеркало можно повернуть, потянув прямо по нему.'+(MOB?'':' Колесо мыши над зеркалом меняет размер.')+'</p>';
+  return s+'</div>';
+}
+function setApply(id, ix){
+  const s=SETTINGS.find(x=>x.id===id);
+  if(!s){ console.warn('[menu] нет настройки', id); return; }
+  const v = s.kind==='switch' ? ix==='1' : (s.vals[+ix]||[])[0];
+  if(v===undefined){ console.warn('[menu] настройка', id, 'без значения', ix); return; }
+  initAudio();
+  s.set(v);
+  console.info('[menu] настройка', id, '→', v);
+}
+/* ---------- пауза ---------- */
+/* Esc на ПК и ❚❚ в углу на телефоне. Раньше Esc открывал справку с физикой и 25 строками клавиш,
+   а на телефоне всё лежало в ≡ из нижней полосы — 25 кнопок одной сеткой */
+function pauseHTML(){
+  const d=level.def, ex=examActive();
+  let s='<p class="pkick">Пауза</p><h1>'+d.name+'</h1><div class="pstack">'
+    +'<button type="button" data-act="resume" data-focus>Продолжить</button>';
+  if(ex) s+='<button type="button" class="ghost" data-act="route">Маршрут и команды</button>';
+  else {
+    s+='<button type="button" class="ghost" data-act="restart">Заново</button>';
+    if(d.steps && d.steps.length) s+='<button type="button" class="ghost" data-act="task">Как выполнять</button>';
+    if(DEMOS[game.li]) s+='<button type="button" class="ghost" data-act="demo">▶ Демонстрация</button>';
+    /* шов рекламы Яндекс Игр из старого ≡: траектория за просмотр. На сайте window.ADS нет — и пункта нет,
+       линии там включаются в настройках бесплатно */
+    if(window.ADS && DEMOS[game.li] && !opt.guides) s+='<button type="button" class="ghost" data-act="hint-guides">Подсказка: показать траекторию</button>';
+  }
+  s+='<button type="button" class="ghost" data-act="menu:settings">Настройки</button>';
+  if(ex) s+='<button type="button" class="ghost" data-act="exam-abort">Прервать экзамен</button>';
+  else s+='<button type="button" class="ghost" data-act="menu:levels">Уровни</button>'
+    +'<button type="button" class="ghost" data-act="mainmenu">Главное меню</button>';
+  return s+'</div>';
+}
+/* Esc: игра → пауза, пауза → игра, раздел → назад. Итоги и провал уровня не закрываются — без
+   оверлея при game.done игрок остался бы без выхода */
+function escAct(){
+  if($('thelp').classList.contains('on')) return;
+  /* закрыть ожидание входа без отмены нельзя: вход вернётся позже и откроет прежний экран посреди езды */
+  if(authWait){ doAct('auth-cancel'); return; }
+  if(ovEl.style.display==='none'){ if(!game.done) menuGo('pause'); return; }
+  if(menu.scr==='pause'){ doAct('resume'); return; }
+  if(MENU_SECTIONS[menu.scr]){ menuBack(); return; }
+  if(menu.scr==='main' || game.done) return;
+  if(menu.root==='main') menuGo('main'); else hideOv();
+}
+function helpKey(){
+  if($('thelp').classList.contains('on') || (game.done && !menu.scr)) return;
+  if(menu.scr==='help'){ menuBack(); return; }
+  if(ovEl.style.display==='none') menuGo('pause');
+  menuGo('help');
 }
 
 /* ---------- ввод ---------- */
@@ -12002,21 +12516,20 @@ function pressKey(code){
     return;
   }
   switch(code){
-    case 'KeyR': restart(); if(paused&&!helpOpen) hideOv(); break;
+    case 'KeyR': restart(); if(paused) hideOv(); break;
     case 'KeyC': opt.camMode=(opt.camMode+1)%3; if(opt.camMode!==CAM_FP) opt.prev3rd=opt.camMode;
                  camSm=null; break;
     case 'KeyV': if(opt.camMode===CAM_FP) opt.camMode=opt.prev3rd;
                  else { opt.prev3rd=opt.camMode; opt.camMode=CAM_FP; }
                  camSm=null; break;
-    case 'KeyZ': opt.mirrors=!opt.mirrors; break;
+    case 'KeyZ': setOpt('mirrors', !opt.mirrors); break;
     case 'KeyU': applyMirPreset((mirPreset+1)%MIR_PRESETS.length); break;
     case 'KeyB': opt.refs=(opt.refs+1)%3;
                  try{ localStorage.setItem('trainer_refs', String(opt.refs)); }catch(e){}
                  toast('Габариты: '+REFS_NAMES[opt.refs]); break;
-    case 'KeyO': opt.marks=!opt.marks;
-                 try{ localStorage.setItem('trainer_marks', opt.marks?'1':'0'); }catch(e){} break;
+    case 'KeyO': setOpt('marks', !opt.marks); break;
     case 'KeyI': cycleHud(); break;
-    case 'KeyL': if(helpOpen) helpOpen=false; showLevelPick(); break;
+    case 'KeyL': if(menu.scr!=='levels') showLevelPick(); break;
     case 'KeyK': if(editor) closeEditor(); else openEditor(editorSource()); break;
     case 'Delete': case 'Backspace': if(editor) edAction({act:'del'}); break;
     case 'Period': case 'NumpadDecimal': shiftSel(1); break;
@@ -12029,13 +12542,13 @@ function pressKey(code){
     case 'KeyP': if(paused) break;
       selectGear('P'); break;
     case 'ShiftLeft': case 'ShiftRight': input.lookBack=true; break;
-    case 'KeyG': opt.guides=!opt.guides; break;
-    case 'KeyT': opt.trails=!opt.trails; break;
-    case 'KeyM': opt.sound=!opt.sound; break;
-    case 'KeyH': case 'Escape':
-      /* на экзамене Escape — «прервать?», а не справка; открытые оверлеи ведут себя как раньше */
-      if(examActive() && !paused && !game.done){ showOv(examAbortHTML()); break; }
-      toggleHelp(); break;
+    case 'KeyG': setOpt('guides', !opt.guides); break;
+    case 'KeyT': setOpt('trails', !opt.trails); break;
+    case 'KeyM': setOpt('sound', !opt.sound); break;
+    /* Esc — пауза и меню, как в играх. Раньше он открывал справку, а на экзамене — «прервать?»:
+       теперь «Прервать экзамен» стоит в паузе */
+    case 'Escape': escAct(); break;
+    case 'KeyH': helpKey(); break;
     case 'Slash': coachWhyToggle(); break;
     case 'KeyN': if(game.done) openLevel(game.li+1,'next'); break;
     case 'KeyY': finishLevel(); break;
@@ -12077,6 +12590,9 @@ window.addEventListener('keydown',e=>{
   if(a){ if(paused) return; input[a]=true; e.preventDefault(); return; }
   const swallow = ['Period','Comma','BracketLeft','BracketRight','KeyH','Escape','Minus','Equal'];
   if(swallow.indexOf(e.code)>=0) e.preventDefault();
+  /* в главном меню уровень стоит за витриной: R, цифры и камеры трогали бы невидимую игру.
+     Работают только навигация меню — Esc, H, L */
+  if(document.body.classList.contains('menu') && ['Escape','KeyH','KeyL'].indexOf(e.code)<0) return;
   pressKey(e.code);
 });
 window.addEventListener('keyup',e=>{
@@ -12107,6 +12623,7 @@ function zoomBy(k){
 }
 canvas.addEventListener('contextmenu',e=>{ if(editor) e.preventDefault(); });
 canvas.addEventListener('pointerdown',e=>{
+  if(showroomOn()){ e.preventDefault(); showroomPtr(e,'down'); return; }
   if(editor){ e.preventDefault(); try{ canvas.setPointerCapture(e.pointerId); }catch(err){}
               edPointer(e,'down'); return; }
   ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
@@ -12136,6 +12653,7 @@ canvas.addEventListener('pointerdown',e=>{
   try{ canvas.setPointerCapture(e.pointerId); }catch(err){}
 });
 canvas.addEventListener('pointermove',e=>{
+  if(showroom.drag!==null){ showroomPtr(e,'move'); return; }
   if(editor){ edPointer(e,'move'); return; }
   if(ptrs.has(e.pointerId)) ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if(ptrs.size===2){
@@ -12164,6 +12682,7 @@ canvas.addEventListener('pointermove',e=>{
   }
 });
 function endDrag(e){
+  if(showroom.drag!==null){ showroomPtr(e,'up'); return; }
   if(editor){ edPointer(e,'up'); try{ canvas.releasePointerCapture(e.pointerId); }catch(err){} return; }
   ptrs.delete(e.pointerId);
   if(ptrs.size<2) pinchD=0;
@@ -12181,6 +12700,7 @@ canvas.addEventListener('pointerleave',e=>{ if(dragging) endDrag(e); });
 canvas.addEventListener('dblclick',()=>{ opt.camYaw=car.th; opt.pitch=rad(22); opt.fpYaw=0; opt.fpPitch=rad(-2); });
 canvas.addEventListener('wheel',e=>{
   e.preventDefault();
+  if(showroomOn()) return;
   const k=e.deltaMode===1?18:(e.deltaMode===2?300:1);
   if(editor){ editor.cam.h=clamp(editor.cam.h + e.deltaY*k*0.03, 12, 90); return; }
   /* колесо НАД зеркалом меняет размер зеркал, а не приближает камеру: там же его и настраивают
@@ -12792,22 +13312,6 @@ function examReadiness(){
   }
   return {pct:Math.round(done/EXAM_SET.length*100), weak};
 }
-function readinessHTML(){
-  const r=examReadiness();
-  const names=r.weak.slice(0,3).map(i=>(LEVELS[i].name.split('· ')[1]||'').trim()).join(', ');
-  let out='<p style="margin:6px 0"><b>Готовность к экзамену: '+r.pct+'%</b>'
-    +(r.pct>=100 ? ' — пора на уровень «Экзамен»!'
-      : (names ? ' · сначала сюда: '+names+(r.weak.length>3?'…':'') : ''))+'</p>';
-  const e=examRuns();
-  if(e && (e.real||e.train))
-    out+='<p style="margin:6px 0;color:'+(e.routes>=3?'#7ee3a4':'#93a7bd')+'">'
-      +(e.routes>=3
-        ? 'Экзамен сдан в настоящем режиме на всех трёх маршрутах — ты готов.'
-        : 'Экзамен в настоящем режиме: маршрутов '+e.routes+' из 3'
-          +(e.train ? ' · репетиций в тренировочном: '+e.train : ''))
-      +'</p>';
-  return out;
-}
 const CUSTOM_KEY='trainer_levels', CUSTOM_SLOTS=5;
 /* каждый вид объекта умеет собираться в препятствие игрового формата */
 /* инвариант: городские фабрики (sign/roadDec/zebraDec/rampZone) в редактор НЕ входят —
@@ -12913,7 +13417,8 @@ function openEditor(data){
 function closeEditor(){
   editor=null; document.body.classList.remove('edit');
   loadLevel(Math.min(game.li, LEVELS.length-1));
-  showOv(startHTML());
+  menu.root='main';
+  menuGo('levels', 'own', 'main');
 }
 /* живой уровень из состояния редактора — рендер и подсветка идут обычным путём */
 function edRebuild(){
@@ -13143,7 +13648,7 @@ function detectTouch(){
 }
 let MOB = detectTouch();
 try{ const h=localStorage.getItem('trainer_hud'); if(h!==null) hudMode=+h||0; }catch(e){}
-try{ const m=localStorage.getItem('trainer_marks'); if(m!==null) opt.marks=m==='1'; }catch(e){}
+for(const k in OPT_SAVED) try{ const v=localStorage.getItem(OPT_SAVED[k]); if(v!==null) opt[k]=v==='1'; }catch(e){}
 syncHintLine();
 try{ const e=localStorage.getItem('trainer_exammode'); if(e==='real') opt.examMode='real'; }catch(e){}
 try{ const t=localStorage.getItem('trainer_traffic'); if(TRAF_SPACING[t]) opt.traffic=t; }catch(e){}
@@ -13207,8 +13712,8 @@ function toggleFull(){
   }catch(e){}
   setTimeout(resize, 350);
 }
-document.addEventListener('fullscreenchange',()=>setTimeout(resize,120));
-function closeMenu(){ $('tmenu').classList.remove('open'); }
+document.addEventListener('fullscreenchange',()=>{ setTimeout(resize,120);
+  if(menu.scr==='settings') menuGo('settings', menu.tab, menu.from); });
 function showTask(){
   const d=LEVELS[game.li];
   showOv('<h1>'+d.name+'</h1><p>'+d.task+'</p>'
@@ -13220,73 +13725,6 @@ function showTask(){
     +'<p style="margin-top:8px;color:#93a7bd;font-size:12.5px">'+d.tip+'</p>'
     +(DEMOS[game.li]?'<button data-act="demo">▶ Показать демонстрацию этого манёвра</button>':'')
     +'<button data-act="resume" class="ghost">Понятно, поехали</button>');
-}
-function buildMenu(){
-  const g=$('tmGrid'); g.innerHTML='';
-  const h=(t)=>{ const x=document.createElement('h3'); x.textContent=t; g.appendChild(x); };
-  const add=(label,fn,isOn)=>{ const b=document.createElement('button');
-    b.textContent=label; if(isOn&&isOn()) b.classList.add('on');
-    b.addEventListener('click',()=>{ fn(); if($('tmenu').classList.contains('open')) buildMenu(); });
-    g.appendChild(b); };
-  if(examActive() && !game.done){
-    h('Экзамен');
-    add('Маршрут и команды', ()=>{ closeMenu(); showOv(examBriefHTML()); });
-  }
-  h('Экран');
-  add(isFull()?'Выйти из полного экрана':'Во весь экран', ()=>{ toggleFull(); closeMenu(); }, ()=>isFull());
-  add(['Скрыть панели, оставить зазоры','Скрыть все панели','Показать все панели'][hudMode], ()=>cycleHud(), ()=>hudMode>0);
-  if(DEMOS[game.li]) add('▶ Показать демонстрацию', ()=>{ closeMenu(); startDemo(); }, ()=>demoActive());
-  add('Как парковаться на этом уровне', ()=>{ closeMenu(); showTask(); });
-  h('Камера');
-  add('Камеру за машину', ()=>pressKey('KeyF'));
-  add('Отдалить', ()=>pressKey('Minus'));
-  add('Приблизить', ()=>pressKey('Equal'));
-  h('Подсказки на экране');
-  add('Ориентиры манёвра', ()=>pressKey('KeyO'), ()=>opt.marks);
-  add('Габариты: '+REFS_NAMES[opt.refs]+' → '+REFS_NAMES[(opt.refs+1)%3], ()=>pressKey('KeyB'), ()=>opt.refs>0);
-  add('Линии траекторий', ()=>pressKey('KeyG'), ()=>opt.guides);
-  add('След колёс', ()=>pressKey('KeyT'), ()=>opt.trails);
-  add('Зеркала', ()=>pressKey('KeyZ'), ()=>opt.mirrors);
-  add('Зеркала: '+MIR_PRESETS[mirPreset].name+' → '+MIR_PRESETS[(mirPreset+1)%MIR_PRESETS.length].name, ()=>pressKey('KeyU'));
-  add('Сбросить зеркала', ()=>{ applyMirPreset(0); });
-  h('Прочее');
-  add('Подсказка: траектория манёвра', ()=>{
-    adsRewarded(()=>{ opt.guides=true;
-      toast('Идеальная траектория включена — смотри зелёно-оранжевую линию', 3.5); });
-  }, ()=>opt.guides);
-  add('Экзамен: '+(examTrain()?'тренировочный → настоящий':'настоящий → тренировочный'),
-      ()=>setExamMode(examTrain()?'real':'train'), ()=>!examTrain());
-  /* качество: «авто» бережёт кадры и на слабой машине снимает зерно и мелочи, «максимум» —
-     всё видно всегда, ценой fps. Регулятор в этом режиме молчит */
-  { const mi=Math.max(0,MIR_SCALES.indexOf(opt.mirScale)), mx=mi>=MIR_SCALES.length-1;
-    add('Зеркала крупнее: '+Math.round(opt.mirScale*100)+'%'+(mx?' (максимум)':' → '+Math.round(MIR_SCALES[mi+1]*100)+'%'),
-        ()=>cycleMirScale(1), ()=>opt.mirScale>1); }
-  add('Графика: '+(opt.gfx==='max'?'максимум → авто':'авто → максимум'), ()=>{
-    opt.gfx = opt.gfx==='max' ? 'auto' : 'max';
-    try{ localStorage.setItem('trainer_gfx', opt.gfx); }catch(e){}
-    if(opt.gfx==='max'){ qBest=0; qApply(0); toast('Графика: максимум — все детали и зерно, кадры могут просесть', 4); }
-    else toast('Графика: авто — качество подстраивается под скорость кадра', 3.5);
-  }, ()=>opt.gfx==='max');
-  /* плотность потока: городские уровни ставят на дорогу живой трафик, и новичку нужна
-     возможность разобрать манёвр в спокойном движении. Экзамен идёт в плотном всегда */
-  add('Поток: '+TRAF_NAMES[opt.traffic]+' → '+TRAF_NAMES[TRAF_ORDER[(TRAF_ORDER.indexOf(opt.traffic)+1)%TRAF_ORDER.length]]
-      +(level&&level.def.traffic&&!level.def.examRoute?' · машин '+trafCount():''), ()=>{ cycleTraffic(); }, ()=>opt.traffic!=='off');
-  add('Звук', ()=>pressKey('KeyM'), ()=>opt.sound);
-  add('Уровень заново', ()=>{ closeMenu(); pressKey('KeyR'); });
-  add('Что делают кнопки', ()=>{ closeMenu(); setTimeout(showTouchHelp,120); });
-  add('Справка и правила', ()=>{ closeMenu(); pressKey('KeyH'); });
-  add('✉︎ Сообщить об ошибке', ()=>{ closeMenu(); doAct('feedback:menu'); });
-  if(AUTH_ON){
-    h('Аккаунт');
-    if(acct){ add('Выйти из аккаунта', ()=>{ closeMenu(); authLogout(); showOv(startHTML()); });
-      add('Удалить аккаунт', ()=>{ closeMenu(); acctBack=''; showOv(acctDeleteHTML()); }); }
-    else AUTH_PROVIDERS.forEach(p=> add('Войти через '+AUTH_NAMES[p], ()=>{ closeMenu(); authStart(p); }));
-  }
-  h('Уровень');
-  add('Выбрать уровень…', ()=>{ closeMenu(); showLevelPick(); });
-  add('Редактор площадок', ()=>{ closeMenu(); openEditor(editorSource()); });
-  const c=document.createElement('button'); c.className='tm-close'; c.textContent='Закрыть';
-  c.addEventListener('click',closeMenu); g.appendChild(c);
 }
 const CAMNAME=['3-е лицо','сверху','салон'];
 $('tview').addEventListener('pointerdown',e=>{ e.preventDefault(); initAudio();
@@ -13323,7 +13761,7 @@ function showTouchHelp(){
   mark('.tdrive','ГАЗ и ТОРМОЗ');
   mark('#tview','ВИД — переключить камеру: из салона, сверху, сзади');
   mark('#tgear','Коробка: тапни D — поехали, R — задний ход');
-  mark('#tmenubtn','Меню: во весь экран, задание, подсказки, уровни', true);
+  mark('#pauseBtn','Пауза: задание, настройки, уровни', true);
   mark('#trestart','⟲ — начать уровень заново', true);
   const fs=document.createElement('button'); fs.textContent='Во весь экран';
   fs.style.cssText='left:50%;top:calc(50% - 30px);transform:translate(-50%,-50%)'; fs.className='ghost';
@@ -13424,10 +13862,8 @@ $('trafBtn').addEventListener('click',()=>{ initAudio(); cycleTraffic(); });
 document.addEventListener('click',e=>{ const b=e.target.closest&&e.target.closest('button.sidebtn'); if(b&&e.detail>0) b.blur(); });
 $('trestart').addEventListener('pointerdown',e=>{ e.preventDefault(); initAudio();
   if(!paused) pressKey('KeyR'); },{passive:false});
-$('tmenu').addEventListener('pointerdown',e=>{ if(e.target.id==='tmenu') closeMenu(); });
-$('tmenubtn').addEventListener('pointerdown',e=>{ e.preventDefault(); initAudio();
-  if($('tmenu').classList.contains('open')) closeMenu(); else { buildMenu(); $('tmenu').classList.add('open'); }
-},{passive:false});
+$('pauseBtn').addEventListener('click',e=>{ initAudio(); if(e.detail>0) e.currentTarget.blur();
+  if(!paused && !game.done && !editor) menuGo('pause'); });
 window.addEventListener('orientationchange',()=>setTimeout(resize,250));
 if(window.visualViewport){
   visualViewport.addEventListener('resize', resize);
@@ -13581,7 +14017,7 @@ function win(){
 resize();
 loadCustomLevels();
 loadLevel(0);
-showOv(startHTML());
+menuGo('main');
 requestAnimationFrame(frame);
 track('app_open', Object.assign({ platform:anPlatform(), framed:anFramed(), mob:MOB,
   lang:(navigator.language||'').slice(0,8), runs:runsCnt, build:window.BUILD||'dev',
