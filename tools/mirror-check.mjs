@@ -101,12 +101,13 @@ const afterScene = await page.evaluate(() => ({ fov: opt.fpFov, scale: opt.mirSc
 check('колесо вне зеркала по-прежнему меняет обзор',
   afterScene.fov !== afterMirror.fov && afterScene.scale === afterMirror.scale, JSON.stringify(afterScene));
 
-/* меню предлагает размер */
-const menuItem = await page.evaluate(() => { buildMenu();
-  const t = [...document.querySelectorAll('#tmGrid *')].map(e => (e.textContent || '').trim()).find(x => /^Зеркала крупнее: \d+%/.test(x));
-  closeMenu();
-  return t || null; });
-check('в меню есть строка размера зеркал', !!menuItem, menuItem || 'строки нет');
+/* настройки предлагают размер: строка «Размер зеркал» во вкладке «Зеркала» с текущим значением */
+const menuItem = await page.evaluate(() => { menuGo('settings', 'mirrors', 'game');
+  const row = [...document.querySelectorAll('#overlay .srow')].find(r => /Размер зеркал/.test(r.textContent));
+  const t = row ? row.textContent.replace(/\s+/g, ' ').trim() : null;
+  doAct('back');
+  return t && /\d+%/.test(t) && row.querySelector('[data-act^="set:mirscale:"]') ? t : null; });
+check('в настройках есть строка размера зеркал', !!menuItem, menuItem || 'строки нет');
 
 /* --- телефон --- */
 const mob = await browser.newPage({ viewport: { width: 844, height: 390 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });

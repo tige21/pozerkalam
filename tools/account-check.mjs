@@ -188,7 +188,12 @@ const ovText = (page) => page.evaluate(() => document.getElementById('overlay').
   const { ctx, page, apiCalls } = await openGame({ rybbit: false });
   await page.evaluate(() => doAct('start'));
   await page.waitForTimeout(200);
-  const st = await page.evaluate(() => ({ btns: document.querySelectorAll('.acctbtns').length, on: AUTH_ON, menu: (buildMenu(), document.getElementById('tmGrid').textContent.includes('Аккаунт')) }));
+  /* вход живёт в профиле и в чипе главного меню: без провайдеров нет ни кнопок там, ни «войти» на чипе */
+  const st = await page.evaluate(() => {
+    const btns = document.querySelectorAll('.acctbtns').length;
+    menuGo('profile'); const prof = document.querySelectorAll('#overlay .acctbtns, #overlay [data-act="auth-logout"]').length;
+    menuGo('main'); const chip = /войти/.test(document.querySelector('#overlay .mm-chip').textContent);
+    return { btns, on: AUTH_ON, menu: prof > 0 || chip }; });
   check('без AUTH_PROVIDERS нет кнопок входа и ни одного запроса к API (@acct-off-by-default)',
     st.btns === 0 && !st.on && !st.menu && apiCalls.length === 0, JSON.stringify({ ...st, api: apiCalls.length }));
   await ctx.close();
@@ -197,12 +202,14 @@ const ovText = (page) => page.evaluate(() => document.getElementById('overlay').
 {
   const { ctx, page, errors } = await openGame({ auth: ['yandex', 'vk', 'google'] });
   const r = await page.evaluate(() => {
+    const chip = /войти/.test(document.querySelector('#overlay .mm-chip').textContent);
+    menuGo('profile');
     const b = [...document.querySelectorAll('#overlay .acctbtns button')].map(x => x.textContent);
     const a = document.querySelector('#overlay .legal a');
-    return { b, href: a && a.getAttribute('href'), start: !!document.querySelector('#overlay [data-act="start"]') };
+    return { b, href: a && a.getAttribute('href'), chip };
   });
-  check('кнопки входа на стартовом экране: VK ID → Яндекс ID, ссылка на политику (@acct-buttons-order)',
-    JSON.stringify(r.b) === JSON.stringify(['Войти через VK ID', 'Войти через Яндекс ID']) && r.href === '/privacy/' && r.start,
+  check('кнопки входа в профиле: VK ID → Яндекс ID, ссылка на политику; на чипе главного меню «войти» (@acct-buttons-order)',
+    JSON.stringify(r.b) === JSON.stringify(['Войти через VK ID', 'Войти через Яндекс ID']) && r.href === '/privacy/' && r.chip,
     JSON.stringify(r));
   const brand = await page.evaluate(() => [...document.querySelectorAll('#overlay .acctbtns button')].map(b => {
     const cs = getComputedStyle(b), r = b.getBoundingClientRect();
@@ -211,7 +218,7 @@ const ovText = (page) => page.evaluate(() => document.getElementById('overlay').
   check('кнопки входа фирменные, как в spark: VK ID синяя с логотипом, Яндекс ID чёрная с логотипом, высота 48 (@acct-buttons-brand)',
     brand.length === 2 && brand[0].cls === 'oauth oauth-vk' && brand[0].bg === 'rgb(0, 119, 255)' && brand[1].cls === 'oauth oauth-yandex'
       && brand[1].bg === 'rgb(0, 0, 0)' && brand.every(x => x.logo && x.color === 'rgb(255, 255, 255)' && x.h === 48), JSON.stringify(brand));
-  check('консоль чиста на стартовом экране со входом', realErrors(errors).length === 0, realErrors(errors).slice(0, 2).join(' | '));
+  check('консоль чиста в профиле со входом', realErrors(errors).length === 0, realErrors(errors).slice(0, 2).join(' | '));
   await ctx.close();
 }
 
@@ -223,6 +230,7 @@ const ovText = (page) => page.evaluate(() => document.getElementById('overlay').
   await page.evaluate(() => { window.__nav = []; });
   await page.route('https://id.vk.ru/**', r => r.fulfill({ status: 200, contentType: 'text/html', body: 'vk' }));
   const r = await page.evaluate(() => {
+    menuGo('profile');
     const vk = document.querySelector('#overlay [data-act="auth:vk"]'), ya = document.querySelector('#overlay [data-act="auth:yandex"]');
     vk.click(); vk.click(); ya.click();
     return { busy: vk.classList.contains('busy'), vkDis: vk.disabled, yaDis: ya.disabled, spinner: getComputedStyle(vk, '::before').content !== 'none' };
@@ -269,7 +277,7 @@ const ovText = (page) => page.evaluate(() => document.getElementById('overlay').
     leak: Object.keys(localStorage).filter(k => k.indexOf('trainer_') === 0 && /R\d/.test(localStorage.getItem(k) || '') && (localStorage.getItem(k) || '').includes('"refresh"')) }));
   const claim = apiCalls.find(c => c.path === '/auth/claim'), put = apiCalls.find(c => c.path === '/progress');
   check('возврат с редиректа: claim с nonce, hash убран, аккаунт на экране, уровень восстановлен (@acct-redirect-return)',
-    claim && claim.body.nonce === nonce && r.hash === '' && r.acct === 'Егор Т.' && r.li === 4 && /Аккаунт: Егор Т\./.test(r.ov) && r.stored,
+    claim && claim.body.nonce === nonce && r.hash === '' && r.acct === 'Егор Т.' && r.li === 4 && /Егор Т\./.test(r.ov) && r.stored,
     JSON.stringify({ claim: !!claim, hash: r.hash, acct: r.acct, li: r.li }));
   check('гостевой прогресс уходит первым PUT после входа (@acct-guest-merge)',
     put && put.body.data['1 · Гостевой'] && put.body.data['1 · Гостевой'].clean === 1 && r.prog['1 · Гостевой'], JSON.stringify(put && put.body));
@@ -301,6 +309,7 @@ const ovText = (page) => page.evaluate(() => document.getElementById('overlay').
   const frame = page.frames().find(f => f.url().startsWith(PAGE));
   await frame.evaluate(() => { for (const k of ['trainer_seen', 'trainer_hint', 'trainer_drive']) localStorage.setItem(k, '1'); });
   const popupP = ctx.waitForEvent('page', { timeout: 3000 }).catch(() => null);
+  await frame.evaluate(() => menuGo('profile'));
   await frame.click('#overlay [data-act="auth:vk"]');
   const popup = await popupP;
   await frame.waitForTimeout(300);
@@ -309,7 +318,7 @@ const ovText = (page) => page.evaluate(() => document.getElementById('overlay').
   const r = await frame.evaluate(() => ({ acct: acct && acct.name, wait: !!authWait, ov: document.getElementById('overlay').textContent }));
   const claims = apiCalls.filter(c => c.path === '/auth/claim').length;
   check('в iframe вход идёт во вкладке: режим poll, опрос до ok, вкладка закрыта (@acct-poll-flow)',
-    st.mode === 'poll' && !!popup && /Подтверди вход в новой вкладке/.test(waiting) && claims === 3 && r.acct === 'Егор Т.' && !r.wait && /Аккаунт: Егор Т\./.test(r.ov) && popup.isClosed(),
+    st.mode === 'poll' && !!popup && /Подтверди вход в новой вкладке/.test(waiting) && claims === 3 && r.acct === 'Егор Т.' && !r.wait && /Егор Т\./.test(r.ov) && popup.isClosed(),
     JSON.stringify({ mode: st.mode, popup: !!popup, claims, acct: r.acct, closed: popup && popup.isClosed() }));
   await ctx.close();
 }
@@ -329,7 +338,7 @@ const ovText = (page) => page.evaluate(() => document.getElementById('overlay').
   const st = { refreshDead: true };
   const { ctx, page } = await openGame({ auth: ['vk', 'yandex'], api: mockApi(st), storage: LOGGED });
   await page.waitForTimeout(800);
-  const r = await page.evaluate(() => ({ acct: !!acct, stored: !!localStorage.getItem('pz_auth'), btns: document.querySelectorAll('#overlay .acctbtns button').length, note: (document.querySelector('#overlay .acctnote') || {}).textContent }));
+  const r = await page.evaluate(() => { menuGo('profile'); return { acct: !!acct, stored: !!localStorage.getItem('pz_auth'), btns: document.querySelectorAll('#overlay .acctbtns button').length, note: (document.querySelector('#overlay .acctnote') || {}).textContent }; });
   check('отвергнутый refresh — выход с объяснением, кнопки входа вернулись (@acct-session-expired)',
     !r.acct && !r.stored && r.btns === 2 && /Сессия истекла/.test(r.note || ''), JSON.stringify(r));
   await ctx.close();
@@ -352,7 +361,7 @@ const ovText = (page) => page.evaluate(() => document.getElementById('overlay').
     putsBoot === 1 && putsMid === 1 && puts.length === 2 && !!local['9 · С другого устройства'] && !!local['2 · Местный'] && Object.keys(local).length === 3,
     JSON.stringify({ boot: putsBoot, mid: putsMid, total: puts.length, keys: Object.keys(local) }));
 
-  await page.evaluate(() => { hideOv(); showOv(startHTML()); });
+  await page.evaluate(() => { hideOv(); menuGo('profile'); });
   await page.evaluate(() => document.querySelector('#overlay [data-act="auth-logout"]').click());
   await page.waitForTimeout(300);
   const r = await page.evaluate(() => ({ acct: !!acct, stored: !!localStorage.getItem('pz_auth'), prog: Object.keys(JSON.parse(localStorage.getItem('trainer_progress'))).length,
@@ -367,7 +376,7 @@ const ovText = (page) => page.evaluate(() => document.getElementById('overlay').
   const st = {};
   const { ctx, page, apiCalls } = await openGame({ auth: ['vk', 'yandex'], api: mockApi(st), storage: LOGGED });
   await page.waitForTimeout(600);
-  await page.evaluate(() => document.querySelector('#overlay [data-act="auth-delete"]').click());
+  await page.evaluate(() => { menuGo('profile'); document.querySelector('#overlay [data-act="auth-delete"]').click(); });
   const ask = await ovText(page);
   await page.evaluate(() => document.querySelector('#overlay [data-act="auth-delete-yes"]').click());
   await page.waitForTimeout(400);

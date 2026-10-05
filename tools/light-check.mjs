@@ -35,7 +35,8 @@ await page.evaluate(()=>{ for(const k of ['trainer_seen','trainer_hint','trainer
 await page.goto(url+'r'); await page.waitForTimeout(400);
 
 const res = await page.evaluate((DISTS)=>{
-  loadLevel(26);
+  /* из главного меню render рисует машину на подиуме, а не уровень — выходим из него, физику держим на паузе */
+  loadLevel(26); hideOv(); paused=true;
   opt.marks=false; opt.guides=false; opt.camYaw=0;
   const L=level.city.lights[0], SL=level.city.stoplines.find(s=>s.light===L);
   const cv=document.querySelector('canvas'), ctx2=cv.getContext('2d');

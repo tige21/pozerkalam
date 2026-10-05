@@ -67,7 +67,7 @@ for (const [W, H] of sizes) {
       if (!r.width || getComputedStyle(e).display === 'none') return null;
       return { x: [r.left, r.right], y: [r.top, r.bottom] }; };
     const parts = { руль: g('.tsteer'), газ: g('.tdrive'), передачи: g('#tgear'),
-      меню: g('#tmenubtn'), заново: g('#trestart'), вид: g('#tview'), карточка: g('#coach'),
+      пауза: g('#pauseBtn'), заново: g('#trestart'), вид: g('#tview'), карточка: g('#coach'),
       поворотникL: g('#tgear span[data-blink="L"]'), поворотникR: g('#tgear span[data-blink="R"]') };
     /* меряем ПЛОЩАДЬ пересечения: на 932x430 угол карточки задевает кластер газа на 1x8 px
        и ничего не перехватывает, а накрытая кнопка даёт сотни px² */

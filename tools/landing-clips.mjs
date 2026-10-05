@@ -75,7 +75,7 @@ for (const c of CLIPS) {
        плавающие кнопки «заново/демонстрация/написать» */
     /* прячем стилем, а не remove(): updateHUD каждый кадр пишет в эти узлы */
     const st = document.createElement('style');
-    st.textContent = '#hint,#thelp,#topleft,#restartBtn,#demoBtn,#fbBtn,#trafBtn{display:none!important}';
+    st.textContent = '#hint,#thelp,#topleft,#restartBtn,#demoBtn,#fbBtn,#trafBtn,#pauseBtn{display:none!important}';
     document.head.appendChild(st);
     /* карточка показа несёт служебное «Демо 3/7 · любая кнопка прерывает» — на странице
        это читается как отладка. Оставляем только фразу инструктора из сегмента */
