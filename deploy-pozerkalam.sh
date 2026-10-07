@@ -171,7 +171,7 @@ csp_union(){ # хэши через пробел из всех аргументо
 }
 write_headers(){ # $1 — файл, $2 — хэши
   cat > "$1" <<EOF
-add_header Content-Security-Policy "default-src 'self'; script-src 'self' $2 https://mc.yandex.ru; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://mc.yandex.ru; connect-src 'self' https://mc.yandex.ru https://*.mc.yandex.ru; worker-src 'self' blob:; child-src blob: https://mc.yandex.ru; frame-ancestors 'self' https://yandex.ru https://*.yandex.net https://playhop.com https://vk.com https://*.vk.com https://web.telegram.org; base-uri 'self'" always;
+add_header Content-Security-Policy "default-src 'self'; script-src 'self' $2 https://mc.yandex.ru; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://mc.yandex.ru https://*.userapi.com https://*.vkuserphoto.ru https://avatars.yandex.net; connect-src 'self' https://mc.yandex.ru https://*.mc.yandex.ru; worker-src 'self' blob:; child-src blob: https://mc.yandex.ru; frame-ancestors 'self' https://yandex.ru https://*.yandex.net https://playhop.com https://vk.com https://*.vk.com https://web.telegram.org; base-uri 'self'" always;
 add_header X-Content-Type-Options "nosniff" always;
 add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 EOF

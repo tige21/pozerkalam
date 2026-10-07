@@ -9,7 +9,9 @@
    Предложение курса выключено в игре (OFFER.on=false), его проверки включают его window.OFFER_FORCE.
    FAULT=offer глушит его и с флагом — краснеют @acct-offer-once/-free/-skip и @an-offer-events;
    FAULT=offeroff показывает его без флага — @acct-offer-off; FAULT=offersite — на любой площадке —
-   @acct-offer-site-only; FAULT=offerbuyer — и купившему — @acct-offer-not-buyer. */
+   @acct-offer-site-only; FAULT=offerbuyer — и купившему — @acct-offer-not-buyer. FAULT=avatar — фото не рисуется —
+   @acct-avatar-shown; FAULT=avfail — битое фото не убирается — @acct-avatar-fallback; FAULT=policy — строки об
+   обновлении политики нет — @acct-policy-note. */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -44,6 +46,9 @@ const FAULTS = {
   offeroff: ["  if(!OFFER.on && !window.OFFER_FORCE) return 'выключено';\n", ''],
   offersite: ["  if(pl!=='web' && pl!=='pwa') return 'площадка '+pl;\n  if(anFramed()) return 'во фрейме';\n", ''],
   offerbuyer: ["  if(entitled(PAYWALL.product)) return 'курс уже куплен';\n", ''],
+  avatar: ["const src = acct && avOk(acct.avatar) && !AV_FAIL.has(acct.avatar) ? acct.avatar : '';", "const src = '';"],
+  avfail: ["AV_FAIL.add(t.getAttribute('src')); t.remove();", ''],
+  policy: ["return !!acct && localStorage.getItem('pz_policy')!==POLICY_REV;", 'return false;'],
 };
 const SRC = FAULTS[FAULT] ? SRC0.replace(FAULTS[FAULT][0], FAULTS[FAULT][1]) : SRC0;
 if (FAULTS[FAULT] && SRC === SRC0) { console.error(`FAULT=${FAULT}: заменяемая строка не найдена в index.html`); process.exit(2); }
@@ -68,7 +73,7 @@ const check = (name, ok, detail) => { results.push({ name, ok: !!ok, detail }); 
 const browser = await chromium.launch({ executablePath: findChrome(), headless: true });
 
 /* одна страница = один сценарий: свои вставки, свой мок API, своя задержка скрипта трекера */
-async function openGame({ rybbit = true, auth = null, rbDelay = 0, api = null, storage = {} } = {}) {
+async function openGame({ rybbit = true, auth = null, rbDelay = 0, api = null, storage = {}, files = {} } = {}) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await ctx.newPage();
   const errors = [], apiCalls = [];
@@ -90,6 +95,10 @@ async function openGame({ rybbit = true, auth = null, rbDelay = 0, api = null, s
       const res = api ? await api(call) : { status: 404, json: { error: 'not-mocked' } };
       return route.fulfill({ status: res.status || 200, contentType: 'application/json', body: JSON.stringify(res.json || {}) });
     }
+    if (files[url]) return route.fulfill(files[url]);
+    /* на проде /sw.js есть; на 404 Chrome пишет в консоль «bad HTTP response code… fetching the script», и каждая
+       проверка «консоль чиста» краснела от окружения, а не от игры (#294). Пустой SW без fetch ничего не перехватывает */
+    if (url === ORIGIN + '/sw.js') return route.fulfill({ status: 200, contentType: 'application/javascript', body: '' });
     /* всё остальное — SW, иконки, внешние адреса — в тесте не нужно */
     return route.fulfill({ status: 404, body: '' });
   });
@@ -151,7 +160,7 @@ const rbEvents = (page, name) => page.evaluate(n => (window.__rb || []).filter(e
 function mockApi(st) {
   st.n = st.n || 0;
   const tokens = () => { st.n++; return { access: 'h.' + Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url') + '.s' + st.n, refresh: 'R' + st.n }; };
-  const account = { id: 'acc123456789', name: 'Егор Т.', providers: ['vk'] };
+  const account = { id: 'acc123456789', name: 'Егор Т.', avatar: st.avatar || null, providers: ['vk'] };
   return async (c) => {
     if (c.path === '/auth/start') {
       st.nonce = c.body.nonce; st.mode = c.body.mode;
@@ -331,6 +340,72 @@ const ovText = (page) => page.evaluate(() => document.getElementById('overlay').
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('pz_auth')).refresh);
   check('access нет — refresh; 401 на запросе — ещё refresh и повтор (@acct-refresh-on-401)',
     seq.join(',') === '/auth/refresh,/me(.s1),/auth/refresh,/me(.s2)' && stored === 'R2', seq.join(',') + ' · refresh=' + stored);
+  await ctx.close();
+}
+
+/* фото профиля — ссылка на CDN провайдера: стоит кружком в чипе главного меню и в профиле, поверх буквы; не
+   загрузилось — картинки нет, видна буква, и на перерисовке меню битая ссылка не возвращается */
+const AV_OK = 'https://sun9-21.userapi.com/s/v1/ig2/test.jpg?size=200x200', AV_BAD = 'https://sun9-21.userapi.com/s/v1/ig2/gone.jpg';
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR4nGM4YWODFTEMLQkAZZlQAVIPr1MAAAAASUVORK5CYII=', 'base64');
+async function avatarState(page) {
+  return page.evaluate(() => {
+    const one = (sel) => { const av = document.querySelector(sel); if (!av) return null; const img = av.querySelector('img'), a = av.getBoundingClientRect();
+      const r = img && img.getBoundingClientRect();
+      return { img: img ? img.getAttribute('src') : null, loaded: !!(img && img.complete && img.naturalWidth > 0), ref: img && img.getAttribute('referrerpolicy'),
+        covers: !!(img && Math.abs(r.width - a.width) < 1 && Math.abs(r.left - a.left) < 1), letter: av.textContent.trim() }; };
+    menuGo('main'); const chip = one('#overlay .mm-chip .av');
+    menuGo('profile'); const prof = one('#overlay .pwho .av');
+    return { chip, prof, stored: (JSON.parse(localStorage.getItem('pz_auth') || '{}').acct || {}).avatar || null };
+  });
+}
+{
+  const st = { avatar: AV_OK };
+  const { ctx, page, errors } = await openGame({ auth: ['vk', 'yandex'], api: mockApi(st), storage: LOGGED,
+    files: { [AV_OK]: { status: 200, contentType: 'image/png', body: PNG } } });
+  await page.waitForTimeout(900);
+  const r = await avatarState(page);
+  const good = (x) => x && x.img === AV_OK && x.loaded && x.ref === 'no-referrer' && x.covers;
+  check('фото профиля после входа — в чипе главного меню и в профиле, поверх буквы, без referrer (@acct-avatar-shown)',
+    good(r.chip) && good(r.prof) && r.stored === AV_OK, JSON.stringify(r));
+  check('консоль чиста с фото профиля', realErrors(errors).length === 0, realErrors(errors).slice(0, 2).join(' | '));
+  await ctx.close();
+}
+/* политика обещает сказать в тренажёре о новом составе данных: вошедший видит строку со ссылкой на политику в главном
+   меню и в профиле; после открытия профиля строка уходит; гостю её нет — его данные не менялись */
+{
+  const { ctx, page } = await openGame({ auth: ['vk', 'yandex'], api: mockApi({ avatar: AV_OK }), storage: LOGGED });
+  await page.waitForTimeout(700);
+  const r = await page.evaluate(() => {
+    const note = () => { const p = document.querySelector('#overlay .policynote'); return p ? { t: p.textContent, href: (p.querySelector('a') || {}).getAttribute && p.querySelector('a').getAttribute('href') } : null; };
+    menuGo('main'); const main1 = note();
+    menuGo('profile'); const prof = note();
+    acctRerender(); const prof2 = note();
+    menuGo('main'); const main2 = note();
+    return { main1, prof, prof2, main2, key: localStorage.getItem('pz_policy') };
+  });
+  await ctx.close();
+  /* гость строки не видит; только что вошедший тоже — вход по ссылке под кнопками и есть согласие с редакцией */
+  const g = await openGame({ auth: ['vk', 'yandex'], api: mockApi({}) });
+  const guest = await g.page.evaluate(() => {
+    menuGo('main'); const a = !!document.querySelector('#overlay .policynote'); menuGo('profile'); const before = a || !!document.querySelector('#overlay .policynote');
+    authClaimed('vk', { status: 200, json: { status: 'ok', provider: 'vk', account: { id: 'acc1', name: 'Егор Т.', providers: ['vk'] }, access: 'h.e30.s', refresh: 'R9' } });
+    menuGo('main'); return { before, after: !!document.querySelector('#overlay .policynote'), logged: !!acct };
+  });
+  await g.ctx.close();
+  check('обновление политики: вошедший видит строку со ссылкой в меню и профиле, перерисовка профиля её не стирает, уход из профиля гасит; гостю и только что вошедшему её нет (@acct-policy-note)',
+    r.main1 && /VK ID/.test(r.main1.t) && r.main1.href === '/privacy/' && r.prof && r.prof2 && !r.main2 && r.key === '2026-10-07'
+      && !guest.before && guest.logged && !guest.after, JSON.stringify({ ...r, guest }));
+}
+{
+  const st = { avatar: AV_BAD };
+  const { ctx, page } = await openGame({ auth: ['vk', 'yandex'], api: mockApi(st), storage: LOGGED });
+  await page.waitForTimeout(900);
+  const a = await avatarState(page);
+  await page.waitForTimeout(300);
+  const b = await avatarState(page);
+  const letter = (x) => x && x.img === null && x.letter === 'Е';
+  check('фото не загрузилось — в кружке буква, и перерисовка меню битую ссылку не возвращает (@acct-avatar-fallback)',
+    letter(a.chip) && letter(a.prof) && letter(b.chip) && letter(b.prof), JSON.stringify({ a, b }));
   await ctx.close();
 }
 

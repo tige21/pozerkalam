@@ -37,6 +37,8 @@ class FakeProviders:
     def __init__(self):
         self.challenges = set()
         self.calls = []
+        self.vk_extra = {}
+        self.ya_extra = {}
         fake = self
 
         class H(BaseHTTPRequestHandler):
@@ -63,7 +65,8 @@ class FakeProviders:
                 if self.path == '/oauth2/user_info':
                     if form.get('access_token') != 'vk-at':
                         return self.reply(401, {'error': 'invalid_token'})
-                    return self.reply(200, {'user': {'user_id': 12345, 'first_name': 'Егор', 'last_name': 'Тестов'}})
+                    return self.reply(200, {'user': dict({'user_id': 12345, 'first_name': 'Егор', 'last_name': 'Тестов'},
+                                                         **fake.vk_extra)})
                 if self.path == '/token':
                     if form.get('client_secret') != 'ya-secret':
                         return self.reply(400, {'error': 'invalid_client'})
@@ -77,7 +80,7 @@ class FakeProviders:
                 if self.path.startswith('/info'):
                     if self.headers.get('Authorization') != 'OAuth ya-at':
                         return self.reply(401, {'error': 'invalid_token'})
-                    return self.reply(200, {'id': '777', 'first_name': 'Аня', 'login': 'anya'})
+                    return self.reply(200, dict({'id': '777', 'first_name': 'Аня', 'login': 'anya'}, **fake.ya_extra))
                 self.reply(404, {'error': 'nope'})
 
         self.srv = ThreadingHTTPServer(('127.0.0.1', 0), H)
@@ -106,6 +109,7 @@ class AccountTest(unittest.TestCase):
         account.log.propagate = False
 
     def setUp(self):
+        self.fake.vk_extra, self.fake.ya_extra = {}, {}
         self.tmp = tempfile.TemporaryDirectory()
         env = {'ACCT_DB': os.path.join(self.tmp.name, 'a.db'), 'JWT_SECRET': 's' * 40,
                'VK_CLIENT_ID': 'vk-app', 'YANDEX_CLIENT_ID': 'ya-app', 'YANDEX_CLIENT_SECRET': 'ya-secret',
@@ -188,7 +192,9 @@ class AccountTest(unittest.TestCase):
 
     def test_yandex_poll_flow_and_same_account(self):
         sid, q, nonce = self.start('yandex', 'poll')
-        self.assertEqual(q['scope'], 'login:info')
+        # без scope токен получает права из настроек приложения: галочка «портрет» в кабинете Яндекса
+        # включает аватарку, а явный login:avatar без неё мог бы сломать вход
+        self.assertNotIn('scope', q)
         st, body, _ = self.call('POST', '/auth/claim', {'sid': sid, 'nonce': nonce})
         self.assertEqual(body, {'status': 'pending'})
         st, page, _ = self.callback(q, code='ya-ok')
@@ -200,6 +206,62 @@ class AccountTest(unittest.TestCase):
         second = self.login('yandex')
         self.assertFalse(second['is_new'])
         self.assertEqual(second['account']['id'], first['account']['id'])
+
+    VK_AVATAR = 'https://sun9-21.userapi.com/s/v1/ig2/AbC_1.jpg?size=200x200&quality=95&crop=0,0,200,200&ava=1'
+
+    def test_vk_avatar_stored_and_returned(self):
+        self.fake.vk_extra = {'avatar': self.VK_AVATAR}
+        body = self.login('vk')
+        self.assertEqual(body['account']['avatar'], self.VK_AVATAR)
+        st, me, _ = self.call('GET', '/me', token=body['access'])
+        self.assertEqual(me['account']['avatar'], self.VK_AVATAR)
+        st, fresh, _ = self.call('POST', '/auth/refresh', {'refresh': body['refresh']})
+        self.assertEqual(fresh['account']['avatar'], self.VK_AVATAR)
+
+    def test_avatar_from_foreign_host_is_dropped(self):
+        for bad in ('https://evil.example/a.jpg', 'http://sun9-21.userapi.com/a.jpg',
+                    'https://userapi.com.evil.ru/a.jpg', 'https://vk.com/images/camera_200.png',
+                    'javascript:alert(1)', 'https://sun9-21.userapi.com/a".jpg', 'x' * 10,
+                    'https://sun9-21.userapi.com:443/a.jpg', 'https://avatars.yandex.net',
+                    'https://avatars.yandex.net.evil.ru/a', 'https://u@sun9-21.userapi.com/a.jpg',
+                    'https://sun9-21.userapi.com:abc/a.jpg', 'https://sun9-21.userapi.com:99999/a.jpg'):
+            self.fake.vk_extra = {'avatar': bad}
+            self.app.rate = account.Rate()  # десяток входов подряд с одного адреса упёрся бы в лимит start
+            self.assertIsNone(self.login('vk')['account']['avatar'], bad)
+        self.fake.vk_extra = {'avatar': 'https://pp.vkuserphoto.ru/c1/a.jpg'}
+        self.assertEqual(self.login('vk')['account']['avatar'], 'https://pp.vkuserphoto.ru/c1/a.jpg')
+
+    def test_yandex_avatar_from_portrait_id(self):
+        self.fake.ya_extra = {'default_avatar_id': '1234/AbC-5', 'is_avatar_empty': False}
+        self.assertEqual(self.login('yandex')['account']['avatar'],
+                         'https://avatars.yandex.net/get-yapic/1234/AbC-5/islands-200')
+        self.fake.ya_extra = {'default_avatar_id': '0/0-0', 'is_avatar_empty': True}
+        self.assertIsNone(self.login('yandex')['account']['avatar'], 'заглушка Яндекса — не фото')
+        self.fake.ya_extra = {'default_avatar_id': '../../x?y', 'is_avatar_empty': False}
+        self.assertIsNone(self.login('yandex')['account']['avatar'], 'чужие символы в id портрета')
+
+    def test_relogin_without_avatar_clears_it(self):
+        self.fake.vk_extra = {'avatar': self.VK_AVATAR}
+        first = self.login('vk')
+        self.assertEqual(first['account']['avatar'], self.VK_AVATAR)
+        self.fake.vk_extra = {}
+        second = self.login('vk')
+        self.assertEqual(second['account']['id'], first['account']['id'])
+        self.assertIsNone(second['account']['avatar'], 'фото убрали у провайдера — не держим старую ссылку')
+
+    def test_old_db_gets_avatar_column_and_keeps_accounts(self):
+        path = os.path.join(self.tmp.name, 'old.db')
+        import sqlite3
+        c = sqlite3.connect(path, isolation_level=None)
+        c.executescript(account.MIGRATIONS[0])
+        c.execute('CREATE TABLE schema_version(v INTEGER NOT NULL)')
+        c.execute('INSERT INTO schema_version(v) VALUES (1)')
+        c.execute("INSERT INTO accounts(id, name, created_at, last_seen_at) VALUES ('a1', 'Старый', 1, 1)")
+        c.close()
+        store = account.Store(path)
+        row = store.conn().execute('SELECT name, avatar FROM accounts WHERE id=?', ('a1',)).fetchone()
+        self.assertEqual((row['name'], row['avatar']), ('Старый', None))
+        store.release()
 
     def test_wrong_nonce_is_forbidden(self):
         sid, q, nonce = self.start('vk', 'redirect')

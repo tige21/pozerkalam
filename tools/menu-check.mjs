@@ -2,7 +2,7 @@
 /* Главное меню, пауза и машина на подиуме — коды app-menu в specs/features/app/menu.feature.
    Запуск (playwright-core ставится во временную папку, см. cockpit-shots.mjs):
      PW_DIR=/tmp/pw node tools/menu-check.mjs
-     FAULT=sections|tabs|esc|pausebtn|fit|persist|play|showroom|hud PW_DIR=/tmp/pw node tools/menu-check.mjs
+     FAULT=sections|tabs|esc|pausebtn|fit|persist|play|showroom|hud|proflayout PW_DIR=/tmp/pw node tools/menu-check.mjs
    FAULT ломает одно поведение в странице — соответствующая проверка обязана покраснеть, иначе она
    зелёная по построению.
    Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена. */
@@ -48,6 +48,10 @@ const FAULTS = {
   showroom: () => { drawShowroom = function () { ctx.fillStyle = '#0e151f'; ctx.fillRect(0, 0, W, H); }; },
   hud: () => { const s = document.createElement('style'); s.textContent = 'body.menu #bar,body.menu #coach{display:flex!important}'; document.head.appendChild(s); },
   tabs: () => { const s = document.createElement('style'); s.textContent = '.lvgrid[hidden]{display:grid!important}'; document.head.appendChild(s); },
+  /* прежняя вёрстка профиля: плитки автосеткой с сиротой, кнопки входа в две колонки с переносом, чип без предела */
+  proflayout: () => { const s = document.createElement('style'); s.textContent = '.ptiles{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))!important}'
+    + '.ptile{grid-column:auto!important}body.compact #overlay .acctbtns{grid-template-columns:1fr 1fr!important}#overlay .acctbtns button{white-space:normal!important}'
+    + '#overlay .mm-chip{max-width:none!important}#overlay .mm-note.policynote{display:block!important}'; document.head.appendChild(s); },
 };
 if (FAULT && !FAULTS[FAULT]) { console.error('неизвестный FAULT: ' + FAULT); process.exit(2); }
 
@@ -172,6 +176,78 @@ await guard('app-menu-pause-touch', async () => {
     await p.close();
   }
   check('телефон: кнопка паузы видна, ≥36 px, ни на что не ложится, тап открывает паузу (@app-menu-pause-touch)', bad.length === 0, bad.join(' | '));
+});
+
+/* ---------- профиль: ровная сетка, кнопки входа в строку, чип не растёт ---------- */
+/* вход включён списком провайдеров, как после веб-деплоя; API аккаунта замокан — тест не ходит на прод.
+   Длинное имя — худший случай для чипа и шапки профиля */
+const LONG = 'Константин Константинопольский';
+async function openAuth(vp, touch, logged) {
+  const p = await browser.newPage({ viewport: vp, deviceScaleFactor: touch ? 2 : 1, hasTouch: touch, isMobile: touch });
+  p.on('pageerror', e => { if (!/ServiceWorker/.test(e.message)) errors.push(vp.width + 'x' + vp.height + ': ' + e.message); });
+  const account = { id: 'acc123456789', name: LONG, avatar: null, providers: ['yandex'] };
+  await p.route('https://pozerkalam.space/**', r => {
+    const u = r.request().url(), tok = { access: 'h.' + Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url') + '.s', refresh: 'R1' };
+    if (u.endsWith('/auth/refresh')) return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ account, entitlements: [], ...tok }) });
+    if (u.endsWith('/me')) return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ account, entitlements: [] }) });
+    return r.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
+  });
+  await p.addInitScript(([t, lg, acc]) => {
+    window.AUTH_PROVIDERS = ['vk', 'yandex'];
+    if (sessionStorage.getItem('__s')) return; sessionStorage.setItem('__s', '1');
+    localStorage.clear();
+    for (const k of ['trainer_seen', 'trainer_hint', 'trainer_drive']) localStorage.setItem(k, '1');
+    localStorage.setItem('trainer_runs', '9'); localStorage.setItem('trainer_touch', t ? '1' : '0');
+    if (lg) localStorage.setItem('pz_auth', JSON.stringify({ refresh: 'R0', acct: { id: acc.id, name: acc.name, provider: 'yandex', ent: [] } }));
+  }, [touch, logged, account]);
+  await p.goto(url); await p.waitForTimeout(600);
+  if (FAULT) await p.evaluate(`(${FAULTS[FAULT].toString()})()`);
+  return p;
+}
+await guard('app-menu-profile-layout', async () => {
+  const bad = [];
+  const screens = phones.map(([w, h]) => [w, h, true]).concat([[1280, 720, false], [1440, 900, false]]);
+  for (const [w, h, touch] of screens) for (const logged of [false, true]) {
+    const p = await openAuth({ width: w, height: h }, touch, logged);
+    const r = await p.evaluate((lg) => {
+      const out = [], R = (e) => e.getBoundingClientRect();
+      /* главное меню меряется первым: уход из профиля гасит строку о политике, и замер после него ничего бы не
+         проверял. Чип: длинное имя обрезано, чип не залезает на название игры */
+      menuGo('main');
+      if (lg) {
+        const chip = R(document.querySelector('#overlay .mm-chip')), brand = R(document.querySelector('#overlay .mm-brand')), nm = document.querySelector('#overlay .mm-chip .nm');
+        if (chip.width > 280) out.push('чип ' + Math.round(chip.width) + ' px');
+        if (chip.left < brand.right + 8) out.push('чип на названии игры');
+        if (!(nm.scrollWidth > nm.clientWidth)) out.push('длинное имя не обрезано');
+        /* строка о новой политике не выталкивает кнопки главного меню за край; её нет в разметке — замерять нечего */
+        if (!document.querySelector('#overlay .policynote')) out.push('нет строки о политике');
+        for (const b of document.querySelectorAll('#overlay button')) { const q = R(b);
+          if (q.width && (q.bottom > innerHeight + 0.5 || q.right > innerWidth + 0.5)) out.push('«' + b.textContent.trim().slice(0, 16) + '» за краем'); }
+      }
+      menuGo('profile', null, 'main');
+      /* плитки статистики: каждый ряд от левого края сетки до правого — без сироты и дырки рядом */
+      const g = document.querySelector('#overlay .ptiles'), tiles = [...g.children].map(R), gr = R(g), rows = {};
+      for (const t of tiles) (rows[Math.round(t.top)] = rows[Math.round(t.top)] || []).push(t);
+      for (const k in rows) { const row = rows[k], l = Math.min(...row.map(t => t.left)), rr = Math.max(...row.map(t => t.right));
+        if (l - gr.left > 1 || gr.right - rr > 1) out.push('ряд плиток ' + Math.round(l - gr.left) + '…' + Math.round(gr.right - rr) + ' px от краёв'); }
+      /* кнопки входа: подпись в одну строку */
+      for (const b of document.querySelectorAll('#overlay .acctbtns button')) {
+        const tn = [...b.querySelectorAll('*')].concat([b]).flatMap(e => [...e.childNodes]).find(n => n.nodeType === 3 && n.textContent.trim().length > 3);
+        if (!tn) continue;
+        const rg = document.createRange(); rg.selectNodeContents(tn);
+        const lines = new Set([...rg.getClientRects()].map(q => Math.round(q.top))).size;
+        if (lines > 1) out.push('«' + b.textContent.trim() + '» в ' + lines + ' строки');
+      }
+      /* шапка профиля: кружок не сплющен длинным именем */
+      const av = R(document.querySelector('#overlay .pwho .av'));
+      if (Math.abs(av.width - av.height) > 1) out.push('кружок профиля ' + Math.round(av.width) + '×' + Math.round(av.height));
+      return out;
+    }, logged);
+    for (const x of r) bad.push(`${w}x${h}${logged ? ' вход' : ' гость'}: ${x}`);
+    await p.close();
+  }
+  check('профиль ровный: плитки статистики без сироты, кнопки входа в одну строку, кружок не сплющен, длинное имя в чипе обрезано, строка о политике не выталкивает кнопки — 5 телефонов и 2 экрана ПК (@app-menu-profile-layout)',
+    bad.length === 0, bad.slice(0, 8).join(' | ') + (bad.length > 8 ? ` … ещё ${bad.length - 8}` : ''));
 });
 
 /* ---------- вёрстка: всё помещается ---------- */

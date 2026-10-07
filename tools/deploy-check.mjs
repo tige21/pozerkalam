@@ -67,6 +67,27 @@ fs.writeFileSync(path.join(tmp, 'b.html'), `<script>${body}</script><script>b()<
 const got = execFileSync('python3', [path.join(ROOT, 'tools', 'csp-hashes.py'), path.join(tmp, 'a.html'),
   path.join(tmp, 'b.html'), path.join(tmp, 'нет.html')], { encoding: 'utf8' }).trim().split(/\s+/);
 const want = [body, 'b()'].map(s => "'sha256-" + crypto.createHash('sha256').update(s, 'utf8').digest('base64') + "'");
+/* фото профиля: браузер грузит его по ссылке, которую пропустил сервис (AVATAR_HOSTS / AVATAR_EXACT в account.py)
+   и игра (AV_RE в index.html). Хост, которого нет в img-src, CSP молча режет — в кружке осталась бы буква */
+{
+  const acc = fs.readFileSync(path.join(ROOT, 'server', 'account.py'), 'utf8');
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const tuple = (name) => ((acc.match(new RegExp('^' + name + " = \\(([^)]*)\\)", 'm')) || [])[1] || '').match(/'([^']+)'/g) || [];
+  const hosts = [...tuple('AVATAR_HOSTS').map(h => '*' + h.slice(1, -1)), ...tuple('AVATAR_EXACT').map(h => h.slice(1, -1))];
+  const csp = (lines.find(l => l.includes('Content-Security-Policy') && l.includes('img-src')) || '').match(/img-src ([^;]*);/);
+  const img = csp ? csp[1].split(/\s+/) : [];
+  const avRe = (html.match(/const AV_RE=(\/.*\/i);/) || [])[1] || '';
+  const re = avRe ? new Function('return ' + avRe)() : null;
+  const sample = (h) => 'https://' + h.replace('*', 'sun9-1') + '/a.jpg';
+  const miss = hosts.filter(h => !img.includes('https://' + h));
+  /* и обратно: лишний хост в img-src — дыра, которую не просил ни сервис, ни игра (Метрика — своя статья) */
+  const extra = img.filter(x => /^https:/.test(x) && x !== 'https://mc.yandex.ru' && !hosts.includes(x.slice(8)));
+  const reMiss = hosts.filter(h => !(re && re.test(sample(h))));
+  check('хосты фото профиля одни и те же в сервисе, в игре и в img-src CSP (@dist-csp-avatar-hosts)',
+    hosts.length >= 3 && miss.length === 0 && reMiss.length === 0 && extra.length === 0,
+    JSON.stringify({ hosts, нет_в_csp: miss, нет_в_игре: reMiss, лишние_в_csp: extra }));
+}
+
 check('tools/csp-hashes.py считает хэши как браузер: без src и JSON-LD, без повторов, пропуская отсутствующие файлы (@dist-csp-hashes)',
   JSON.stringify(got) === JSON.stringify(want), JSON.stringify({ got, want }));
 fs.rmSync(tmp, { recursive: true, force: true });

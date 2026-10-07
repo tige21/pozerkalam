@@ -235,6 +235,11 @@ button.ghost{background:transparent;border-color:rgba(255,255,255,.16);color:#b9
 #overlay .legal a,#overlay a.authlink{color:#9fd0ff;text-decoration:underline}
 #overlay .acctline{font-size:13.5px;color:#c3d2e2}
 #overlay .acctnote{margin:12px 0 0;font-size:13px;color:#ffd27a}
+#overlay .policynote a{color:inherit}
+/* на низком экране строка о политике в главном меню выталкивала «Написать нам» за край: там она только в
+   профиле, а на чипе горит точка, пока профиль не открыт */
+.mm-chip .dot{flex:none;width:8px;height:8px;border-radius:50%;background:#ffd27a}
+@media (max-height:420px){ #overlay .mm-note.policynote{display:none} }
 #overlay a.authlink{display:inline-block;margin-top:6px;font-size:16px;font-weight:600}
 /* коробка выбирается парой сегментов, а не кнопкой-переключателем: надпись «Коробка: автомат»
    читается как статус, и владелец не нашёл, чем её сменить */
@@ -471,9 +476,10 @@ body.compact #overlay .winacts button{margin:0;padding:12px 8px;font-size:14.5px
 body.compact #overlay .nextgo{gap:4px;max-width:none}
 body.compact #overlay .nextname{font-size:12px;text-align:center}
 body.compact #overlay button.linkbtn{width:auto;margin:0;padding:4px 0;font-size:12.5px}
-/* на телефоне кнопки входа — пара в один ряд: столбиком во всю ширину они сталкивали подсказку за край */
-body.compact #overlay .acctbtns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-body.compact #overlay .acctbtns button{width:auto;margin:0;padding:11px 6px;font-size:14px}
+/* на телефоне кнопки входа — пара в один ряд, где обе подписи влезают в строку (столбиком во всю ширину они
+   сталкивали подсказку за край); на 568–740 px пара переносила «Войти через VK / ID» на две строки — там столбик */
+body.compact #overlay .acctbtns{display:grid;grid-template-columns:repeat(auto-fit,minmax(212px,1fr));gap:8px}
+body.compact #overlay .acctbtns button{width:auto;margin:0;padding:11px 6px;font-size:14px;white-space:nowrap}
 body.compact #overlay .acctbtns button.oauth{height:44px;padding:0 8px;gap:8px;font-size:14px}
 body.compact #overlay button.oauth svg{width:20px;height:20px}
 body.compact #overlay .acct{margin:10px 0 12px}
@@ -517,10 +523,12 @@ body.menu #overlay.lay-card{background:rgba(4,7,11,.62);pointer-events:auto}
 .mm-brand svg{width:60px;height:30px;flex:none}
 .mm-tools{display:flex;align-items:center;gap:8px}
 #overlay .mm-chip{margin:0;display:flex;align-items:center;gap:8px;height:44px;padding:0 14px 0 6px;border-radius:999px;
-  background:rgba(9,14,20,.74);border-color:rgba(255,255,255,.16);color:#e8eef6;font-size:14px;font-weight:600;max-width:46vw}
-.mm-chip .av,.pwho .av{display:grid;place-items:center;flex:none;width:32px;height:32px;border-radius:50%;
+  background:rgba(9,14,20,.74);border-color:rgba(255,255,255,.16);color:#e8eef6;font-size:14px;font-weight:600;max-width:min(260px,46vw)}
+.mm-chip .av,.pwho .av{position:relative;overflow:hidden;display:grid;place-items:center;flex:none;width:32px;height:32px;border-radius:50%;
   background:#1b5faa;color:#fff;font-size:14px;font-weight:700}
-.mm-chip .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* фото лежит поверх буквы: не загрузилось — его убирают, и видна буква */
+.av img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:50%}
+.mm-chip .nm{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mm-chip .in{color:#9fd0ff;font-weight:500}
 #overlay .mm-icon{margin:0;display:grid;place-items:center;width:44px;height:44px;padding:0;border-radius:50%;
   background:rgba(9,14,20,.74);border-color:rgba(255,255,255,.16);color:#e8eef6}
@@ -561,7 +569,9 @@ body.menu #overlay.lay-card{background:rgba(4,7,11,.62);pointer-events:auto}
 #overlay .mrow button{margin:0}
 #overlay button.linkbtn.danger{color:#ff9aa2}
 #overlay button:disabled{opacity:.4;cursor:default}
-.ptiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin:10px 0}
+.ptiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}
+/* плиток пять: в автосетке одна оставалась сиротой с дыркой рядом — последняя нечётная идёт во всю ширину */
+.ptile:last-child:nth-child(odd){grid-column:1/-1}
 .ptile{padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.045)}
 .ptile b{display:block;font-size:21px;color:#fff;font-variant-numeric:tabular-nums}
 .ptile span{display:block;margin-top:2px;font-size:12px;line-height:1.35;color:#93a7bd}
@@ -11316,7 +11326,13 @@ function authRead(){
     if(a && typeof a.refresh==='string' && a.acct && typeof a.acct.id==='string') return a; }catch(e){}
   return null;
 }
-if(AUTH_ON){ const a=authRead(); if(a){ acct=a.acct; acct.ent=Array.isArray(acct.ent)?acct.ent:[]; acctRefresh=a.refresh; } }
+/* фото профиля — ссылка на CDN провайдера, тот же список хостов, что у сервиса (avatar_ok) и в img-src CSP.
+   Битая картинка убирается, и её адрес запоминается: перерисовка меню иначе вставляла бы её снова */
+const AV_RE=/^https:\/\/(([a-z0-9-]+\.)+(userapi\.com|vkuserphoto\.ru)|avatars\.yandex\.net)\/[^\s"'<>`\\]*$/i;
+const AV_FAIL=new Set();
+function avOk(u){ return typeof u==='string' && u.length<=512 && AV_RE.test(u) ? u : null; }
+/* карточка из localStorage — чужая для кода: ссылку на фото проверяем так же, как ответ сервиса */
+if(AUTH_ON){ const a=authRead(); if(a){ acct=a.acct; acct.ent=Array.isArray(acct.ent)?acct.ent:[]; acct.avatar=avOk(acct.avatar); acctRefresh=a.refresh; } }
 function authSave(){
   try{ localStorage.setItem(AUTH_KEY, JSON.stringify({refresh:acctRefresh, acct:acct})); }catch(e){}
 }
@@ -11346,11 +11362,31 @@ function jwtExp(t){
   try{ const p=JSON.parse(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))); return p.exp*1000; }
   catch(e){ return Date.now()+3000e3; }
 }
+function avHTML(who){
+  const src = acct && avOk(acct.avatar) && !AV_FAIL.has(acct.avatar) ? acct.avatar : '';
+  return '<span class="av" aria-hidden="true">'+esc(who.slice(0,1).toUpperCase())
+    +(src ? '<img src="'+esc(src)+'" alt="" referrerpolicy="no-referrer" decoding="async">' : '')+'</span>';
+}
+document.addEventListener('error', e=>{
+  const t=e.target;
+  if(t && t.tagName==='IMG' && t.parentNode && t.parentNode.classList && t.parentNode.classList.contains('av')){
+    AV_FAIL.add(t.getAttribute('src')); t.remove();
+  }
+}, true);
+/* политика обещает сказать в тренажёре, если изменится состав данных: с 07.10.2026 вошедший игрок
+   отдаёт ещё и ссылку на фото. Строка стоит в главном меню и в профиле, пока профиль не открыт */
+const POLICY_REV='2026-10-07';
+function policyNew(){ try{ return !!acct && localStorage.getItem('pz_policy')!==POLICY_REV; }catch(e){ return false; } }
+function policySeen(){ try{ localStorage.setItem('pz_policy', POLICY_REV); }catch(e){} }
+function policyNoteHTML(cls){
+  return policyNew() ? '<p class="'+cls+' policynote">Фото в профиле берём из '+esc(AUTH_NAMES[acct.provider]||'аккаунта входа')
+    +'. <a href="/privacy/" target="_blank" rel="noopener">Политика конфиденциальности</a> обновлена 7 октября.</p>' : '';
+}
 function authApply(j){
   acctAccess=j.access||''; acctAccessExp=jwtExp(acctAccess);
   if(j.refresh) acctRefresh=j.refresh;
   const a=j.account||{};
-  acct={ id:a.id, name:String(a.name||'').slice(0,64),
+  acct={ id:a.id, name:String(a.name||'').slice(0,64), avatar:avOk(a.avatar),
     provider: j.provider || (acct&&acct.provider) || (a.providers||[])[0] || '',
     ent: Array.isArray(j.entitlements) ? j.entitlements : (acct&&acct.ent)||[] };
   authSave();
@@ -11458,6 +11494,8 @@ function authClaimed(provider, r){
   const j=r.json||{};
   if(r.status===200 && j.status==='ok' && j.account && j.account.id){
     authApply(j);
+    /* вход — согласие с текущей редакцией (ссылка под кнопками входа): строка об обновлении ему не нужна */
+    policySeen();
     console.info('[auth] вход выполнен: '+acct.provider+(j.is_new?', новый аккаунт':''));
     track('auth_ok', {provider:acct.provider||provider, is_new:!!j.is_new});
     anIdentify(acct.id);
@@ -11509,6 +11547,7 @@ async function authMe(){
   try{ r=await apiFetch('/me','GET'); }catch(e){ return; }
   if(r.status!==200 || !r.json.account) return;
   acct.name=String(r.json.account.name||'').slice(0,64);
+  acct.avatar=avOk(r.json.account.avatar);
   acct.ent=Array.isArray(r.json.entitlements)?r.json.entitlements:[];
   authSave();
   acctRerender();
@@ -12123,8 +12162,9 @@ function startHTML(){
     +'<div class="mm-top"><div class="mm-brand">'+LOGO_SVG+'<b>По зеркалам</b></div>'
     +'<div class="mm-tools">'
     +'<button type="button" class="mm-chip" data-act="menu:profile" aria-label="Профиль: '+esc(who)+'">'
-      +'<span class="av" aria-hidden="true">'+esc(who.slice(0,1).toUpperCase())+'</span>'
-      +'<span class="nm">'+esc(who)+'</span>'+(AUTH_ON && !acct ? '<span class="in">войти</span>' : '')+'</button>'
+      +avHTML(who)
+      +'<span class="nm">'+esc(who)+'</span>'+(AUTH_ON && !acct ? '<span class="in">войти</span>' : '')
+      +(policyNew() ? '<span class="dot" aria-hidden="true"></span>' : '')+'</button>'
     +'<button type="button" class="mm-icon" data-act="menu:settings" aria-label="Настройки" title="Настройки">'+ICON_GEAR+'</button>'
     +'</div></div>'
     +'<nav class="mm-col" aria-label="Главное меню">'
@@ -12135,7 +12175,7 @@ function startHTML(){
     +'<button type="button" class="mm-item" data-act="menu:settings">Настройки</button>'
     +'<button type="button" class="mm-item" data-act="menu:help">Помощь</button>'
     +'</nav>'
-    +(acctNote ? '<p class="mm-note acctnote">'+esc(acctNote)+'</p>' : '')
+    +(acctNote ? '<p class="mm-note acctnote">'+esc(acctNote)+'</p>' : policyNoteHTML('mm-note'))
     +'<div class="mm-foot"><button type="button" class="linkbtn" data-act="feedback:start">✉︎ Написать нам</button></div>'
     +'<p class="mm-drag'+(showroom.dragged?' off':'')+'" aria-hidden="true">↻ потяни, чтобы повернуть машину</p>'
     +'</div>';
@@ -12222,6 +12262,9 @@ function menuTabDefault(scr){
   return scr==='levels' ? levelTab(game.li) : scr==='settings' ? 'screen' : scr==='help' ? 'ctrl' : null;
 }
 function menuGo(scr, tab, from){
+  /* строка о политике гаснет, когда игрок уходит из профиля, где её прочёл: погашенная при отрисовке, она
+     пропадала на перерисовке профиля после /me через долю секунды */
+  if(menu.scr==='profile' && scr!=='profile' && policyNew()) policySeen();
   if(scr==='main'){ menu.root='main'; from=null; }
   else if(scr==='pause'){ menu.root=null; from=null; }
   else if(from===undefined)
@@ -12325,9 +12368,9 @@ function menuProfileHTML(){
   const st=profStats(), rd=examReadiness(), er=examRuns()||{routes:0};
   const who = acct ? (acct.name || AUTH_NAMES[acct.provider] || 'без имени') : 'Гость';
   let s=menuHead('Профиль')+'<div class="mbody">'
-    +'<div class="pwho"><span class="av" aria-hidden="true">'+esc(who.slice(0,1).toUpperCase())+'</span><span><b>'+esc(who)+'</b>'
+    +'<div class="pwho">'+avHTML(who)+'<span><b>'+esc(who)+'</b>'
     +'<span class="sd">'+(acct ? 'вход через '+(AUTH_NAMES[acct.provider]||acct.provider) : 'прогресс хранится на этом устройстве')+'</span></span></div>'
-    +acctNoteHTML();
+    +acctNoteHTML()+policyNoteHTML('acctnote');
   if(AUTH_ON && !acct) s+=acctBtnsHTML('Войди, и прогресс будет на телефоне и на компьютере.');
   s+='<div class="ptiles">'
     +'<div class="ptile"><b>'+st.passed+' из '+st.total+'</b><span>уровней пройдено</span></div>'

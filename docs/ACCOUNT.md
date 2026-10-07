@@ -47,8 +47,19 @@ pozerkalam-account.service — server/account.py (Python 3.11 stdlib + SQLite)
 4. `POST /auth/claim {sid, nonce}` — строка удаляется, выдаются access + refresh.
    Чужой `nonce` → 403: `sid` виден в адресе возврата и без `nonce` бесполезен.
 
-Данные провайдера — минимум: VK без `scope` (id, имя), Яндекс — `login:info`.
-Хранятся id у провайдера и отображаемое имя («Егор Т.»). Email и аватар не запрашиваются.
+Данные провайдера — минимум: VK без `scope` (id, имя, фото), Яндекс — без `scope`, права из кабинета
+приложения (`login:info` и с 07.10.2026 `login:avatar`). Хранятся id у провайдера, отображаемое имя
+(«Егор Т.») и **ссылка** на фото профиля (`accounts.avatar`, миграция 2) — сам файл нет; email не
+запрашивается. Ссылка проходит `avatar_ok`: только https с `*.userapi.com`, `*.vkuserphoto.ru` и
+`avatars.yandex.net` — тот же список стоит в `img-src` CSP (`deploy-pozerkalam.sh`) и в `AV_RE` игры,
+`deploy-check` `@dist-csp-avatar-hosts` сверяет все три. У Яндекса ссылка собирается из
+`default_avatar_id` (`islands-200`), заглушка (`is_avatar_empty`) — не фото. Повторный вход
+перезаписывает ссылку, в том числе на пустую. `scope` у Яндекса не передаётся намеренно: явный
+`login:avatar` без галочки в кабинете мог сломать вход целиком, а без `scope` токен получает ровно
+отмеченные права. В игре фото лежит поверх буквы (`avHTML`), `referrerpolicy=no-referrer`; не
+загрузилось — убирается, адрес запоминается до перезагрузки (`AV_FAIL`). О новом составе данных
+вошедший игрок узнаёт строкой в меню и профиле (`policyNoteHTML`, ключ `pz_policy`) — так обещает
+раздел «Изменения» политики.
 
 ## Сессии
 
@@ -118,7 +129,8 @@ pozerkalam-account.service — server/account.py (Python 3.11 stdlib + SQLite)
 **Яндекс ID** — https://oauth.yandex.ru/:
 1. Новое приложение, платформа «Веб-сервисы».
 2. Redirect URI: `https://pozerkalam.space/api/v1/auth/callback`.
-3. Доступ: «Доступ к логину, имени и фамилии, полу» (`login:info`).
+3. Доступ: «Доступ к логину, имени и фамилии, полу» (`login:info`) и «Доступ к портрету
+   пользователя» (`login:avatar`, с 07.10.2026; без него фото у вошедших через Яндекс нет, вход работает).
 4. Скопировать ClientID и Client secret. Секрет — только на бокс.
 
 ## Настройки

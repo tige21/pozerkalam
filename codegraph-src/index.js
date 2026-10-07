@@ -767,6 +767,16 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -11316,7 +11326,13 @@ function authRead(){
     if(a && typeof a.refresh==='string' && a.acct && typeof a.acct.id==='string') return a; }catch(e){}
   return null;
 }
-if(AUTH_ON){ const a=authRead(); if(a){ acct=a.acct; acct.ent=Array.isArray(acct.ent)?acct.ent:[]; acctRefresh=a.refresh; } }
+/* фото профиля — ссылка на CDN провайдера, тот же список хостов, что у сервиса (avatar_ok) и в img-src CSP.
+   Битая картинка убирается, и её адрес запоминается: перерисовка меню иначе вставляла бы её снова */
+const AV_RE=/^https:\/\/(([a-z0-9-]+\.)+(userapi\.com|vkuserphoto\.ru)|avatars\.yandex\.net)\/[^\s"'<>`\\]*$/i;
+const AV_FAIL=new Set();
+function avOk(u){ return typeof u==='string' && u.length<=512 && AV_RE.test(u) ? u : null; }
+/* карточка из localStorage — чужая для кода: ссылку на фото проверяем так же, как ответ сервиса */
+if(AUTH_ON){ const a=authRead(); if(a){ acct=a.acct; acct.ent=Array.isArray(acct.ent)?acct.ent:[]; acct.avatar=avOk(acct.avatar); acctRefresh=a.refresh; } }
 function authSave(){
   try{ localStorage.setItem(AUTH_KEY, JSON.stringify({refresh:acctRefresh, acct:acct})); }catch(e){}
 }
@@ -11346,11 +11362,31 @@ function jwtExp(t){
   try{ const p=JSON.parse(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))); return p.exp*1000; }
   catch(e){ return Date.now()+3000e3; }
 }
+function avHTML(who){
+  const src = acct && avOk(acct.avatar) && !AV_FAIL.has(acct.avatar) ? acct.avatar : '';
+  return '<span class="av" aria-hidden="true">'+esc(who.slice(0,1).toUpperCase())
+    +(src ? '<img src="'+esc(src)+'" alt="" referrerpolicy="no-referrer" decoding="async">' : '')+'</span>';
+}
+document.addEventListener('error', e=>{
+  const t=e.target;
+  if(t && t.tagName==='IMG' && t.parentNode && t.parentNode.classList && t.parentNode.classList.contains('av')){
+    AV_FAIL.add(t.getAttribute('src')); t.remove();
+  }
+}, true);
+/* политика обещает сказать в тренажёре, если изменится состав данных: с 07.10.2026 вошедший игрок
+   отдаёт ещё и ссылку на фото. Строка стоит в главном меню и в профиле, пока профиль не открыт */
+const POLICY_REV='2026-10-07';
+function policyNew(){ try{ return !!acct && localStorage.getItem('pz_policy')!==POLICY_REV; }catch(e){ return false; } }
+function policySeen(){ try{ localStorage.setItem('pz_policy', POLICY_REV); }catch(e){} }
+function policyNoteHTML(cls){
+  return policyNew() ? '<p class="'+cls+' policynote">Фото в профиле берём из '+esc(AUTH_NAMES[acct.provider]||'аккаунта входа')
+    +'. <a href="/privacy/" target="_blank" rel="noopener">Политика конфиденциальности</a> обновлена 7 октября.</p>' : '';
+}
 function authApply(j){
   acctAccess=j.access||''; acctAccessExp=jwtExp(acctAccess);
   if(j.refresh) acctRefresh=j.refresh;
   const a=j.account||{};
-  acct={ id:a.id, name:String(a.name||'').slice(0,64),
+  acct={ id:a.id, name:String(a.name||'').slice(0,64), avatar:avOk(a.avatar),
     provider: j.provider || (acct&&acct.provider) || (a.providers||[])[0] || '',
     ent: Array.isArray(j.entitlements) ? j.entitlements : (acct&&acct.ent)||[] };
   authSave();
@@ -11458,6 +11494,8 @@ function authClaimed(provider, r){
   const j=r.json||{};
   if(r.status===200 && j.status==='ok' && j.account && j.account.id){
     authApply(j);
+    /* вход — согласие с текущей редакцией (ссылка под кнопками входа): строка об обновлении ему не нужна */
+    policySeen();
     console.info('[auth] вход выполнен: '+acct.provider+(j.is_new?', новый аккаунт':''));
     track('auth_ok', {provider:acct.provider||provider, is_new:!!j.is_new});
     anIdentify(acct.id);
@@ -11509,6 +11547,7 @@ async function authMe(){
   try{ r=await apiFetch('/me','GET'); }catch(e){ return; }
   if(r.status!==200 || !r.json.account) return;
   acct.name=String(r.json.account.name||'').slice(0,64);
+  acct.avatar=avOk(r.json.account.avatar);
   acct.ent=Array.isArray(r.json.entitlements)?r.json.entitlements:[];
   authSave();
   acctRerender();
@@ -12123,8 +12162,9 @@ function startHTML(){
     +'<div class="mm-top"><div class="mm-brand">'+LOGO_SVG+'<b>По зеркалам</b></div>'
     +'<div class="mm-tools">'
     +'<button type="button" class="mm-chip" data-act="menu:profile" aria-label="Профиль: '+esc(who)+'">'
-      +'<span class="av" aria-hidden="true">'+esc(who.slice(0,1).toUpperCase())+'</span>'
-      +'<span class="nm">'+esc(who)+'</span>'+(AUTH_ON && !acct ? '<span class="in">войти</span>' : '')+'</button>'
+      +avHTML(who)
+      +'<span class="nm">'+esc(who)+'</span>'+(AUTH_ON && !acct ? '<span class="in">войти</span>' : '')
+      +(policyNew() ? '<span class="dot" aria-hidden="true"></span>' : '')+'</button>'
     +'<button type="button" class="mm-icon" data-act="menu:settings" aria-label="Настройки" title="Настройки">'+ICON_GEAR+'</button>'
     +'</div></div>'
     +'<nav class="mm-col" aria-label="Главное меню">'
@@ -12135,7 +12175,7 @@ function startHTML(){
     +'<button type="button" class="mm-item" data-act="menu:settings">Настройки</button>'
     +'<button type="button" class="mm-item" data-act="menu:help">Помощь</button>'
     +'</nav>'
-    +(acctNote ? '<p class="mm-note acctnote">'+esc(acctNote)+'</p>' : '')
+    +(acctNote ? '<p class="mm-note acctnote">'+esc(acctNote)+'</p>' : policyNoteHTML('mm-note'))
     +'<div class="mm-foot"><button type="button" class="linkbtn" data-act="feedback:start">✉︎ Написать нам</button></div>'
     +'<p class="mm-drag'+(showroom.dragged?' off':'')+'" aria-hidden="true">↻ потяни, чтобы повернуть машину</p>'
     +'</div>';
@@ -12222,6 +12262,9 @@ function menuTabDefault(scr){
   return scr==='levels' ? levelTab(game.li) : scr==='settings' ? 'screen' : scr==='help' ? 'ctrl' : null;
 }
 function menuGo(scr, tab, from){
+  /* строка о политике гаснет, когда игрок уходит из профиля, где её прочёл: погашенная при отрисовке, она
+     пропадала на перерисовке профиля после /me через долю секунды */
+  if(menu.scr==='profile' && scr!=='profile' && policyNew()) policySeen();
   if(scr==='main'){ menu.root='main'; from=null; }
   else if(scr==='pause'){ menu.root=null; from=null; }
   else if(from===undefined)
@@ -12325,9 +12368,9 @@ function menuProfileHTML(){
   const st=profStats(), rd=examReadiness(), er=examRuns()||{routes:0};
   const who = acct ? (acct.name || AUTH_NAMES[acct.provider] || 'без имени') : 'Гость';
   let s=menuHead('Профиль')+'<div class="mbody">'
-    +'<div class="pwho"><span class="av" aria-hidden="true">'+esc(who.slice(0,1).toUpperCase())+'</span><span><b>'+esc(who)+'</b>'
+    +'<div class="pwho">'+avHTML(who)+'<span><b>'+esc(who)+'</b>'
     +'<span class="sd">'+(acct ? 'вход через '+(AUTH_NAMES[acct.provider]||acct.provider) : 'прогресс хранится на этом устройстве')+'</span></span></div>'
-    +acctNoteHTML();
+    +acctNoteHTML()+policyNoteHTML('acctnote');
   if(AUTH_ON && !acct) s+=acctBtnsHTML('Войди, и прогресс будет на телефоне и на компьютере.');
   s+='<div class="ptiles">'
     +'<div class="ptile"><b>'+st.passed+' из '+st.total+'</b><span>уровней пройдено</span></div>'

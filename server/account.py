@@ -224,6 +224,10 @@ MIGRATIONS = [
         source TEXT NOT NULL, ref TEXT NOT NULL DEFAULT '', granted_at INTEGER NOT NULL,
         expires_at INTEGER, revoked_at INTEGER, PRIMARY KEY(account_id, product, ref));
     """,
+    """
+    -- ссылка на фото профиля у провайдера; сам файл не хранится
+    ALTER TABLE accounts ADD COLUMN avatar TEXT;
+    """,
 ]
 
 
@@ -336,9 +340,38 @@ def vk_authorize_url(cfg, state, challenge):
 
 
 def ya_authorize_url(cfg, state):
+    # без scope токен получает права, отмеченные в кабинете приложения: портрет включается галочкой
+    # «Доступ к портрету пользователя», а явный login:avatar без неё мог бы сломать вход целиком
     q = {'response_type': 'code', 'client_id': cfg.ya_id, 'redirect_uri': cfg.callback,
-         'state': state, 'scope': 'login:info', 'force_confirm': 'no'}
+         'state': state, 'force_confirm': 'no'}
     return cfg.ya_oauth + '/authorize?' + urllib.parse.urlencode(q)
+
+
+# Ссылку на фото показывает браузер игрока, поэтому пускаем только https с CDN самих провайдеров —
+# тот же список стоит в img-src CSP (deploy-pozerkalam.sh). Всё остальное, в том числе заглушка VK
+# «камера» с vk.com, — нет фото: в чипе остаётся буква
+AVATAR_HOSTS = ('.userapi.com', '.vkuserphoto.ru')
+AVATAR_EXACT = ('avatars.yandex.net',)
+AVATAR_MAX = 512
+
+
+def avatar_ok(url):
+    if not isinstance(url, str) or len(url) > AVATAR_MAX:
+        return None
+    try:
+        u = urllib.parse.urlsplit(url)
+        port = u.port  # кривой порт — ValueError уже здесь, а не 500 посреди входа
+    except ValueError:
+        return None
+    host = (u.hostname or '').lower()
+    # без порта и с путём — так же, как AV_RE игры: ссылку, которую игра отвергнет, хранить незачем
+    if u.scheme != 'https' or u.username or u.password or port is not None or not u.path.startswith('/'):
+        return None
+    if not (host in AVATAR_EXACT or any(host.endswith(h) and len(host) > len(h) for h in AVATAR_HOSTS)):
+        return None
+    if re.search(r'[\s"\'<>\\`]', url):
+        return None
+    return url
 
 
 def vk_profile(cfg, code, device_id, verifier, state):
@@ -355,7 +388,7 @@ def vk_profile(cfg, code, device_id, verifier, state):
     if not uid:
         raise ProviderError('vk.user_info', 200, 'no_user_id')
     first, last = str(u.get('first_name') or '').strip(), str(u.get('last_name') or '').strip()
-    return uid, (first + (' ' + last[:1] + '.' if last else '')).strip()
+    return uid, (first + (' ' + last[:1] + '.' if last else '')).strip(), avatar_ok(u.get('avatar'))
 
 
 def ya_profile(cfg, code):
@@ -371,7 +404,10 @@ def ya_profile(cfg, code):
     if not uid:
         raise ProviderError('yandex.info', 200, 'no_id')
     name = info.get('first_name') or info.get('display_name') or info.get('real_name') or info.get('login') or ''
-    return uid, str(name).strip()
+    pid, avatar = str(info.get('default_avatar_id') or ''), None
+    if pid and not info.get('is_avatar_empty') and re.fullmatch(r'[0-9A-Za-z_-]+(/[0-9A-Za-z_-]+)*', pid):
+        avatar = avatar_ok('https://avatars.yandex.net/get-yapic/' + pid + '/islands-200')
+    return uid, str(name).strip(), avatar
 
 
 class Rate:
@@ -410,12 +446,12 @@ class App:
 
 
     def account_json(self, c, acc_id):
-        a = c.execute('SELECT id, name FROM accounts WHERE id=?', (acc_id,)).fetchone()
+        a = c.execute('SELECT id, name, avatar FROM accounts WHERE id=?', (acc_id,)).fetchone()
         if not a:
             return None
         provs = [r['provider'] for r in c.execute(
             'SELECT provider FROM identities WHERE account_id=? ORDER BY created_at', (acc_id,))]
-        return {'id': a['id'], 'name': a['name'], 'providers': provs}
+        return {'id': a['id'], 'name': a['name'], 'avatar': a['avatar'], 'providers': provs}
 
     def entitlements(self, c, acc_id):
         t = now()
@@ -518,14 +554,14 @@ class App:
             err = 'nocode'
         elif provider == 'vk' and not q.get('device_id'):
             err = 'nodevice'
-        uid = name = None
+        uid = name = avatar = None
         if not err:
             t0 = time.time()
             try:
                 if provider == 'vk':
-                    uid, name = vk_profile(self.cfg, q['code'], q['device_id'], p['verifier'], state)
+                    uid, name, avatar = vk_profile(self.cfg, q['code'], q['device_id'], p['verifier'], state)
                 else:
-                    uid, name = ya_profile(self.cfg, q['code'])
+                    uid, name, avatar = ya_profile(self.cfg, q['code'])
                 log.debug('auth callback: обмен %s за %d мс', provider, (time.time() - t0) * 1000)
             except ProviderError as e:
                 log.warning('auth callback: провайдер %s отказал (%s) sid=%s', provider, e, mask(sid))
@@ -538,7 +574,7 @@ class App:
                 c.execute("UPDATE oauth_pending SET status='failed', error=? WHERE sid=?", (err, sid))
                 log.info('auth callback: provider=%s sid=%s → failed (%s)', provider, mask(sid), err)
                 return self._callback_reply(sid, mode, False)
-            acc_id, is_new = self.upsert(c, provider, uid, name)
+            acc_id, is_new = self.upsert(c, provider, uid, name, avatar)
             c.execute("UPDATE oauth_pending SET status='authorized', account_id=?, is_new=? WHERE sid=?",
                       (acc_id, int(is_new), sid))
         log.info('auth callback: provider=%s sid=%s → acct=%s%s', provider, mask(sid), mask(acc_id),
@@ -550,15 +586,17 @@ class App:
             return 302, None, self.cfg.play_url + '#auth=' + sid, mode
         return 200, 'ok' if ok else 'fail', None, mode
 
-    def upsert(self, c, provider, uid, name):
+    def upsert(self, c, provider, uid, name, avatar=None):
         name = (name or '')[:64]
         row = c.execute('SELECT account_id FROM identities WHERE provider=? AND provider_user_id=?',
                         (provider, uid)).fetchone()
         if row:
-            c.execute('UPDATE accounts SET name=?, last_seen_at=? WHERE id=?', (name, now(), row['account_id']))
+            c.execute('UPDATE accounts SET name=?, avatar=?, last_seen_at=? WHERE id=?',
+                      (name, avatar, now(), row['account_id']))
             return row['account_id'], False
         acc_id = uuid.uuid4().hex
-        c.execute('INSERT INTO accounts(id, name, created_at, last_seen_at) VALUES (?,?,?,?)', (acc_id, name, now(), now()))
+        c.execute('INSERT INTO accounts(id, name, avatar, created_at, last_seen_at) VALUES (?,?,?,?,?)',
+                  (acc_id, name, avatar, now(), now()))
         c.execute('INSERT INTO identities(provider, provider_user_id, account_id, created_at) VALUES (?,?,?,?)',
                   (provider, uid, acc_id, now()))
         return acc_id, True
