@@ -8,10 +8,11 @@
    Проём меряется по самим граням куба, а не по кадрам: глаз в кузове неподвижен, и куб от
    поворота головы не зависит — пять поз головы проверяли бы одну и ту же картинку.
      PW_DIR=/tmp/pw node tools/cabin-check.mjs
-     FAULT=shift|eye|budget|normal|script|marks|mirror|car|greenhouse — сломать нарочно и увидеть красный: сдвинуть грани на 4 px,
-       поменять EYE после рендера, уронить бюджет до 0,5 МБ, проверить отказ на целой странице,
-       завернуть блок картинок в <script>, держать руль прямо при проверке меток, отключить куб зеркала,
-       оставить модель кузова на месте в проверке отказа, рисовать из салона стойки и крышу модели
+     FAULT=shift|eye|budget|normal|script|marks|mirror|car|greenhouse|mirimg|mirflip|mirfallback — сломать нарочно и
+       увидеть красный: сдвинуть грани на 4 px, поменять EYE после рендера, уронить бюджет до 0,5 МБ, проверить отказ на
+       целой странице, завернуть блок картинок в <script>, держать руль прямо при проверке меток, отключить куб зеркала,
+       оставить модель кузова на месте в проверке отказа, рисовать из салона стойки и крышу модели, снять картинки
+       стекла зеркал, отразить контур бокового зеркала по ширине, проверить отказ картинок зеркал на целой странице
    Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена. */
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
@@ -81,6 +82,30 @@ async function openPage(file) {
   });
   return { page, context, errors, warns, frame };
 }
+
+/* зеркала заднего вида (серия 4): торец бокового корпуса за кадр — рамка [34,38,44], которую рисует
+   emitMirrorHousing своей машины; в теле кузова (lat по модулю, y) */
+const mirrorFrames = (fault) => {
+  if (fault === 'mirflip' && mirImg.outline.side) mirImg.outline.side = mirImg.outline.side.map((q) => [1 - q[0], q[1]]);
+  const origH = emitMirrorHousing, origP = pushPoly;
+  let kind = null; const got = {};
+  window.emitMirrorHousing = function (P, F, R, sg, col, k) { kind = k; try { return origH.apply(this, arguments); } finally { kind = null; } };
+  window.pushPoly = function (pts, col) {
+    if (kind && col && col[0] === 34 && col[1] === 38 && col[2] === 44 && !got[kind]) got[kind] = pts.map((q) => ({ x: q.x, y: q.y, z: q.z }));
+    return origP.apply(this, arguments);
+  };
+  try { opt.fpYaw = 0; opt.fpPitch = 0; render(0); } finally { window.emitMirrorHousing = origH; window.pushPoly = origP; }
+  const c = bodyPos(), r = ruv(car.th), M = MIR_H, out = {};
+  for (const k of ['left', 'right']) {
+    const pts = (got[k] || []).map((q) => { const du = -q.x - c.u, dv = q.z - c.v; return { lat: Math.abs(du * r.u + dv * r.v), y: q.y }; });
+    const span = (sel) => { const ys = pts.filter(sel).map((p) => p.y); return ys.length ? Math.max(...ys) - Math.min(...ys) : 0; };
+    const outer = span((p) => p.lat > M.lout - 0.012), inner = span((p) => p.lat < M.lin + 0.012);
+    const inBox = pts.length > 0 && pts.every((p) => p.lat >= M.lin - 0.005 && p.lat <= M.lout + 0.005 && p.y >= M.y0 - 0.005 && p.y <= M.y1 + 0.005);
+    out[k] = { n: pts.length, outer: +outer.toFixed(4), inner: +inner.toFixed(4), inBox };
+  }
+  out.need = mirImg.outline.side ? mirImg.outline.side.length : null;
+  return out;
+};
 
 /* ---- целая сборка ---- */
 const okPage = await openPage(FAULT === 'normal' ? brokenPath : path.join(ROOT, 'index.html'));
@@ -228,6 +253,48 @@ if (okPage.frame.state === 'ready') {
   check('из салона кузов своей машины виден только ниже подоконной линии, капот рисуется (@render-cabin-own-body)',
     own.over === 0 && own.hood > 0, JSON.stringify(own));
 }
+/* стекло зеркал из салона: на кадре стекло — картинка, а не плоская заливка. Точки берутся на самой
+   грани стекла (mirGlassW, углы — углы картинки), HUD-зеркала на это время скрыты. У бокового верх
+   стекла — небо, низ — асфальт; у салонного середина — заднее окно, верх — потолок */
+if (okPage.frame.state === 'ready') {
+  await okPage.page.waitForFunction(() => mirImg.side && mirImg.center, null, { timeout: 5000 }).catch(() => {});
+  const glass = await okPage.page.evaluate((fault) => {
+    if (fault === 'mirimg') { mirImg.side = null; mirImg.center = null; }
+    const lum = (d) => 0.299 * d[0] + 0.587 * d[1] + 0.114 * d[2];
+    const L = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t });
+    const band = (w, u0, u1, v0, v1) => {
+      let s = 0, n = 0;
+      for (let i = 0; i <= 4; i++) for (let j = 0; j <= 2; j++) {
+        const u = u0 + (u1 - u0) * i / 4, v = v0 + (v1 - v0) * j / 2;
+        const p = viewProject(L(L(w[0], w[1], u), L(w[3], w[2], u), v));
+        if (!p) continue;
+        s += lum(ctx.getImageData(Math.round(p.x * pxScale), Math.round(p.y * pxScale), 1, 1).data); n++;
+      }
+      return n ? s / n : null;
+    };
+    const mirWas = opt.mirrors; opt.mirrors = false;
+    const out = [];
+    try {
+      for (const [kind, yaw, pitch, lit, dark, min] of [
+        ['left', -45, -6, [0.3, 0.7, 0.2, 0.35], [0.3, 0.7, 0.65, 0.85], 20],
+        ['right', 50, -10, [0.3, 0.7, 0.2, 0.35], [0.3, 0.7, 0.65, 0.85], 20],
+        ['center', 30, 4, [0.5, 0.65, 0.45, 0.6], [0.5, 0.8, 0.1, 0.2], 30],
+      ]) {
+        opt.fpYaw = rad(yaw); opt.fpPitch = rad(pitch); render(0);
+        const w = mirGlassW[kind];
+        if (!w) { out.push({ kind, ok: false, why: 'стекло не нарисовано' }); continue; }
+        const a = band(w, ...lit), b = band(w, ...dark);
+        out.push({ kind, ok: a !== null && b !== null && a - b >= min, light: a && +a.toFixed(0), dark: b && +b.toFixed(0) });
+      }
+    } finally { opt.mirrors = mirWas; opt.fpYaw = 0; opt.fpPitch = 0; }
+    return out;
+  }, FAULT);
+  check('стекло боковых и салонного зеркал из салона — картинка серии 4: небо над асфальтом, заднее окно под потолком (@render-cabin-mirror-glass)',
+    glass.every((g) => g.ok), JSON.stringify(glass));
+  const fr = await okPage.page.evaluate(mirrorFrames, FAULT);
+  check('торец бокового корпуса — контур картинки: наружный край выше, чем у борта, у правого тоже; торец в рамке MIR_H (@render-cabin-mirror-outline)',
+    ['left', 'right'].every((k) => fr[k].n === fr.need && fr[k].inBox && fr[k].outer > fr[k].inner * 1.08), JSON.stringify(fr));
+}
 await okPage.context.close();
 
 /* ---- свежесть рендера ---- */
@@ -271,6 +338,28 @@ fs.writeFileSync(carBrokenPath, FAULT === 'car' ? html : html.replace(/<template
     r.state === 'failed' && r.model === 0 && r.loft > 0 && warns.length === 1 && !errors.length,
     JSON.stringify({ ...r, warns, errors }));
   await ctx2.close();
+}
+
+/* ---- зеркала: без картинок — прежние корпуса и плоское стекло, по предупреждению на картинку ---- */
+const mirBrokenPath = path.join(BUILD, 'mirror-fallback.html');
+fs.writeFileSync(mirBrokenPath, FAULT === 'mirfallback' ? html
+  : html.replace(/(data-asset="mirror-(?:side|center)" data-outline="[0-9.,;]+" alt="" src="data:image\/webp;base64,)[A-Za-z0-9+/=]+/g, '$1AAAA'));
+{
+  const ctx3 = await browser.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
+  const pg = await ctx3.newPage();
+  const errors = [], warns = [];
+  pg.on('pageerror', (e) => { if (!/ServiceWorker/.test(e.message)) errors.push(e.message); });
+  pg.on('console', (m) => { if (m.type() === 'warning' && m.text().startsWith('[assets] зеркало')) warns.push(m.text()); });
+  await pg.goto('file://' + mirBrokenPath + '?nocache=' + Date.now());
+  await pg.waitForFunction(() => typeof cabinBake !== 'undefined' && cabinBake.state !== 'loading', null, { timeout: 15000 });
+  for (let i = 0; i < 30 && warns.length < 2; i++) await pg.waitForTimeout(100);
+  await pg.evaluate(() => { loadLevel(0); doAct('start'); if (opt.camMode !== CAM_FP) pressKey('KeyV'); });
+  const fr = await pg.evaluate(mirrorFrames, '');
+  const st = await pg.evaluate(() => ({ side: !!mirImg.side, center: !!mirImg.center }));
+  check('без картинок зеркал — прежний восьмигранный корпус и плоское стекло, предупреждений [assets] два, исключений нет (@render-mirror-img-fallback)',
+    !st.side && !st.center && fr.left.n === 8 && fr.right.n === 8 && warns.length === 2 && !errors.length,
+    JSON.stringify({ ...st, left: fr.left.n, right: fr.right.n, warns, errors }));
+  await ctx3.close();
 }
 
 await browser.close();

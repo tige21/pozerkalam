@@ -170,8 +170,9 @@ def clean_decal(name, path):
         alpha[disc] = 1
         note = f', окна между спицами залиты тёмным ({holes.sum()} px)'
     ys, xs = np.where(alpha > 0.5)
-    # куски борта трамвая встают встык, и любой прозрачный отступ дал бы щель между ними
-    pad = 0 if name.startswith('tram-') else 8
+    # куски борта трамвая встают встык, и любой прозрачный отступ дал бы щель между ними; стекло
+    # зеркала ложится на рамку корпуса, и отступ сузил бы его внутри корпуса
+    pad = 0 if name.startswith(('tram-', 'dec-mirror-')) else 8
     x0, x1 = max(xs.min() - pad, 0), min(xs.max() + pad + 1, a.shape[1])
     y0, y1 = max(ys.min() - pad, 0), min(ys.max() + pad + 1, a.shape[0])
     if name == 'tram-front':
@@ -198,6 +199,66 @@ def clean_decal(name, path):
         f'зелёная кайма после {fringe} px{note}, {time.time() - t0:.1f} с')
     if fringe > 50:
         log(f'WARN {name}: на детали осталось {fringe} px зелёной каймы')
+    if name.startswith('dec-mirror-'):
+        mirror_outline(name, rgba[..., 3] > 127)
+
+
+MIRROR_JSON = ROOT / 'build' / 'assets' / 'mirror.json'
+MIRROR_PTS = 16
+
+
+def hull2d(pts):
+    pts = sorted(set(pts))
+    cross = lambda o, a, b: (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    lo, hi = [], []
+    for p in pts:
+        while len(lo) >= 2 and cross(lo[-2], lo[-1], p) <= 0:
+            lo.pop()
+        lo.append(p)
+    for p in reversed(pts):
+        while len(hi) >= 2 and cross(hi[-2], hi[-1], p) <= 0:
+            hi.pop()
+        hi.append(p)
+    return lo[:-1] + hi[:-1]
+
+
+def seg_dist(p, a, b):
+    ax, ay, bx, by = a[0], a[1], b[0], b[1]
+    dx, dy = bx - ax, by - ay
+    t = max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / (dx * dx + dy * dy or 1)))
+    return math.hypot(p[0] - ax - t * dx, p[1] - ay - t * dy)
+
+
+def simplify_closed(poly, n_max):
+    """Убирает по одной точке с наименьшим отклонением, пока их не останется n_max: у замкнутой
+    выпуклой оболочки нет концов, от которых начинал бы Дуглас–Пекер."""
+    pts = list(poly)
+    while len(pts) > n_max:
+        k = min(range(len(pts)), key=lambda i: seg_dist(pts[i], pts[i - 1], pts[(i + 1) % len(pts)]))
+        pts.pop(k)
+    return pts
+
+
+def mirror_outline(name, obj):
+    """Контур стекла зеркала для корпуса в игре: выпуклая оболочка детали, ≤ 16 точек в долях
+    картинки (u вправо, v вниз). Корпус в игре строится по нему, и рамка картинки совпадает с
+    торцом корпуса по построению."""
+    h, w = obj.shape
+    edge = obj & ~(np.roll(obj, 1, 0) & np.roll(obj, -1, 0) & np.roll(obj, 1, 1) & np.roll(obj, -1, 1))
+    ys, xs = np.where(edge)
+    corners = [(x + dx, y + dy) for x, y in zip(xs.tolist(), ys.tolist()) for dx in (0, 1) for dy in (0, 1)]
+    hull = hull2d(corners)
+    poly = simplify_closed(hull, MIRROR_PTS)
+    dev = max(min(seg_dist(p, poly[i - 1], poly[i]) for i in range(len(poly))) for p in hull)
+    area = lambda P: abs(sum(P[i - 1][0] * P[i][1] - P[i][0] * P[i - 1][1] for i in range(len(P)))) / 2
+    fill = obj.sum() / area(hull)
+    meta = json.loads(MIRROR_JSON.read_text()) if MIRROR_JSON.exists() else {}
+    meta[name] = [[round(x / w, 4), round(y / h, 4)] for x, y in poly]
+    MIRROR_JSON.write_text(json.dumps(meta, indent=1, sort_keys=True) + '\n')
+    log(f'{name}: контур {len(poly)} точек, отклонение от оболочки до {dev:.1f} px из {w}, '
+        f'деталь заполняет оболочку на {fill * 100:.1f} %')
+    if fill < 0.97:
+        log(f'WARN {name}: деталь не выпуклая — корпус по оболочке выйдет шире картинки')
 
 
 SKY_BLEND = 0.06  # доля ширины неба, на которой правый край наплывает на левый

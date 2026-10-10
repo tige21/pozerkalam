@@ -777,6 +777,8 @@
 
 
 
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -2017,32 +2019,44 @@ function emitMirrorHousing(P, F, R, sg, col, kind){
   const near=QUALITY[qLevel].cars && lodD2(-ref.x, ref.z)<1600;
   const paint=near?MO.paint:undefined, plastic=near?MO.plastic:undefined;
   /* наружная косынка: чёрный треугольник в переднем углу окна на обшивке (lat 0,903, bias — накладка
-     на борт), к нему и «прикручен» кожух; снаружи — как у настоящей двери */
-  { const sl=sg*0.903, n={x:R.x*sg, y:0, z:R.z*sg}, tri=[P(sl,0.965,0.87), P(sl,0.965,0.68), P(sl,1.11,0.87)];
-    pushFace(tri, n, MIR_BASE, 0.02, plastic);
-    /* и изнанка: обшивка изнутри не рисуется (нормали наружу), и без неё из салона кожух висел в
-       10 см от косынки на пустом месте — тёмная изнанка косынки и есть видимое крепление */
-    pushFace(tri.slice().reverse(), {x:-n.x, y:0, z:-n.z}, [30,32,36], 0.02); }
-  /* кожух: задний восьмиугольник в (lat, y) и его уменьшенная копия спереди, центр копии чуть
-     наружу и вниз — как у настоящего колпака */
-  const c=M.ch, oct=[[li, M.y0+c],[li+sg*c, M.y0],[lo-sg*c, M.y0],[lo, M.y0+c],[lo, M.y1-c],[lo-sg*c, M.y1],[li+sg*c, M.y1],[li, M.y1-c]];
-  const fc=lm+sg*0.012, fy=ym-0.008, t=M.taper;
-  const back=oct.map(q=>P(q[0],q[1],M.zb)), front=oct.map(q=>P(fc+(q[0]-fc)*t, fy+(q[1]-fy)*t, M.zf));
-  for(let i=0;i<8;i++){ const j=(i+1)%8; pushQuad(back[i],back[j],front[j],front[i], col, ref, 0, paint); }
+     на борт), к нему и «прикручен» кожух; снаружи — как у настоящей двери. Треугольник не выходит за
+     кожух: задний угол — на плоскости стекла, верхний — на высоте кожуха. С углами на z 0,68 и y 1,11
+     он стоял в 9 см позади стекла и в 5,5 см над кожухом, и из салона закрывал половину правого
+     зеркала, а его угол торчал над стеклом (владелец, 08.10) */
+  { const sl=sg*0.903, n={x:R.x*sg, y:0, z:R.z*sg}, tri=[P(sl,0.965,0.87), P(sl,0.965,M.zb), P(sl,M.y1,0.87)];
+    /* только снаружи: изнанка из салона была чёрным углом между стеклом и стойкой у обоих зеркал
+       (владелец, 08.10). Кожух сидит низом на линии двери и без неё не висит — изнанка понадобилась,
+       когда кожух стоял в 10 см от косынки */
+    pushFace(tri, n, MIR_BASE, 0.02, plastic); }
+  /* кожух: задний торец в (lat, y) и его уменьшенная копия спереди, центр копии чуть наружу и
+     вниз — как у настоящего колпака. Торец — контур картинки стекла (ось u от наружного края к
+     борту, поэтому правое зеркало отражается само), без картинки — прежний восьмиугольник.
+     Картинка без света и дымки — только ближе 40 м, дальше она выделялась бы пятном */
+  const pic = mirImg.side && lodD2(-ref.x, ref.z)<1600;
+  const c=M.ch, ol = pic ? mirImg.outline.side.map(q=>[lo+(li-lo)*q[0], M.y1-(M.y1-M.y0)*q[1]])
+    : [[li, M.y0+c],[li+sg*c, M.y0],[lo-sg*c, M.y0],[lo, M.y0+c],[lo, M.y1-c],[lo-sg*c, M.y1],[li+sg*c, M.y1],[li, M.y1-c]];
+  const fc=lm+sg*0.012, fy=ym-0.008, t=M.taper, N=ol.length;
+  const back=ol.map(q=>P(q[0],q[1],M.zb)), front=ol.map(q=>P(fc+(q[0]-fc)*t, fy+(q[1]-fy)*t, M.zf));
+  for(let i=0;i<N;i++){ const j=(i+1)%N; pushQuad(back[i],back[j],front[j],front[i], col, ref, 0, paint); }
   pushPoly(front, col, ref, 0, paint);
   pushPoly(back.slice().reverse(), [34,38,44], ref, 0, plastic);          /* рамка */
-  /* стекло: отступ 5 мм от рамки, на 2 мм за её плоскостью, bias — накладка на рамку; углы
-     повёрнуты на половину настройки вокруг центра стекла */
-  const g0=li+sg*0.005, g1=lo-sg*0.005, gy0=M.y0+0.009, gy1=M.y1-0.009, gz=M.zb-0.002;
+  /* стекло на 2 мм за плоскостью рамки, bias — накладка на рамку; углы повёрнуты на половину
+     настройки вокруг центра стекла. Картинка ложится на всю рамку торца (рамка в ней нарисована),
+     прежнее плоское стекло — с отступом 5 мм */
+  const gi = pic ? 0 : 0.005, gh = pic ? 0 : 0.009;
+  const g0=li+sg*gi, g1=lo-sg*gi, gy0=M.y0+gh, gy1=M.y1-gh, gz=M.zb-0.002;
   const lp=Math.max(g0,g1), ln=Math.min(g0,g1), gc=(lp+ln)*0.5, gyc=(gy0+gy1)*0.5;
   const adj = kind ? mirAdj(kind) : null, yaw = adj ? adj.yaw*0.5 : 0, pitch = adj ? adj.pitch*0.5 : 0;
   const G=(l,y)=>{ const r=mirRot(l-gc, y-gyc, 0, yaw, pitch); return P(gc+r[0], gyc+r[1], gz+r[2]); };
-  const v0=G(lp,gy1), v1=G(ln,gy1), v2=G(ln,gy0), v3=G(lp,gy0);
+  /* v0 — левый верх картинки: её левый край — наружный (g1), у прежнего стекла порядок углов тот же */
+  const v0 = pic ? G(g1,gy1) : G(lp,gy1), v1 = pic ? G(g0,gy1) : G(ln,gy1),
+        v2 = pic ? G(g0,gy0) : G(ln,gy0), v3 = pic ? G(g1,gy0) : G(lp,gy0);
   /* стекло статичное: живое отражение на 12 см стекла из салона — шум, а не ориентир; отражение
      живёт в HUD-виджетах (renderMirror). Углы стекла всё равно публикуются — по ним look-check
      меряет, что стекло на месте и не меняется (@render-mirror-static) */
   if(kind) mirGlassW[kind]=[v0,v1,v2,v3];
-  pushQuad(v0,v1,v2,v3, [52,60,70], P(sg*1.0,ym,M.zf), 0.02, near?MO.glass:undefined);
+  if(pic) pushQuad(v0,v1,v2,v3, CM_CLEAR, P(sg*1.0,ym,M.zf), 0.02, {img:mirImg.side});
+  else pushQuad(v0,v1,v2,v3, [52,60,70], P(sg*1.0,ym,M.zf), 0.02, near?MO.glass:undefined);
 }
 /* дальний силуэт машины потока: тот же лофт, но 8 сечений из 13 и 8 рёбер из 12 — капот,
    стёкла, крыша и багажник остаются, а граней втрое меньше. Голая коробка на этом месте
@@ -2351,10 +2365,25 @@ function emitRepeaters(K){
 }
 function emitMirrorPlank(K){
   const {quad,box,P}=K;
-  box(0, CMIR.y+CMIR.h+0.004, CMIR.z-0.004, 0.012, 0.004, 0.008, [60,64,70], 0, MO.matte); /* ножка к стеклу */
+  const pic=mirImg.center, PC=[40,42,46];
+  box(0, CMIR.y+CMIR.h+0.004, CMIR.z-0.004, 0.012, 0.004, 0.008, pic ? PC : [60,64,70], 0, MO.matte); /* ножка к стеклу */
   { const adj=mirAdj('center'), yaw=adj.yaw*0.5, pitch=adj.pitch*0.5, py=CMIR.y+CMIR.h, pz=CMIR.z;
     const Rm=(l,y,z)=>{ const r=mirRot(l, y-py, z-pz, yaw, pitch); return [r[0], py+r[1], pz+r[2]]; };
     const w=CMIR.w, h=CMIR.h, d=0.008, y0=CMIR.y-h, y1=CMIR.y+h, z0=pz-d, z1=pz+d;
+    /* корпус — контур картинки, выдавленный на толщину планки: светлая плита с плоским стеклом при
+       взгляде вправо читалась табличкой на крыше соседней машины. Картинка 3,4 : 1 растянута на
+       CMIR 4,2 : 1 — размер планки выбран владельцем (25.09), отражение размыто и растяжки не видно */
+    if(pic){
+      const ol=mirImg.outline.center, W=p=>P(p[0],p[1],p[2]), hc=W(Rm(0,CMIR.y,pz)), N=ol.length;
+      const bk=ol.map(q=>W(Rm(-w+2*w*q[0], y1-2*h*q[1], z0))), fr=ol.map(q=>W(Rm(-w+2*w*q[0], y1-2*h*q[1], z1)));
+      for(let i=0;i<N;i++){ const j=(i+1)%N; pushQuad(bk[i],bk[j],fr[j],fr[i], PC, hc, 0, MO.softtouch); }
+      pushPoly(fr, PC, hc, 0, MO.softtouch);
+      pushPoly(bk.slice().reverse(), PC, hc, 0, MO.softtouch);
+      const gz=z0-0.002, v0=Rm(-w,y1,gz), v1=Rm(w,y1,gz), v2=Rm(w,y0,gz), v3=Rm(-w,y0,gz);
+      mirGlassW.center=[W(v0),W(v1),W(v2),W(v3)];
+      quad(v0,v1,v2,v3, CM_CLEAR, Rm(0,CMIR.y,pz+0.5), 0.01, {img:mirImg.center});
+      return;
+    }
     const cnr=[Rm(-w,y0,z0),Rm(w,y0,z0),Rm(w,y1,z0),Rm(-w,y1,z0),Rm(-w,y0,z1),Rm(w,y0,z1),Rm(w,y1,z1),Rm(-w,y1,z1)];
     const hc=Rm(0,CMIR.y,pz), HC=[96,102,112];
     quad(cnr[0],cnr[1],cnr[2],cnr[3], HC, hc, 0, MO.softtouch);   /* задняя (к водителю) */
@@ -2801,6 +2830,29 @@ const mirBake={state:'off', faces:null, tex:null, L:null, R:null, U:null};
    прямоугольник), а картинка целиком залила бы свои прозрачные углы цветом подложки */
 const wheelPad={img:null};
 const WHEEL_PAD={w:0.150, h:0.103, r:0.026, crop:0.82};
+/* стекло зеркал — картинки серии 4 (docs/prompts/mirror-assets.md) с контуром в data-outline
+   (доли картинки, u вправо, v вниз): по контуру строится торец корпуса, и рамка картинки
+   совпадает с ним по построению. Контур и картинка ставятся вместе после распаковки — до неё и
+   без неё рисуется прежнее зеркало, а не новый корпус с плоским стеклом */
+const mirImg={side:null, center:null, outline:{side:null, center:null}};
+function mirOutline(s){
+  const pts=String(s||'').split(';').map(p=>p.split(',').map(Number));
+  if(pts.length<6 || pts.some(p=>p.length!==2 || !(p[0]>=0 && p[0]<=1 && p[1]>=0 && p[1]<=1))) return null;
+  return pts;
+}
+function mirImgLoad(){
+  const root=document.getElementById('assets');
+  if(!root) return;
+  for(const k of ['side','center']){
+    const img=root.querySelector('img[data-asset="mirror-'+k+'"]'), ol=img && mirOutline(img.dataset.outline);
+    if(!ol){ console.warn('[assets] зеркало '+k+': нет картинки или контура — рисуется прежнее'); continue; }
+    img.decode().then(()=>{
+      const c=document.createElement('canvas'); c.width=img.naturalWidth; c.height=img.naturalHeight;
+      c.getContext('2d').drawImage(img,0,0);
+      mirImg.outline[k]=ol; mirImg[k]=c;
+    }).catch(e=>console.warn('[assets] зеркало '+k+': '+e.message+' — рисуется прежнее'));
+  }
+}
 const CABIN_OLD=/[?&]cabin=old/.test(location.search);
 function cubeFaces(root, desc, prefix){
   const keys=Object.keys(desc.faces);
@@ -2963,6 +3015,8 @@ function emitInteriorLive(u,v,th){
   } finally{ cabinLit=false; cabinFrame=null; }
 }
 cabinBakeLoad();
+/* ссылки на картинки берутся сразу: цепочка cabinBakeLoad на телефоне потом снимает блок со страницы */
+mirImgLoad();
 /* ---------- кузов снаружи: модель ---------- */
 /* Кузов — готовая модель из tools/blender/models.py (200–320 граней, <template id="car-mesh">): своя машина всегда,
    соседи и поток ближе CAR_MODEL_D; дальше — прежний лофт emitCarBody, за trafLod у потока —

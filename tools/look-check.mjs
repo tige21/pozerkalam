@@ -142,8 +142,9 @@ await shot('fp-fwd');
 await pose(() => { opt.fpYaw = rad(-45); opt.fpPitch = rad(-6); });
 await shot('fp-left45');
 
-/* статичное стекло: рамка по mirrorGlassRect — стекло на месте, одноцветное и не меняется при
-   переезде машины (живое отражение на корпусе владелец снял 24.09: «зеркала висят в воздухе») */
+/* статичное стекло: рамка по mirrorGlassRect — стекло на месте и не меняется при переезде машины
+   (живое отражение на корпусе владелец снял 24.09: «зеркала висят в воздухе»). Одноцветным оно больше
+   не бывает: с 08.10 на стекле картинка серии 4, её проверяет cabin-check @render-cabin-mirror-glass */
 {
   const has = await page.evaluate(() => typeof mirrorGlassRect === 'function');
   if (!has) check('стекло корпуса зеркала статичное (@render-mirror-static)', false, 'mirrorGlassRect нет — стекло не рисуется');
@@ -153,7 +154,7 @@ await shot('fp-left45');
     await pose(() => { const c = bodyPos(); setBody(c.u, c.v + 6, car.th); }, null, 300);
     const b = await snap();
     const diff = a && b ? Math.abs(a.p.mean - b.p.mean) : null;
-    check('стекло корпуса зеркала статичное (@render-mirror-static)', a && b && a.r.w >= 6 && a.p.sd < 6 && diff !== null && diff < 3,
+    check('стекло корпуса зеркала статичное (@render-mirror-static)', a && b && a.r.w >= 6 && diff !== null && diff < 3,
       a && b ? `рамка ${a.r.w.toFixed(0)}×${a.r.h.toFixed(0)} px, sd ${a.p.sd.toFixed(1)}, сдвиг средней ${diff.toFixed(1)}` : 'рамка стекла не найдена в кадре');
     await pose(() => { const c = bodyPos(); setBody(c.u, c.v - 6, car.th); }, null, 300);
   }

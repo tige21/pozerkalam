@@ -46,7 +46,12 @@ const ASSETS = [
      Размер в метрах и средний цвет — из build/assets/fac.json: игра читает их из атрибутов до
      распаковки картинки, и дальний дом сразу того цвета, что ближний */
   ...FAC_KEYS.map((key) => ({ key, file: `clean/${key}.png`, q: 80, required: true, width: 512, fac: true })),
+  /* стекло зеркал (серия 4): боковое на экране не шире 130 px, салонное — 360 px при DPR 2. Контур из
+     build/assets/mirror.json идёт в data-outline: по нему игра строит торец корпуса */
+  { key: 'mirror-side', file: 'clean/dec-mirror-side.png', q: 85, required: true, width: 200, outline: 'dec-mirror-side' },
+  { key: 'mirror-center', file: 'clean/dec-mirror-center.png', q: 85, required: true, width: 320, outline: 'dec-mirror-center' },
 ];
+const MIRROR_JSON = path.join(SRC, 'mirror.json');
 /* модель кузова (tools/blender/models.py) — JSON в <template>: шаблон не исполняется и не
    попадает ни в скрипты страницы, ни в зеркало codegraph */
 const CAR_MESH = path.join(SRC, 'car-mesh.json');
@@ -83,6 +88,10 @@ function check() {
     const head = Buffer.from(m[1].slice(0, 24), 'base64');
     if (head.toString('ascii', 0, 4) !== 'RIFF' || head.toString('ascii', 8, 12) !== 'WEBP') fails.push(`${a.key}: не WebP`);
     if (a.fac && !new RegExp(`data-asset="${a.key}" data-m="[0-9.]+x[0-9.]+" data-mean="\\d+,\\d+,\\d+"`).test(block)) fails.push(`${a.key}: нет data-m или data-mean`);
+    if (a.outline) {
+      const o = block.match(new RegExp(`data-asset="${a.key}" data-outline="([0-9.,;]+)"`));
+      if (!o || o[1].split(';').length < 6) fails.push(`${a.key}: нет data-outline или в контуре меньше 6 точек`);
+    }
   }
   if (!/data-fingerprint="[0-9a-f]{64}"/.test(block)) fails.push('у блока нет data-fingerprint');
   const tpl = block.match(/<template id="car-mesh">([^<]*)<\/template>/);
@@ -109,6 +118,7 @@ function build() {
   const lines = [];
   let total = 0;
   const fac = fs.existsSync(FAC_JSON) ? JSON.parse(fs.readFileSync(FAC_JSON, 'utf8')) : {};
+  const mirror = fs.existsSync(MIRROR_JSON) ? JSON.parse(fs.readFileSync(MIRROR_JSON, 'utf8')) : {};
   for (const a of ASSETS) {
     const file = path.join(SRC, a.file);
     if (!fs.existsSync(file)) {
@@ -124,6 +134,11 @@ function build() {
       if (!m) throw new Error(`нет ${a.key} в build/assets/fac.json — сначала clean.py --only fac`);
       if (buf.length > FAC_MAX) throw new Error(`${a.key}: ${(buf.length / 1024).toFixed(1)} КБ больше предела ${FAC_MAX / 1024} КБ на плитку`);
       attrs = ` data-m="${m.w}x${m.h}" data-mean="${m.mean.join(',')}"`;
+    }
+    if (a.outline) {
+      const pts = mirror[a.outline];
+      if (!pts || pts.length < 6) throw new Error(`нет контура ${a.outline} в build/assets/mirror.json — сначала clean.py --only ${a.outline}`);
+      attrs = ` data-outline="${pts.map((p) => p.join(',')).join(';')}"`;
     }
     lines.push(`<img data-asset="${a.key}"${attrs} alt="" src="data:image/webp;base64,${buf.toString('base64')}">`);
     log(`${a.key}: ${(fs.statSync(file).size / 1024).toFixed(0)} КБ PNG → ${(buf.length / 1024).toFixed(0)} КБ WebP q${a.q}`);
