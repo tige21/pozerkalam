@@ -72,6 +72,12 @@ Created: 2026-10-11
 ### Фаза 7 — выкатка
 - [ ] **T20.** Коммиты по фазам, push, `./deploy-pozerkalam.sh`, проверка на проде: `practice-check` и `level-audit` по `URL=https://pozerkalam.space/play/`, снимок практики, консоль чиста; доска — задачи в Done.
 
+## Состояние на 11.10.2026 (для продолжения после сжатия контекста)
+- Коммиты: 6f36f96 (Ф1), 97611ff (Ф2), 755cae5 (Ф3), 5607eff (Ф4–5), de7d881 (гейт и документы). Не закоммичено: `tools/level-audit.mjs` — имя параметра фазы из самой функции (#135: на минифицированном проде все фазы выходили «недостижимы»); проверено на минифицированной сборке: код 0.
+- T18, уже зелёные: gherkin-run 64/64, unit-check 143, level-audit (локально и минифицированный) код 0, traffic-check, menu-check, crash-check, touch-check, light-check — код 0; practice-check 5/5 (и на минифицированной сборке); FAULT=noblink|nocatch|hints красят свои проверки; demo-vio 23–28 без нарушений.
+- T18, осталось: demo-vio 29–31 (вывод `scratchpad/reg/demovio.txt`), мутации (`node tools/mutation.mjs --jobs 3`, вывод `scratchpad/reg/mutation.txt`; мутантов 1371, порог 35,6 % — не ниже; если ниже — добить сценариями выживших в violationsTick/trafBlock), замечания свежего ревьюера ECC (агент code-reviewer по 6f36f96^..HEAD).
+- T20: коммит level-audit → `git push` → `./deploy-pozerkalam.sh` → `PW_DIR=/tmp/pw URL=https://pozerkalam.space/play/ node tools/practice-check.mjs` и то же для `level-audit.mjs`, консоль чиста → доска: #306, #307, #301, #135 в Done полным payload → память.
+
 ## Commit Plan
 - После T7: `fix(city): правила ПДД в уровнях 24, 25, 27, 30 — разворот из левого положения, пешеходы, жёлтый 6.14, поворотник на въезде на кольцо`
 - После T8: `feat(city): чистый заезд — без нарушений, итоги с правилом`

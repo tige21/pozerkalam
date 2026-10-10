@@ -150,7 +150,10 @@ const report = await page.evaluate(() => {
       const b = level.bounds, used = new Set(), nums = new Set();
       for (const p of ph) if (p.when) {
         const src = String(p.when);
-        for (const m of src.matchAll(/\bs\.(\w+)/g)) used.add(m[1]);
+        /* имя параметра — из самой функции: на проде сборка минифицирована, и «s» там «e» или «t»;
+           по жёсткому «s.» множество полей было пустым и недостижимой выходила каждая фаза (#135) */
+        const pn = (src.match(/^\s*(?:function\s*[\w$]*\s*)?\(?\s*([A-Za-z_$][\w$]*)/) || [])[1] || 's';
+        for (const m of src.matchAll(new RegExp('(?<![\\w$.])' + pn.replace(/\$/g, '\\$') + '\\.(\\w+)', 'g'))) used.add(m[1]);
         for (const m of src.matchAll(/-?\d+(?:\.\d+)?/g)) nums.add(+m[0]);
       }
       const opaque = ph.map(p => p.when ? /\b(trafficGap|lightStops|level\.|game\.|car\.|demo)\b/.test(String(p.when)) : false);
