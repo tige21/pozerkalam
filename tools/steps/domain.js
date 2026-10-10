@@ -94,6 +94,48 @@
         const o = pedActor([{ u: +u, v: +v }, { u: +u + f.u * 20, v: +v + f.v * 20 }], +sp, null, 0, 1);
         o.act.v = +sp; level.actors = [o];
       }],
+    /* правила приоритета на всех узлах общего города — как в практике */
+    [/^на перекрёстках действуют правила приоритета$/, () => {
+      level.city.rules = cityRuleMap(level.city, { lights: ['N1', 'N2'], signs: { N6: { main: ['Заводская', 'Косой съезд'] } } });
+      cityReset();
+    }],
+    [/^на дороге нет машин$/, () => { level.actors = []; }],
+    /* машина со своим маршрутом по городу: путь строит тот же cityRoute, что ведёт поток */
+    [new RegExp('^по городу едет машина из точки \\(' + N + ', ' + N + '\\) в точку \\(' + N + ', ' + N + '\\) со скоростью ' + N + ' м/с$'),
+      (u0, v0, u1, v1, sp) => {
+        const r = cityRoute({ u: +u0, v: +v0 }, { u: +u1, v: +v1 }, { side: 'right' });
+        if (!r) throw new Error('маршрут не построен');
+        const pts = r.pts.filter((q, i) => i > 0 && i < r.pts.length - 1);
+        const rt = actorPath(pts[0].u, pts[0].v, pts.slice(1));
+        const o = pcar(pts[0].u, pts[0].v, 0, PALETTE[2]);
+        const q = trafPose(rt, 0, {}); o.yaw = q.yaw; o.hw = o.w / 2; o.hl = o.l / 2;
+        o.act = { rt, s: 0, s0: 0, sp: +sp, v: +sp, started: true, done: false, flow: false, wps: null, i: 0, trig: null,
+                  u0: o.u, v0: o.v, yaw0: o.yaw };
+        level.actors.push(o); ctx.actor = o;
+      }],
+    /* куда игрок поедет из узла: команда маршрута — так же, как её даёт инспектор практики */
+    [new RegExp('^игрок поворачивает на узле ' + S + ' к лучу курсом ' + N + '°$'), (id, yaw) => {
+      if (!exam || !exam.route) throw new Error('маршрута нет — нужен уровень экзамена');
+      const arm = armOf(id, rad(+yaw));
+      exam.route[exam.stage] = Object.assign({}, exam.route[exam.stage], { node: id, armOut: arm });
+    }],
+    [new RegExp('^машина игрока въезжает в узел ' + S + '$'), (id) => {
+      const g = cityGraph(), n = g && g.V[id];
+      if (!n) throw new Error('нет узла ' + id);
+      vioEvents.length = 0; violationsTick(1 / 60);
+      const f = fuv(car.th);
+      for (let k = 0; k < 200; k++) {
+        const c = bodyPos();
+        if (Math.hypot(c.u - n.u, c.v - n.v) < (n.round || n.r) - 0.3) break;
+        setBody(c.u + f.u * 0.3, c.v + f.v * 0.3, car.th); game.t += 0.05; violationsTick(1 / 60);
+      }
+      ctx.vio = vioEvents.map((e) => e.code);
+    }],
+    [/^машина (без преимущества уступает игроку|проезжает, не уступая игроку)$/, (what) => {
+      if (!ctx.actor) throw new Error('нет машины');
+      const d = ruleBlock(ctx.actor), yields = d < TRAF.see;
+      if (what.startsWith('без') !== yields) throw new Error('ruleBlock ' + d.toFixed(1) + ' м — ' + (yields ? 'встаёт' : 'едет'));
+    }],
     [new RegExp('^машина игрока едет вперёд со скоростью ' + N + ' м/с$'), (sp) => {
       car.sel = 'D'; car.gear = 1; car.vel = +sp;
     }],

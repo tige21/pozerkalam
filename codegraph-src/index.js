@@ -5506,7 +5506,7 @@ function actorsTick(dt){
     if(!s.started){ if(s.trig && s.trig(curS)) s.started=true; else continue; }
     if(s.ped){ pedTick(a, s, dt); continue; }
     const blk=trafBlock(a,i), byPlayer=trafBlockBy==='player';
-    const block=Math.min(blk, trafConflict(a,i), s.rt && s.flow ? trafLight(a) : TRAF.see);
+    const block=Math.min(blk, trafConflict(a,i), s.rt && s.flow ? trafLight(a) : TRAF.see, ruleBlock(a));
     let want=Math.min(s.sp, trafSpeed(block));
     if(s.rt) want=Math.min(want, trafCurveSpeed(s.rt, s.s));
     s.v = want>s.v ? Math.min(want, s.v+TRAF.acc*dt) : Math.max(want, s.v-TRAF.dec*dt);
@@ -7733,14 +7733,12 @@ const LEVELS = [
        «перестройся вправо» сам требует v<-3.3, то есть ровно того, за что шли 5 баллов.
        Показа у экзамена нет, поэтому demo-vio эту зону никогда не проезжал */
     b.city.oncoming.push({u:-40,  v:3.3, yaw:rad(90), w:6.6, l:44});
-    b.city.turnZones.push({u:0, v:-70, yaw:0, w:22, l:22, blink:'R', dir:0});
-    b.city.turnZones.push({u:0, v:-70, yaw:0, w:22, l:22, blink:'L', dir:rad(180)});
-    b.city.turnZones.push({u:0, v:0,   yaw:0, w:22, l:22, blink:'R', dir:rad(270)});
-    b.city.turnZones.push({u:0, v:0,   yaw:0, w:22, l:22, blink:'L', dir:rad(90)});
-    b.city.turnZones.push({u:-78, v:-70, yaw:0, w:11, l:11, blink:'R', dir:rad(270)});
-    b.city.turnZones.push({u:-78, v:0,  yaw:0, w:15, l:13, blink:'R', dir:0});
-    b.city.turnZones.push({u:78, v:-70, yaw:0, w:11, l:11, blink:'R', dir:rad(180)});
-    b.city.turnZones.push({u:78, v:-70, yaw:0, w:11, l:11, blink:'L', dir:rad(270)});
+    /* поворотник и крайнее положение на перекрёстках судит nodeTurnTick по фактическому повороту на выходе
+       из узла. Зоны «одна зона — один ожидаемый манёвр» штрафовали честный манёвр другого маршрута: зона
+       N1 «курс на север — правый» стояла и там, где маршрут 1 поворачивает с севера налево. Зона
+       осталась только у разворота с путей — он посреди квартала, узла там нет. Уступание экзамен
+       по-прежнему судит своими зонами: правило узла здесь только про поворотник и полосу */
+    b.city.rules = cityRuleMap(b.city, {lights:['N1','N2'], signs:{N6:{main:['Заводская','Косой съезд']}}, yield:false});
     b.city.turnZones.push({u:0, v:-35, yaw:0, w:19.6, l:18, uturn:true, blink:'L', dir:0});
     b.city.yieldZones.push({u:61, v:-4.95, yaw:rad(90), w:6.6, l:9, dist:13});
     b.city.yieldZones.push({u:-78, v:-11, yaw:0, w:6.6, l:7, dist:14});
@@ -8636,7 +8634,9 @@ const PENALTIES={
      владельца 03.10.2026): с поребриком на каждом углу перекрёстка авария за чирок валила бы маршрут
      на первом же правом повороте */
   'kerb':            {pts:3, fatal:false, txt:'Наезд на бордюр'},
-  'ped':             {pts:5, fatal:true,  txt:'Не уступил дорогу пешеходу'}
+  'ped':             {pts:5, fatal:true,  txt:'Не уступил дорогу пешеходу'},
+  'turn-pos':        {pts:3, fatal:false, txt:'Не занял крайнее положение перед поворотом'},
+  'stop-place':      {pts:3, fatal:false, txt:'Остановка в запрещённом месте'}
 };
 let exam=null;   /* {score, log:[], done, failed, rollFired, handFired} — живёт только на экзамен-уровне */
 let examWhy='', examWhyT=0;   /* разбор ошибки в тренировочном режиме */
@@ -8652,7 +8652,7 @@ function examPenalty(code){
 /* каждой ошибке — уровень, где её отрабатывают: протокол даёт ссылку «отработать» */
 const EXAM_TRAIN={rollback:19, 'handbrake-drive':19, collision:21, kerb:21,
   'no-blinker':22, oncoming:23, stopline:24, zebra:24, yield:25, 'collision-actor':25,
-  redlight:26, 'stop-sign':26, 'solid-line':27, 'lane-blinker':27, 'tram-turn':28, ped:24};
+  redlight:26, 'stop-sign':26, 'solid-line':27, 'lane-blinker':27, 'tram-turn':28, ped:24, 'turn-pos':22, 'stop-place':21};
 /* первый проигрышный конец в игре: физика замирает на game.done, как при победе,
    а выход из замершего состояния — только через экран результата (ловушка resume) */
 function examFail(why){
@@ -8831,6 +8831,8 @@ const FAIL_RULE={
   'tram-turn':       'На улице с трамвайными путями посередине разворачиваются с путей попутного направления (п. 8.5).',
   'rollback':        'На подъёме машина не должна откатываться больше чем на 0,3 м: держи тормоз, пока не тронешься.',
   'handbrake-drive': 'Перед троганием ручник отпускают: езда с затянутым — ошибка и лишний износ.',
+  'turn-pos':        'Направо поворачивают из крайней правой полосы, налево и в разворот — из крайней левой (п. 8.5). Перестраиваются заранее, до перекрёстка.',
+  'stop-place':      'Не останавливаются ближе 5 м к перекрёстку и к переходу, ближе 15 м к остановке и на самом переходе (п. 12.4).',
   'ped':             'Пешеход на переходе главнее: идёт по твоей половине или к ней — стой перед зеброй, пока не пройдёт (п. 14.1). На повороте — то же для перехода на улице, куда поворачиваешь (п. 13.1).'
 };
 function levelFailHTML(){
@@ -9150,6 +9152,7 @@ function cityReset(){
                          o._uFired=false; o._uIn=false; o._uTh=0; o._uArm=false; o._maxT=0;
                          o._seen=false; o._redSeen=false; o._ph=undefined; o._y614=false; o._pedIn=false; } }
   blinkLog.L=-9; blinkLog.R=-9;
+  ruleSt=null; blinkOn.L=-99; blinkOn.R=-99;
 }
 /* непропуск ловится по моменту наибольшего сближения: на сколько секунд вперёд смотрим,
    насколько близко перед носом чужой машины и в какой её полосе оказался игрок */
@@ -9284,6 +9287,7 @@ function violationsTick(dt){
       ln._blFired=true;
       vio('lane-blinker','Перестроение без поворотника ('+(dir==='L'?'левый Q':'правый E')+')');
     }
+    if(c.rules && c.rules._yield) laneChangeYield(ln, idx);
     ln._lane=idx;
   }
   /* разворот выполняют с трамвайных путей попутного направления: запоминаем, стоял ли
@@ -9353,10 +9357,273 @@ function violationsTick(dt){
     }
   }
   pedYieldTick();
+  if(c.rules) nodeTurnTick();
   for(const a of level.actors){
     if(a._hitByPlayer && !a._vioFired){ a._vioFired=true;
       vio('collision-actor','Столкновение с участником движения'); }
   }
+}
+/* ---------- город: правила перекрёстка ----------
+   Детекторы зон знают одно место и один манёвр; на общем городе нужен ответ на вопрос «кто здесь
+   кому уступает» на любом узле. Узел получает правило (city.rules): светофор, кольцо, знаки
+   приоритета, равнозначные дороги или изгиб. Манёвр — луч въезда и луч выезда; два манёвра
+   конфликтуют, если их хорды пересекаются или сливаются в один луч. Кто уступает — ПДД 13.4
+   (налево на зелёный уступает встречным прямо и направо), 13.12 (то же на равнозначных), 13.11
+   (помеха справа; трамвай главнее), знаки 2.1/2.4/2.5, 13.11(1) (на кольце главнее тот, кто на нём).
+   Поворотник и крайнее положение (п. 8.1, 8.5) судятся по фактическому повороту на выходе из узла */
+const RULE_ETA=3.0;          /* чужая машина с преимуществом ближе этого к узлу — въезжать нельзя, с */
+const RULE_YIELD_ETA=4.0;    /* игрок ближе этого к узлу — машина без преимущества встаёт, с */
+const RULE_PATIENCE=3.0;     /* игрок с преимуществом стоит у узла дольше — машина проезжает, с */
+const TURN_MIN=rad(30);      /* меньше — это «прямо»: изгиб улицы и подруливание не поворот */
+function nodeArms(id){
+  const g=cityGraph(); if(!g) return [];
+  const cache=g._arms||(g._arms={});
+  if(cache[id]) return cache[id];
+  return (cache[id]=(g.adj[id]||[]).map(e=>({yaw: e.a===id ? e.yaw : angNorm(e.yaw+Math.PI), name:e.name, e})));
+}
+function armOf(id, yawOut){
+  let best=null, bd=9;
+  for(const a of nodeArms(id)){ const d=Math.abs(angNorm(a.yaw-yawOut)); if(d<bd){ bd=d; best=a; } }
+  return best;
+}
+/* вид манёвра по лучам: изменение курса от въезда (курс внутрь = луч + π) к выезду */
+function moveKind(aIn, aOut){
+  if(aIn===aOut) return 'U';
+  const t=angNorm(aOut.yaw-(aIn.yaw+Math.PI));
+  return Math.abs(t)>rad(150) ? 'U' : t>TURN_MIN ? 'R' : t<-TURN_MIN ? 'L' : 'S';
+}
+/* хорда манёвра по окружности узла: въезд — правее оси луча, выезд — тоже правее оси своего луча
+   (правостороннее движение); курс растёт по часовой, отсюда знаки */
+function moveChord(aIn, aOut){ return [angNorm(aIn.yaw-0.15), angNorm(aOut.yaw+0.15)]; }
+function arcHas(a, b, x){ const L=((b-a)%TAU+TAU)%TAU, d=((x-a)%TAU+TAU)%TAU; return d>1e-6 && d<L-1e-6; }
+function movesConflict(m1, m2){
+  if(m1.aIn===m2.aIn) return false;                       /* один луч — очередь, а не конфликт */
+  if(m1.aOut===m2.aOut) return true;                      /* сливаются в один выезд */
+  if(m1.kind==='U' || m2.kind==='U') return true;         /* дуга разворота идёт через весь узел */
+  const [a,b]=moveChord(m1.aIn, m1.aOut), [c,d]=moveChord(m2.aIn, m2.aOut);
+  return arcHas(a,b,c)!==arcHas(a,b,d);
+}
+/* где луч другого относительно моего: справа, слева или навстречу */
+function armSide(me, oth){
+  const d=angNorm(oth.yaw-me.yaw);
+  return Math.abs(d)>2.5 ? 'oncoming' : d<0 ? 'right' : 'left';
+}
+function armMain(rule, a){ return !!(rule.main && rule.main.includes(a.name)); }
+/* обязан ли me уступить oth на узле с правилом rule. me/oth: {aIn, aOut, kind, tram, onRing} */
+function mustYield(rule, me, oth){
+  if(!rule || rule.kind==='bend') return false;
+  if(!movesConflict(me, oth)) return false;
+  if(rule.kind==='ring') return !me.onRing && !!oth.onRing;
+  const side=armSide(me.aIn, oth.aIn);
+  const leftMe=me.kind==='L'||me.kind==='U', fwdOth=oth.kind==='S'||oth.kind==='R';
+  if(rule.kind==='light') return side==='oncoming' && leftMe && fwdOth;
+  if(rule.kind==='signs'){
+    const mm=armMain(rule, me.aIn), mo=armMain(rule, oth.aIn);
+    if(mm!==mo) return mo;
+  }
+  if(oth.tram) return true;
+  if(side==='oncoming') return leftMe && fwdOth;
+  return side==='right';
+}
+/* проходы узлов на пути актёра: где въезжает, где выезжает, какими лучами — один раз на путь */
+function rtPassages(rt){
+  if(rt._pass) return rt._pass;
+  const g=cityGraph(), out=[];
+  rt._pass=out;
+  if(!g) return out;
+  const nodes=[]; for(const id in g.V){ const n=g.V[id]; if(id[0]!=='@' && (n.round||n.r)) nodes.push(n); }
+  /* по отрезкам с шагом не больше метра: через узел маршрут часто идёт одним длинным отрезком без
+     вершин внутри, и проверка по вершинам узла не замечала */
+  let cur=null;
+  const n0=rt.pts.length, segs=rt.open ? n0-1 : n0;
+  for(let i=0;i<segs;i++){
+    const a=rt.pts[i], b=rt.pts[(i+1)%n0], L=Math.hypot(b.u-a.u, b.v-a.v), yaw=Math.atan2(b.u-a.u, b.v-a.v);
+    const k=Math.max(1, Math.ceil(L));
+    for(let j=0;j<k;j++){
+      const t=j/k, pu=a.u+(b.u-a.u)*t, pv=a.v+(b.v-a.v)*t, sp=rt.cum[i]+L*t;
+      let inN=null;
+      for(const n of nodes) if(Math.hypot(pu-n.u, pv-n.v)<(n.round||n.r)){ inN=n; break; }
+      if(inN && (!cur || cur.n!==inN)){ if(cur){ cur.sOut=sp; cur.yawOut=yaw; out.push(cur); } cur={n:inN, sIn:sp, yawIn:yaw}; }
+      else if(!inN && cur){ cur.sOut=sp; out.push(cur); cur=null; }
+      if(cur) cur.yawOut=yaw;
+    }
+  }
+  if(cur){ cur.sOut=rt.len; out.push(cur); }
+  for(const ps of out){
+    const id=ps.n.id;
+    ps.aIn=armOf(id, angNorm(ps.yawIn+Math.PI));
+    ps.aOut=armOf(id, ps.yawOut);
+    ps.kind=(ps.aIn&&ps.aOut) ? moveKind(ps.aIn, ps.aOut) : 'S';
+  }
+  return out;
+}
+/* ближайший незавершённый проход актёра: на замкнутой петле путь s растёт без конца */
+function actorPassage(a, nodeId){
+  const s=a.act, rt=s.rt; if(!rt) return null;
+  const L=rt.len, sm=rt.open ? s.s : ((s.s%L)+L)%L;
+  let best=null;
+  for(const ps of rtPassages(rt)){
+    if(nodeId && ps.n.id!==nodeId) continue;
+    for(const sh of rt.open ? [0] : [0, L]){
+      const sIn=ps.sIn+sh, sOut=ps.sOut+sh;
+      if(sOut<=sm) continue;
+      const toIn=sIn-sm;
+      if(!best || toIn<best.toIn) best={ps, toIn, inside: toIn<=0, done:(sm-sIn)/Math.max(1,sOut-sIn)};
+    }
+  }
+  return best;
+}
+/* состояние игрока на узлах: въезд, выезд, полоса перед въездом, поворотник */
+let ruleSt=null;
+const blinkOn={L:-99, R:-99};
+function lanePos(){
+  const c=level.city; if(!c || !c.lanes) return null;
+  const b=bodyPos(), f=fuv(car.th);
+  for(const ln of c.lanes){
+    const lf=fuv(ln.yaw), lr=ruv(ln.yaw);
+    const sL=(b.u-ln.u)*lf.u+(b.v-ln.v)*lf.v; if(Math.abs(sL)>ln.len/2) continue;
+    const x=(b.u-ln.u)*lr.u+(b.v-ln.v)*lr.v; if(Math.abs(x)>ln.hw) continue;
+    const along=(f.u*lf.u+f.v*lf.v)>=0, xs=along ? x : -x, b0=ln.tram ? TRAM_HW : 0;
+    if(xs<0) return {k:-1, n:ln.lanes, tram:false, ln};
+    if(xs<b0) return {k:0, n:ln.lanes, tram:true, ln};
+    return {k:Math.min(ln.lanes, Math.floor((xs-b0)/LANE_W)+1), n:ln.lanes, tram:false, ln};
+  }
+  return null;
+}
+function nodeAtCar(){
+  const g=cityGraph(); if(!g) return null;
+  const b=bodyPos();
+  for(const id in g.V){ const n=g.V[id]; if(id[0]==='@') continue;
+    const R=n.round||n.r; if(R && Math.hypot(b.u-n.u, b.v-n.v)<R) return n; }
+  return null;
+}
+/* куда игрок собирается выехать из узла: команда маршрута, если она про этот узел, иначе — прямо */
+function ruleIntent(nodeId, aIn){
+  const st=exam && exam.route && exam.route[exam.stage];
+  if(st && st.node===nodeId && st.armOut) return st.armOut;
+  let best=null, bd=9;
+  for(const a of nodeArms(nodeId)){ if(a===aIn) continue; const d=Math.abs(angNorm(a.yaw-(aIn.yaw+Math.PI))); if(d<bd){ bd=d; best=a; } }
+  return best || aIn;
+}
+function playerMove(n, aOut){
+  const aIn=armOf(n.id, angNorm(car.th+Math.PI));
+  const out=aOut || ruleIntent(n.id, aIn);
+  return {aIn, aOut:out, kind:moveKind(aIn, out), tram:false, onRing:false};
+}
+function actorMove(a, pa){
+  const ps=pa.ps, onRing=!!ps.n.round && pa.inside;
+  return {aIn:ps.aIn, aOut:ps.aOut, kind:ps.kind, tram:!!a.act.rail, onRing};
+}
+/* въезд игрока в узел: кто из движущихся к узлу имеет преимущество и уже близко — тому помеха */
+function ruleYieldAtEntry(n){
+  const rule=level.city.rules[n.id]; if(!rule || rule.kind==='bend') return;
+  const me=playerMove(n);
+  for(const a of level.actors){
+    const s=a.act; if(s.ped || !s.started || s.done || !s.rt) continue;
+    const pa=actorPassage(a, n.id); if(!pa) continue;
+    if(pa.inside ? pa.done>0.6 : (pa.toIn/Math.max(1, Math.abs(s.v))>RULE_ETA || Math.abs(s.v)<0.5)) continue;
+    if(!mustYield(rule, me, actorMove(a, pa))) continue;
+    vio('yield', rule.kind==='light' ? 'Налево — уступи встречным, идущим прямо и направо (п. 13.4)'
+      : rule.kind==='ring' ? 'На кольце главнее тот, кто уже на нём'
+      : rule.kind==='signs' ? 'Ты на второстепенной: уступи едущим по главной'
+      : 'Не уступил: помеха справа или встречный при повороте налево (п. 13.11, 13.12)');
+    return;
+  }
+}
+/* поворот на выходе из узла: поворотник был до манёвра (п. 8.1) и полоса перед въездом крайняя (п. 8.5).
+   Кольцо — отдельно: въезд и выезд — повороты направо, положение перед въездом не требуется */
+function nodeTurnTick(){
+  const n=nodeAtCar();
+  if(car.blink) blinkOn[car.blink]=game.t;
+  const seen=(d)=>game.t-blinkOn[d]<2.0;
+  if(!ruleSt) ruleSt={n:null, lane:null, laneT:-99};
+  if(!n){ const lp=lanePos(); if(lp){ ruleSt.lane=lp; ruleSt.laneT=game.t; } }
+  const was=ruleSt.n;
+  if(n && n!==was){
+    ruleSt.n=n; ruleSt.th0=car.th; ruleSt.maxT=0; ruleSt.bl={L:seen('L'), R:seen('R')};
+    ruleSt.entryLane = game.t-ruleSt.laneT<3 ? ruleSt.lane : null;
+    if(n.round && !seen('R') && Math.abs(car.vel)>0.3) vio('no-blinker','Въезд на кольцо — поворот направо: правый поворотник (п. 8.1, 8.5)');
+    if(level.city.rules[n.id] && level.city.rules._yield!==false && Math.abs(car.vel)>0.3) ruleYieldAtEntry(n);
+  }
+  if(n && n===was){
+    const t=angNorm(car.th-ruleSt.th0);
+    if(Math.abs(t)<rad(15)){ if(seen('L')) ruleSt.bl.L=true; if(seen('R')) ruleSt.bl.R=true; }
+    if(Math.abs(t)>Math.abs(ruleSt.maxT)) ruleSt.maxT=t;
+  }
+  if(!n && was){
+    const rule=level.city.rules[was.id]||{kind:'equal'};
+    ruleSt.n=null;
+    if(was.round){
+      if(!seen('R')) vio('no-blinker','Съезд с кольца — поворот направо: правый поворотник (п. 8.1)');
+      return;
+    }
+    if(rule.kind==='bend') return;
+    const t=angNorm(car.th-ruleSt.th0), U=Math.abs(t)>rad(150);
+    const side = U ? 'L' : t>TURN_MIN ? 'R' : t<-TURN_MIN ? 'L' : null;
+    if(!side) return;
+    if(!ruleSt.bl[side]) vio('no-blinker','Поворот без поворотника ('+(side==='L'?'левый Q':'правый E')+')');
+    const ln=ruleSt.entryLane;
+    if(ln && ln.n>=2 && ln.k>=0){
+      const okPos = side==='R' ? ln.k===ln.n : (ln.k===1 || ln.tram);
+      if(!okPos) vio('turn-pos', side==='R' ? 'Направо — из крайней правой полосы (п. 8.5)'
+                                            : 'Налево и в разворот — из крайней левой полосы (п. 8.5)');
+    }
+  }
+}
+/* п. 8.4: перестраиваясь, уступи тем, кто едет в той полосе прямо. Сзади ближе 2 м или догоняет быстрее,
+   чем за 2 с, — значит, ему пришлось бы тормозить */
+function laneChangeYield(ln, idx){
+  const b=bodyPos(), f=fuv(car.th), lf=fuv(ln.yaw), lr=ruv(ln.yaw);
+  for(const a of level.actors){
+    const s=a.act; if(s.ped || !s.started || s.done) continue;
+    if(Math.abs(angNorm(a.yaw-car.th))>rad(35)) continue;
+    const sL=(a.u-ln.u)*lf.u+(a.v-ln.v)*lf.v, x=(a.u-ln.u)*lr.u+(a.v-ln.v)*lr.v;
+    if(Math.abs(sL)>ln.len/2+5 || Math.abs(x)>ln.hw) continue;
+    let j=0; while(j<ln.edges.length-1 && x>ln.edges[j+1]) j++;
+    if(j!==idx) continue;
+    const lon=(a.u-b.u)*f.u+(a.v-b.v)*f.v;
+    if(lon>2*HALF_L || lon<-30) continue;
+    const gap=-lon-2*HALF_L, close=Math.abs(s.v)-Math.abs(car.vel);
+    if(gap<2 || (close>0.5 && gap/close<2.0)){
+      vio('yield','Перестроение: уступи попутной машине в той полосе (п. 8.4)'); return;
+    }
+  }
+}
+/* правило каждого узла общего города. lights — узлы со светофорами, signs — {узел: {main:[улицы]}};
+   yield:false — только поворотник и положение (экзамен держит свои зоны уступания) */
+function cityRuleMap(city, opts){
+  const g=city.graph, R={_yield: opts.yield!==false};
+  for(const id in g.V){
+    if(id[0]==='@') continue;
+    const n=g.V[id], arms=(g.adj[id]||[]).length;
+    R[id] = n.round ? {kind:'ring'}
+          : arms<=2 ? {kind:'bend'}
+          : (opts.lights||[]).includes(id) ? {kind:'light'}
+          : (opts.signs && opts.signs[id]) ? Object.assign({kind:'signs'}, opts.signs[id])
+          : {kind:'equal'};
+  }
+  return R;
+}
+/* машина без преимущества встаёт перед узлом, если игрок рядом и правило на его стороне. Игрок
+   с преимуществом стоит у узла дольше RULE_PATIENCE — его пропускают вперёд и едут сами */
+function ruleBlock(a){
+  const c=level.city; if(!c || !c.rules || !c.rules._yield || !a.act.rt) return TRAF.see;
+  const pa=actorPassage(a); if(!pa || pa.inside || pa.toIn>25) return TRAF.see;
+  const n=pa.ps.n, rule=c.rules[n.id]; if(!rule || rule.kind==='bend') return TRAF.see;
+  const b=bodyPos(), R=n.round||n.r, d=Math.hypot(b.u-n.u, b.v-n.v);
+  const inside=d<R, toward=(n.u-b.u)*fuv(car.th).u+(n.v-b.v)*fuv(car.th).v>0;
+  if(!inside && (!toward || d-R>30)) return TRAF.see;
+  if(!inside && (d-R)/Math.max(1, Math.abs(car.vel))>RULE_YIELD_ETA) return TRAF.see;
+  const me=inside ? {aIn:armOf(n.id, angNorm((ruleSt&&ruleSt.n===n ? ruleSt.th0 : car.th)+Math.PI)), aOut:armOf(n.id, car.th), kind:'S', tram:false, onRing:!!n.round}
+                  : playerMove(n);
+  if(inside) me.kind=moveKind(me.aIn, me.aOut);
+  const oth=actorMove(a, pa);
+  if(!mustYield(rule, oth, me)){ a.act._ruleWait0=0; return TRAF.see; }
+  if(!inside && Math.abs(car.vel)<0.3){
+    if(!a.act._ruleWait0) a.act._ruleWait0=game.t;
+    if(game.t-a.act._ruleWait0>RULE_PATIENCE) return TRAF.see;
+  } else a.act._ruleWait0=0;
+  return Math.max(0, pa.toIn-1.5);
 }
 function precGrade(){
   const e=Math.abs(precErr()), p=precDef();
