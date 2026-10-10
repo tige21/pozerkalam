@@ -583,6 +583,8 @@ body.menu #overlay.lay-card{background:rgba(4,7,11,.62);pointer-events:auto}
   border-bottom:1px solid rgba(255,255,255,.07)}
 .srow .sl{flex:1 1 160px;font-size:14.5px;color:#e8eef6}
 .sd{display:block;margin-top:2px;font-size:12px;line-height:1.35;color:#93a7bd}
+#overlay button.minibtn{margin:4px 0 0;padding:2px 10px;font-size:12px;width:auto}
+#overlay ul.viol li{margin-bottom:6px}
 #overlay .sw{margin:0;flex:none;position:relative;width:52px;height:30px;padding:0;border-radius:999px;
   background:#2a3644;border-color:rgba(255,255,255,.18)}
 #overlay .sw::after{content:'';position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;
@@ -8823,6 +8825,12 @@ const FAIL_RULE={
   'redlight':        'На красный въезжать нельзя. На жёлтый — тоже, если можно было остановиться без резкого торможения: проезд разрешён, только когда сигнал сменился у самой линии (п. 6.14).',
   'solid-line':      'Сплошную не пересекают ни на сантиметр. Перестраиваться надо ДО того, как разметка станет сплошной.',
   'stop-sign':       'Под знаком STOP останавливаются всегда — даже когда дорога пустая и видно на километр.',
+  'no-blinker':      'Поворотник включают до манёвра — до въезда на перекрёсток, на кольцо или в разворот (п. 8.1).',
+  'lane-blinker':    'Перестроение — тоже манёвр: сигнал до того, как машина пошла вбок (п. 8.1).',
+  'zebra':           'На пешеходном переходе не останавливаются: стой перед зеброй или проезжай её целиком.',
+  'tram-turn':       'На улице с трамвайными путями посередине разворачиваются с путей попутного направления (п. 8.5).',
+  'rollback':        'На подъёме машина не должна откатываться больше чем на 0,3 м: держи тормоз, пока не тронешься.',
+  'handbrake-drive': 'Перед троганием ручник отпускают: езда с затянутым — ошибка и лишний износ.',
   'ped':             'Пешеход на переходе главнее: идёт по твоей половине или к ней — стой перед зеброй, пока не пройдёт (п. 14.1). На повороте — то же для перехода на улице, куда поворачиваешь (п. 13.1).'
 };
 function levelFailHTML(){
@@ -12433,6 +12441,7 @@ function winHTML(){
     +(level.def.transfer?'<h2>Запомни для реальной дороги</h2><p>'+level.def.transfer+'</p>':'')
     + winActsHTML();
   }
+  if(level.def.strict) return cityWinHTML(p);
   const rec = p ? '<p style="color:#93a7bd;font-size:13px">Этот уровень пройден <b>'+p.n+'</b> раз'
       +(p.clean?', из них <b>'+p.clean+'</b> без касаний':'')
       +' · лучшее время <b>'+p.best.toFixed(1).replace('.',',')+'&nbsp;с</b>'
@@ -12450,6 +12459,38 @@ function winHTML(){
 /* итоги урока заканчиваются тремя ходами и ничем больше: список всех уровней здесь
    заслонял итоги, а выбрать уровень можно из сетки по кнопке. Имя следующего стоит
    рядом с кнопкой — игрок видит, куда его ведут, до нажатия */
+/* итоги городского урока: что нарушено и по какому правилу, а не лучшее время — время здесь ничего не
+   значит, а «чисто» без единого слова про ошибки учило их не замечать. Наезды на бордюр — касания, их
+   число в той же строке; каждое нарушение один раз, с правилом и ссылкой на уровень, где его отрабатывают */
+function vioRowsHTML(log){
+  const by=new Map();
+  for(const l of log){ if(l.code==='kerb') continue; const r=by.get(l.code); if(r) r.n++; else by.set(l.code, {l, n:1}); }
+  let h='';
+  for(const [code, r] of by){
+    const tr=EXAM_TRAIN[code];
+    h+='<li><b>'+esc(r.l.txt)+(r.n>1?' ×'+r.n:'')+'</b>'
+      +(FAIL_RULE[code]?'<br><span class="sd">'+FAIL_RULE[code]+'</span>':'')
+      +(tr!==undefined && tr!==game.li ? ' <button data-act="train:'+tr+'" class="ghost minibtn">отработать</button>' : '')
+      +'</li>';
+  }
+  return h;
+}
+function cityWinHTML(p){
+  const log=attempt ? attempt.log : [], rows=vioRowsHTML(log);
+  const clean=!game.hits && !rows;
+  const head = clean ? 'Чисто: ни касаний, ни нарушений.'
+    : [rows ? 'нарушения — ниже' : '', game.hits ? 'касаний: <b>'+game.hits+'</b>' : ''].filter(Boolean).join(' · ');
+  const rec = p ? '<p class="sd">Уровень пройден <b>'+p.n+'</b> раз, чисто — <b>'+(p.clean||0)+'</b>.</p>' : '';
+  const advice = clean
+    ? '<p class="sd">Повтори ещё раз — навык ставится повторением, а не единичным успехом.</p>'
+    : '<p class="sd">Чистым считается заезд без нарушений и касаний — к нему и иди.</p>';
+  return '<h1>'+level.def.name+(clean?' — чисто':' — пройден с ошибками')+'</h1>'
+    +'<p>'+head.charAt(0).toUpperCase()+head.slice(1)+'</p>'
+    +(rows?'<ul class="startlist viol">'+rows+'</ul>':'')
+    +rec+advice
+    +(level.def.transfer?'<h2>Запомни для реальной дороги</h2><p>'+level.def.transfer+'</p>':'')
+    + winActsHTML();
+}
 function winActsHTML(){
   const nx=LEVELS[(game.li+1)%LEVELS.length];
   return '<div class="winacts">'
@@ -12585,7 +12626,7 @@ function menuProfileHTML(){
   if(AUTH_ON && !acct) s+=acctBtnsHTML('Войди, и прогресс будет на телефоне и на компьютере.');
   s+='<div class="ptiles">'
     +'<div class="ptile"><b>'+st.passed+' из '+st.total+'</b><span>уровней пройдено</span></div>'
-    +'<div class="ptile"><b>'+st.clean+'</b><span>заездов без касаний</span></div>'
+    +'<div class="ptile"><b>'+st.clean+'</b><span>чистых заездов</span></div>'
     +'<div class="ptile"><b>'+rd.pct+'&nbsp;%</b><span>готовность к экзамену</span></div>'
     +'<div class="ptile"><b>'+(st.best===null?'—':st.best+'&nbsp;см')+'</b><span>лучшая точность в габаритах</span></div>'
     +'<div class="ptile"><b>'+er.routes+' из 3</b><span>маршрутов экзамена сдано</span></div></div>';
@@ -13480,10 +13521,12 @@ function progPassed(name){
   const p=progOf(name); if(!p) return false;
   return p.passed!==undefined ? p.passed>0 : (p.n||0)>0;
 }
-function progAdd(name, t, hits, err, blind){
+/* чистый заезд — без касаний И без нарушений: «чисто» за поворот без поворотника или разворот не с путей
+   поднимало готовность к экзамену тому, кто как раз и нарушал (#302) */
+function progAdd(name, t, hits, err, blind, vios){
   const a=progAll();
   const p=a[name] || {n:0, clean:0, best:null, bestHits:null};
-  p.n++; if(hits===0) p.clean++;
+  p.n++; if(hits===0 && !vios) p.clean++;
   if(p.best===null || t<p.best) p.best=+t.toFixed(1);
   if(p.bestHits===null || hits<p.bestHits) p.bestHits=hits;
   /* у упражнений на габариты время не значит ничего — там рекорд это точность в см,
@@ -13514,6 +13557,9 @@ function progLine(name){
   if(p.bestErr!==undefined && p.bestErr!==null)
     return 'пройден '+p.n+'× · лучшая точность '+p.bestErr+' см'
          + (p.bestBlind!==undefined && p.bestBlind!==null ? ' · вслепую '+p.bestBlind+' см' : '');
+  /* у городского урока время ничего не значит: чистый заезд — это без нарушений */
+  const d=LEVELS.find(l=>l.name===name);
+  if(d && d.strict) return 'пройден '+p.n+'× · чисто '+p.clean+'×';
   return 'пройден '+p.n+'× · чисто '+p.clean+'× · лучшее '+p.best.toFixed(1).replace('.',',')+'&nbsp;с';
 }
 /* экзаменационная запись: свой тип поверх trainer_progress, старые поля не трогаем */
@@ -14260,12 +14306,13 @@ function finishLevel(){
 function win(){
   setParked(false);
   game.done=true;
-  track('level_win', Object.assign(anLevel(game.li), { t:+game.t.toFixed(1), hits:game.hits, clean:game.hits===0,
-    err_cm: precDef() ? Math.round(Math.abs(precErr())*100) : null, demo:!!demo }));
+  const vios = attempt ? attempt.log.filter(l=>l.code!=='kerb').length : 0;
+  track('level_win', Object.assign(anLevel(game.li), { t:+game.t.toFixed(1), hits:game.hits, vios,
+    clean:game.hits===0 && !vios, err_cm: precDef() ? Math.round(Math.abs(precErr())*100) : null, demo:!!demo }));
   if(demo) stopDemo();
   game.prog = precDef()
     ? progAdd(level.def.name, game.t, game.hits, precErr(), opt.refs===0)
-    : progAdd(level.def.name, game.t, game.hits);
+    : progAdd(level.def.name, game.t, game.hits, undefined, false, vios);
   tone(760,0.12,0.10,'sine');
   setTimeout(()=>tone(1140,0.20,0.10,'sine'),130);
   showOv(winHTML());

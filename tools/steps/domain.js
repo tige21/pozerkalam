@@ -131,6 +131,19 @@
       violationsTick(1 / 60);
       ctx.vio = vioEvents.map((e) => e.code);
     }],
+    /* нарушение во время заезда — тем же путём, что у детектора: vio() → попытка строгого уровня */
+    [new RegExp('^игрок нарушает правило ' + S + '$'), (code) => {
+      if (!PENALTIES[code]) throw new Error('нет кода нарушения «' + code + '»');
+      vio(code, PENALTIES[code].txt);
+    }],
+    /* зачёт уровня: прогресс до и после — по имени уровня в localStorage */
+    [/^уровень пройден$/, () => {
+      const p0 = progOf(level.def.name) || { n: 0, clean: 0 };
+      ctx.prog0 = { n: p0.n || 0, clean: p0.clean || 0 };
+      win();
+      const p1 = progOf(level.def.name) || { n: 0, clean: 0 };
+      ctx.prog1 = { n: p1.n || 0, clean: p1.clean || 0 };
+    }],
     [/^считается окно в потоке$/, () => { const c = bodyPos(); ctx.gap = trafficGap(c.u, c.v, 6); }],
     /* смена зелёного на жёлтый у первого светофора уровня: детектор видит последний кадр зелёного
        и первый кадр жёлтого — п. 6.14 решается ровно в этот миг */
@@ -271,6 +284,12 @@
     [new RegExp('^нарушения ' + S + ' нет$'), (code) => {
       if (!ctx.vio) throw new Error('детекторы не запускались');
       if (ctx.vio.includes(code)) throw new Error('засчитано «' + code + '»: [' + ctx.vio.join(', ') + ']');
+    }],
+    [/^заезд засчитан (не )?чистым$/, (not) => {
+      if (!ctx.prog1) throw new Error('уровень не пройден — нет шага «уровень пройден»');
+      if (ctx.prog1.n !== ctx.prog0.n + 1) throw new Error('пройденных не прибавилось');
+      const got = ctx.prog1.clean - ctx.prog0.clean;
+      if (not ? got !== 0 : got !== 1) throw new Error('чистых прибавилось ' + got);
     }],
     [/^путь свободен$/, () => {
       if (ctx.gap < 9) throw new Error('окно ' + ctx.gap.toFixed(1) + ' с — путь занят');
