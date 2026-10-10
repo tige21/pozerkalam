@@ -69,8 +69,9 @@ ch "SELECT querystring, country, detected_client_signals, detected_header_heuris
 | Событие | Когда | Свойства | Цель Метрики |
 |---|---|---|---|
 | `app_open` | загрузка страницы, раз | `platform` (web, pwa, vk, tg, ya), `framed`, `mob`, `lang`, `runs`, `build`, `account`, `provider`, `utm_*`, `source` | — |
-| `level_start` | «Поехали», «Играть» в главном меню, выбор уровня, «Следующий», цифра, «Заново», «отработать» из протокола | `li`, `kind`, `via` (start, play, pick, next, digit, again, train), `exam_mode` | `level-start` |
-| `level_win` | зачёт | `li`, `kind`, `t`, `hits`, `clean`, `err_cm` (дриллы), `demo` | `win` |
+| `level_start` | «Поехали», «Играть» в главном меню, выбор уровня, «Следующий», цифра, «Заново», «отработать» из протокола, вход в практику | `li`, `kind`, `via` (start, play, pick, next, digit, again, train, practice, learn), `exam_mode`, `mode` (`practice` — практика городского урока), `variant` | `level-start` |
+| `level_win` | зачёт | `li`, `kind`, `t`, `hits`, `vios` (нарушения на городском уроке), `clean` (без касаний и нарушений), `err_cm` (дриллы), `demo` | `win` |
+| `practice_pass` / `practice_fail` | конец практики городского урока | `li`, `kind`, `variant`, `score`, `code` (последнее нарушение) | `practice_pass` / `practice_fail` |
 | `level_fail` | провал попытки на строгих уровнях | `li`, `kind`, `code` | `level-fail` |
 | `exam_pass` / `exam_fail` | конец экзамена | `route`, `mode`, `score` | `exam-pass` / `exam-fail` |
 | `demo_start` | демонстрация | `li`, `kind` | `demo-start` |
