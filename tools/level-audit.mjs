@@ -143,7 +143,10 @@ const report = await page.evaluate(() => {
         blink: [null, 'L', 'R'], roll: [0, 0.5], hand: [false, true],
         /* окно в потоке: «нет окна», «на грани», «свободно». Без этой оси поле s.gap
            оставалось undefined, и любая фаза «уступи» считалась недостижимой */
-        gap: [1, 4.9, 5.1, 99] };
+        gap: [1, 4.9, 5.1, 99],
+        /* пешеход на ближайшем переходе впереди (pedState): без этой оси фазы «стой, пешеход» уровня 25
+           выглядели мёртвыми */
+        ped: [null, 'kerb', 'yield', 'far'] };
       const b = level.bounds, used = new Set(), nums = new Set();
       for (const p of ph) if (p.when) {
         const src = String(p.when);
@@ -165,7 +168,7 @@ const report = await page.evaluate(() => {
       build();
       while (total > 4e6 && (nUV > 4 || nTh > 8)) { nUV = Math.max(4, nUV - 2); nTh = Math.max(8, nTh - 4); build(); }
       const wins = new Array(ph.length).fill(0);
-      const st = { u: 0, v: 0, th: 0, gear: 0, vel: 0, steer: 0, front: 3, rear: 3, left: 3, right: 3, blink: null, roll: 0, hand: false, gap: 99 };
+      const st = { u: 0, v: 0, th: 0, gear: 0, vel: 0, steer: 0, front: 3, rear: 3, left: 3, right: 3, blink: null, roll: 0, hand: false, gap: 99, ped: null };
       const idx = new Array(axes.length).fill(0);
       const N = axes.length;
       for (let done = false; !done;) {

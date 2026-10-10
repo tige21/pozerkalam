@@ -87,6 +87,13 @@
         level.actors = [t];
       }],
 
+    /* фикстура пешехода: уже идёт по переходу в заданную сторону, других актёров нет */
+    [new RegExp('^на переходе один пешеход в точке \\(' + N + ', ' + N + '\\) идёт курсом ' + N + '° со скоростью ' + N + ' м/с$'),
+      (u, v, yaw, sp) => {
+        const f = fuv(rad(+yaw));
+        const o = pedActor([{ u: +u, v: +v }, { u: +u + f.u * 20, v: +v + f.v * 20 }], +sp, null, 0, 1);
+        o.act.v = +sp; level.actors = [o];
+      }],
     [new RegExp('^машина игрока едет вперёд со скоростью ' + N + ' м/с$'), (sp) => {
       car.sel = 'D'; car.gear = 1; car.vel = +sp;
     }],
@@ -125,6 +132,54 @@
       ctx.vio = vioEvents.map((e) => e.code);
     }],
     [/^считается окно в потоке$/, () => { const c = bodyPos(); ctx.gap = trafficGap(c.u, c.v, 6); }],
+    /* смена зелёного на жёлтый у первого светофора уровня: детектор видит последний кадр зелёного
+       и первый кадр жёлтого — п. 6.14 решается ровно в этот миг */
+    [/^загорается жёлтый$/, () => {
+      const L = ((level.city && level.city.lights) || [])[0];
+      if (!L) throw new Error('на уровне нет светофора');
+      const base = (L.group === 'EW' ? LIGHT_CYCLE / 2 : 0) + (L.offset || 0);
+      const tY = ((LIGHT_GREEN - base) % LIGHT_CYCLE + LIGHT_CYCLE) % LIGHT_CYCLE;
+      vioEvents.length = 0;
+      game.t = tY - 0.05; violationsTick(1 / 60);
+      game.t = tY + 0.05; violationsTick(1 / 60);
+      if (lightPhase(L) !== 'Y') throw new Error('жёлтый не загорелся: ' + lightPhase(L));
+      ctx.vio = vioEvents.map((e) => e.code);
+    }],
+    /* проезд по ломаной: шаг 0,3 м, курс по отрезку, на каждом шаге — кадр детекторов, как в frame */
+    [/^машина проезжает через точки (.+)$/, (list) => {
+      const pts = [...list.matchAll(/\((-?\d+(?:\.\d+)?), (-?\d+(?:\.\d+)?)\)/g)].map((m) => ({ u: +m[1], v: +m[2] }));
+      if (pts.length < 2) throw new Error('нужно хотя бы две точки');
+      vioEvents.length = 0; car.vel = Math.max(car.vel, 3); car.sel = 'D'; car.gear = 1;
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1], b = pts[i], L = Math.hypot(b.u - a.u, b.v - a.v), th = Math.atan2(b.u - a.u, b.v - a.v);
+        for (let d = 0; d < L; d += 0.3) {
+          setBody(a.u + (b.u - a.u) * d / L, a.v + (b.v - a.v) * d / L, th);
+          game.t += 0.1; violationsTick(1 / 60);
+        }
+      }
+      ctx.vio = (ctx.vio || []).concat(vioEvents.map((e) => e.code));
+    }],
+    [/^включён (левый|правый) поворотник$/, (side) => { car.blink = side === 'левый' ? 'L' : 'R'; car.blinkTh = car.th; }],
+    /* въезд на ближайший переход впереди: кадр детекторов до кромки, потом нос на 0,3 м за ней */
+    [/^машина въезжает на переход$/, () => {
+      const zb = zebraAhead();
+      if (!zb) throw new Error('впереди нет перехода');
+      vioEvents.length = 0; violationsTick(1 / 60);
+      const f = fuv(car.th), c = bodyPos(), k = zb.ahead + 0.3;
+      setBody(c.u + f.u * k, c.v + f.v * k, car.th);
+      violationsTick(1 / 60);
+      ctx.vio = vioEvents.map((e) => e.code);
+    }],
+    /* машина переезжает линию светофора на своей скорости: нос — на 0,5 м за линией */
+    [/^машина пересекает стоп-линию$/, () => {
+      const sl = ((level.city && level.city.stoplines) || []).find((x) => x.light);
+      if (!sl) throw new Error('на уровне нет стоп-линии светофора');
+      const f = fuv(car.th), c = bodyPos(), lf = fuv(sl.yaw);
+      const s = (c.u + f.u * HALF_L - sl.u) * lf.u + (c.v + f.v * HALF_L - sl.v) * lf.v;
+      setBody(c.u + f.u * (0.5 - s), c.v + f.v * (0.5 - s), car.th);
+      vioEvents.length = 0; violationsTick(1 / 60);
+      ctx.vio = (ctx.vio || []).concat(vioEvents.map((e) => e.code));
+    }],
 
     /* ---------- Тогда ---------- */
     [/^открыт пейволл, уровень не сменился$/, () => {
@@ -184,6 +239,38 @@
     [/^засчитан непропуск$/, () => {
       if (!ctx.vio) throw new Error('детекторы не запускались — нет шага «Когда срабатывают детекторы нарушений»');
       if (!ctx.vio.includes('yield')) throw new Error('непропуск не засчитан: [' + ctx.vio.join(', ') + ']');
+    }],
+    /* светофоры группируются по ближайшему узлу графа; на цикле с шагом 0,1 с поперечные группы
+       одного узла не горят зелёным одновременно */
+    [/^на перекрёстках нет одновременного зелёного поперечным направлениям$/, () => {
+      const g = level.city && level.city.graph, Ls = (level.city && level.city.lights) || [];
+      if (!g || !Ls.length) throw new Error('на уровне нет графа или светофоров');
+      const byNode = {};
+      for (const L of Ls) {
+        let best = null, bd = 1e9;
+        for (const id in g.V) { const n = g.V[id], d = Math.hypot(n.u - L.u, n.v - L.v); if (d < bd) { bd = d; best = id; } }
+        (byNode[best] = byNode[best] || []).push(L);
+      }
+      const t0 = game.t;
+      try {
+        for (const id in byNode) {
+          const list = byNode[id];
+          for (let t = 0; t < LIGHT_CYCLE; t += 0.1) {
+            game.t = t;
+            const green = new Set(list.filter((L) => lightPhase(L) === 'G').map((L) => L.group));
+            if (green.size > 1) throw new Error('узел ' + id + ': зелёный у ' + [...green].join(' и ') + ' на t=' + t.toFixed(1)
+              + ' (смещения ' + list.map((L) => L.group + '/' + (L.offset || 0)).join(', ') + ')');
+          }
+        }
+      } finally { game.t = t0; }
+    }],
+    [new RegExp('^засчитано нарушение ' + S + '$'), (code) => {
+      if (!ctx.vio) throw new Error('детекторы не запускались');
+      if (!ctx.vio.includes(code)) throw new Error('нарушение «' + code + '» не засчитано: [' + ctx.vio.join(', ') + ']');
+    }],
+    [new RegExp('^нарушения ' + S + ' нет$'), (code) => {
+      if (!ctx.vio) throw new Error('детекторы не запускались');
+      if (ctx.vio.includes(code)) throw new Error('засчитано «' + code + '»: [' + ctx.vio.join(', ') + ']');
     }],
     [/^путь свободен$/, () => {
       if (ctx.gap < 9) throw new Error('окно ' + ctx.gap.toFixed(1) + ' с — путь занят');
