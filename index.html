@@ -13750,7 +13750,9 @@ function toggleFull(){
     if(!isFull()){
       const req = el.requestFullscreen || el.webkitRequestFullscreen;
       if(req){ const pr=req.call(el);
-        if(pr && pr.then) pr.then(()=>{ try{ screen.orientation.lock('landscape'); }catch(e){} }).catch(()=>{}); }
+        /* lock() — промис, и на компьютере он отклоняется всегда: не вернутый в цепочку, отказ уходил
+           владельцу ложным «[crash] promise» и сжигал единственный отчёт сессии (#298) */
+        if(pr && pr.then) pr.then(()=>screen.orientation.lock('landscape')).catch(()=>{}); }
     } else { const ex = d.exitFullscreen || d.webkitExitFullscreen; if(ex) ex.call(d); }
   }catch(e){}
   setTimeout(resize, 350);

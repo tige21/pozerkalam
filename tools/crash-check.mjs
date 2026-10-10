@@ -80,6 +80,30 @@ const r1 = reports[1] || {};
 check('window.onerror шлёт отчёт с местом window (@app-crash-window-error)',
   reports.length === 2 && /^\[crash\] window: boom-async/.test(r1.text || ''), JSON.stringify({ reports: reports.length, text: (r1.text || '').split('\n')[0] }));
 
+/* 3а. полноэкранный режим на компьютере: Chrome отклоняет screen.orientation.lock() всегда, и отказ
+   уходил владельцу как «[crash] promise» (три ложных отчёта 07–10.10, доска #298), сжигая единственный
+   отчёт сессии — настоящий крэш после этого уже не приходил */
+await page.evaluate(() => {
+  crashSent = false; window.__lockCalls = 0;
+  window.__rfs = document.documentElement.requestFullscreen;
+  document.documentElement.requestFullscreen = () => Promise.resolve();
+  Object.defineProperty(screen.orientation, 'lock', { configurable: true, writable: true, value: () => {
+    window.__lockCalls++;
+    return Promise.reject(new DOMException('screen.orientation.lock() is not available on this device.', 'NotSupportedError'));
+  } });
+  toggleFull();
+});
+await page.waitForTimeout(400);
+const nLock = reports.length;
+const lock = await page.evaluate(() => ({ calls: window.__lockCalls, sent: crashSent }));
+await page.evaluate(() => { setTimeout(() => { throw new Error('boom-after-lock'); }, 0); });
+await page.waitForTimeout(400);
+const rLock = reports[nLock] || {};
+check('отказ screen.orientation.lock() в полноэкранном режиме не шлёт отчёт и не сжигает его (@app-crash-fullscreen-lock)',
+  lock.calls === 1 && nLock === 2 && !lock.sent && reports.length === 3 && /^\[crash\] window: boom-after-lock/.test(rLock.text || ''),
+  JSON.stringify({ lockCalls: lock.calls, reportsAfterLock: nLock - 2, burned: lock.sent, next: (rLock.text || '').split('\n')[0] }));
+await page.evaluate(() => { document.documentElement.requestFullscreen = window.__rfs; delete screen.orientation.lock; });
+
 /* 4. без обхода под headless отчёт молчит, кадр всё равно жив */
 await page.evaluate(() => { crashSent = false; delete crashN.hud; window.CRASH_REPORT_FORCE = false; setClear = window.__setClear; });
 const n0 = reports.length;
