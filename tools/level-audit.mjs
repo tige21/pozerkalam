@@ -30,7 +30,9 @@ try { ({ chromium } = createRequire(path.join(PW_DIR, 'package.json'))('playwrig
 catch { console.error(`playwright-core не найден в ${PW_DIR}`); process.exit(2); }
 
 const url = process.env.URL || 'file://' + path.join(ROOT, 'index.html');
-const browser = await chromium.launch({ channel: 'chrome', args: ['--no-sandbox'] });
+/* HOST_RULES — какой бокс проверять под гео-DNS: «MAP pozerkalam.space 83.217.215.66» — прод РФ, без него —
+   куда отправит DNS (из-под VPN это зарубежное зеркало) */
+const browser = await chromium.launch({ channel: 'chrome', args: ['--no-sandbox'].concat(process.env.HOST_RULES ? ['--host-resolver-rules=' + process.env.HOST_RULES] : []) });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const pageErrors = [];
 page.on('pageerror', e => pageErrors.push(String(e).split('\n')[0]));

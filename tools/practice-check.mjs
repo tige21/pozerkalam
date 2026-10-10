@@ -7,7 +7,7 @@
 
      PW_DIR=/tmp/pw node tools/practice-check.mjs
      PW_DIR=/tmp/pw URL=https://pozerkalam.space/play/ node tools/practice-check.mjs
-     FAULT=noblink|noyield|nocatch|hints PW_DIR=/tmp/pw node tools/practice-check.mjs   # каждая проверка обязана покраснеть
+     FAULT=noblink|startstop|noyield|nocatch|hints PW_DIR=/tmp/pw node tools/practice-check.mjs   # каждая проверка обязана покраснеть
 
    Код 1 — хоть одна проверка не прошла. */
 import { createRequire } from 'node:module';
@@ -24,7 +24,9 @@ try { ({ chromium } = createRequire(path.join(PW_DIR, 'package.json'))('playwrig
 catch { console.error(`playwright-core не найден в ${PW_DIR}`); process.exit(2); }
 
 const url = process.env.URL || 'file://' + path.join(ROOT, 'index.html');
-const browser = await chromium.launch({ channel: 'chrome', args: ['--no-sandbox'] });
+/* HOST_RULES — какой бокс проверять под гео-DNS: «MAP pozerkalam.space 83.217.215.66» — прод РФ, без него —
+   куда отправит DNS (из-под VPN это зарубежное зеркало) */
+const browser = await chromium.launch({ channel: 'chrome', args: ['--no-sandbox'].concat(process.env.HOST_RULES ? ['--host-resolver-rules=' + process.env.HOST_RULES] : []) });
 const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(String(e).split('\n')[0]));
@@ -47,9 +49,21 @@ const check = (name, ok, info) => { results.push({ name, ok, info }); console.lo
         all.push(d.name.slice(0, 2) + V.id);
         if (!x.done || x.failed || x.score !== 0 || x.hits) bad.push(d.name.slice(0, 2) + V.id + ' [' + x.log.join(' ') + '] этап ' + x.stage + '/' + x.stages + (x.done ? '' : ' не доехал'));
       }); });
+    /* старт не на жёлтом зигзаге 1.17: с первого кадра игрок стоял бы там, где стоять нельзя (п. 12.4) */
+    LEVELS.forEach((d, li) => { if (!d.practice) return;
+      d.practice.variants.forEach((V, vi) => {
+        window.PRACTICE_VARIANT = vi; openLevel(li, 'practice', 'practice'); delete window.PRACTICE_VARIANT; hideOv(); paused = true;
+        const st = level.start;
+        for (const S of (level.city.stops || [])) { if (!S.zone) continue;
+          const zu = S.zone.reduce((a, p) => a + p.u, 0) / 4, zv = S.zone.reduce((a, p) => a + p.v, 0) / 4;
+          if (fault === 'startstop' && li === LEVELS.findIndex((l) => l.practice) && vi === 0) { st.u = zu; st.v = zv; }
+          const f = fuv(S.yaw), r = ruv(S.yaw), lon = (st.u - zu) * f.u + (st.v - zv) * f.v, lat = (st.u - zu) * r.u + (st.v - zv) * r.v;
+          if (Math.abs(lat) < 2.5 && Math.abs(lon) < S.len / 2 + HALF_L) bad.push(d.name.slice(0, 2) + V.id + ': старт на остановке «' + S.street + '»');
+        }
+      }); });
     return { bad, n: all.length };
   }, FAULT);
-  check('все варианты практики проезжаются чисто в пустом городе (@city-practice-clean-drive)', r.bad.length === 0 && r.n >= 30,
+  check('все варианты практики проезжаются чисто в пустом городе и стартуют не на остановке (@city-practice-clean-drive)', r.bad.length === 0 && r.n >= 30,
     r.bad.length ? r.bad.slice(0, 6).join('; ') : r.n + ' вариантов');
 }
 

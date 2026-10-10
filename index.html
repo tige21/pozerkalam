@@ -5322,7 +5322,7 @@ function cycleTraffic(){
   /* уровень перезагружаем: машины расставляются в trafficInit при загрузке, а менять
      плотность на ходу — значит ронять машины посреди перекрёстка */
   const on=level && level.def && (level.def.traffic || level.practice);
-  if(on) loadLevel(game.li);
+  if(on){ prReuse=!!level.practice; loadLevel(game.li); }
   const exam=on && level.def.examRoute;
   toast('Поток: '+TRAF_NAMES[opt.traffic]+(!on?' — на этом уровне потока нет'
     : exam?' — на экзамене поток всегда плотный' : ' · машин в городе: '+trafCount()+' · уровень начат заново'), 3);
@@ -6907,7 +6907,7 @@ const LEVELS = [
     variants:[
       {id:'a', start:['N2',180,44], moves:[['N2',270]], stop:['N2',270,56]},
       {id:'b', start:['N1',90,32],  moves:[['N1',0],['N2',270]], stop:['N2',270,56]},
-      {id:'c', start:['N2',270,46], moves:[['N2',180],['N1',90]], stop:['N1',90,30]},
+      {id:'c', start:['N2',270,54], moves:[['N2',180],['N1',90]], stop:['N1',90,30]},
       {id:'d', start:['N2',0,42],   moves:[['N2',90]], stop:['N2',90,26]} ] },
   task:'Проехать два перекрёстка: направо на первом, налево на втором. Поворотник — до манёвра, траектория — без выезда на встречную. Грубая ошибка (встречная, стоп-линия, столкновение) — попытка не засчитана: аварийная сразу, остальные со второй.',
   tip:'Правый поворот — по малой дуге, ближе к своему краю. Левый — от центра перекрёстка, с выходом на свою полосу.',
@@ -6996,7 +6996,7 @@ const LEVELS = [
     variants:[
       {id:'a', start:['N1',180,28], moves:[['N1',180]], stop:['N1',180,22]},
       {id:'b', start:['N2',180,44], moves:[['N2',180]], stop:['N2',180,32]},
-      {id:'c', start:['N2',270,46], moves:[['N2',270]], stop:['N2',270,56]},
+      {id:'c', start:['N2',270,54], moves:[['N2',270]], stop:['N2',270,56]},
       {id:'d', start:['N1',0,40],   moves:[['N1',0]],   stop:['N1',0,32]} ] },
   task:'Развернуться на перекрёстке в один приём: левый поворотник, крайнее левое положение у осевой, дуга от центра перекрёстка — и в свою полосу. Грубая ошибка (встречная, столкновение) — попытка не засчитана: аварийная сразу, остальные со второй.',
   tip:'Перед разворотом — крайнее левое положение (п. 8.5): левый борт у осевой. Круг разворота 11,8 м, поэтому дугу начинают от центра перекрёстка — её край уходит в устье поперечной улицы.',
@@ -7263,7 +7263,7 @@ const LEVELS = [
       {id:'a', start:['N1',180,28], moves:[['N1',0],['N2',0]], stop:['N2',0,34]},
       {id:'b', start:['N1',0,44], moves:[['N1',90]], stop:['N1',90,30],
        actors:[{from:[8.15,-104], to:[8.15,-20], sp:7, node:'N1', d:[30,46]}]},
-      {id:'c', start:['N2',270,46], moves:[['N2',90]], stop:['N2',90,26]},
+      {id:'c', start:['N2',270,54], moves:[['N2',90]], stop:['N2',90,26]},
       {id:'d', start:['N1',90,32],  moves:[['N1',180]], stop:['N1',180,22],
        actors:[{from:[-56,-71.65], to:[40,-71.65], sp:6, node:'N1', d:[24,38]}]} ] },
   task:'Подъехать к регулируемому перекрёстку, остановиться ДО стоп-линии на запрещающий сигнал, тронуться на зелёный и встать в зоне. Грубая ошибка (запрещающий сигнал, встречная, столкновение) — попытка не засчитана.',
@@ -8056,6 +8056,8 @@ const opt  = { guides:false, trails:false, sound:false, refs:2, marks:true, camM
 const OPT_SAVED={ marks:'trainer_marks', guides:'trainer_guides', trails:'trainer_trails', mirrors:'trainer_mirvis', sound:'trainer_sound' };
 function setOpt(k, v){
   opt[k]=!!v;
+  /* иначе examTeardown вернёт прежнее значение поверх только что выбранного */
+  if(examSavedOpts && k in examSavedOpts) examSavedOpts[k]=!!v;
   try{ localStorage.setItem(OPT_SAVED[k], v?'1':'0'); }catch(e){}
 }
 let level = null, paused = true, trails = null, trailT = 0;
@@ -8161,8 +8163,11 @@ function loadLevel(i){
   game.li = ((i%LEVELS.length)+LEVELS.length)%LEVELS.length;
   /* практика — тот же урок на общем городе: случайный вариант маршрута, полная расстановка правил,
      без фаз, маркеров и показа. practiceOn ставит вход игрока (openLevel), перезагрузки его сохраняют */
-  const def = LEVELS[game.li], P = practiceOn && !!def.practice;
-  const b = P ? practiceBuild(def) : def.build();
+  const def = LEVELS[game.li];
+  let P = practiceOn && !!def.practice, b = null;
+  if(P){ try{ b=practiceBuild(def); }
+    catch(e){ console.warn('[practice] вариант не собрался, урок с подсказками: '+e.message); practiceOn=false; P=false; } }
+  if(!b) b=def.build();
   kerbHeld=[];
   for(const o of b.obs){ o.hw=o.w/2; o.hl=o.l/2; o.knocked=false; o._touch=false;
                          o._shadow=shadowPoly(o.u,o.v,o.w,o.l,o.yaw,o.h); o._sr=undefined; }
@@ -8757,7 +8762,7 @@ function examPenalty(code){
 }
 /* каждой ошибке — уровень, где её отрабатывают: протокол даёт ссылку «отработать» */
 const EXAM_TRAIN={rollback:19, 'handbrake-drive':19, collision:21, kerb:21,
-  'no-blinker':22, oncoming:23, stopline:24, zebra:24, yield:25, 'collision-actor':25,
+  'no-blinker':22, oncoming:23, stopline:19, zebra:24, yield:25, 'collision-actor':25,
   redlight:26, 'stop-sign':26, 'solid-line':27, 'lane-blinker':27, 'tram-turn':28, ped:24, 'turn-pos':22, 'stop-place':21};
 /* первый проигрышный конец в игре: физика замирает на game.done, как при победе,
    а выход из замершего состояния — только через экран результата (ловушка resume) */
@@ -9315,13 +9320,15 @@ function stageTramU(site){
 const STOP_KERB=0.6;
 function stageStop(id, deg, d){
   const p=laneOut(id, deg, d), n=p.n, a=p.a, f=fuv(a.yaw);
-  let held=0;
+  /* по времени, а не по кадрам: 60 кадров — это 2 с на телефоне с 30 fps и 0,4 с на мониторе 144 Гц */
+  let t0=-1;
   return {cmd:'Остановись у тротуара справа — где это разрешено', short:'остановка у тротуара', at:{u:p.u, v:p.v}, turn:'park',
     done:s=>{
       const lon=(s.u-n.u)*f.u+(s.v-n.v)*f.v;
       const ok = lon>(n.round||n.r)+1 && Math.abs(angNorm(s.th-a.yaw))<rad(25) && s.right<=STOP_KERB && Math.abs(s.vel)<0.1;
-      if(!ok){ held=0; return false; }
-      if(++held<60) return false;
+      if(!ok){ t0=-1; return false; }
+      if(t0<0) t0=game.t;
+      if(game.t-t0<1.0) return false;
       stopPlaceJudge();
       return true; }};
 }
@@ -9430,12 +9437,16 @@ function prTram(b, V){
     : tramCar(TRAM_HW/2, -40, 0, 140, 6.2, s=>s.u>-3.4 && s.u<3.4 && s.v<48 && s.v>28));
 }
 const prLast={};
+/* перезагрузка того же заезда (смена плотности потока) — тот же маршрут, а не новый вариант */
+let prReuse=false;
 function practiceBuild(def){
   const b=cityBase(), pr=def.practice, n=pr.variants.length;
   prSeed = (window.PRACTICE_SEED!==undefined) ? (window.PRACTICE_SEED>>>0) : null;
-  let vi = (window.PRACTICE_VARIANT!==undefined) ? (window.PRACTICE_VARIANT%n) : Math.floor(prRand()*n);
+  const keep = prReuse && prLast[def.name]!==undefined; prReuse=false;
+  let vi = (window.PRACTICE_VARIANT!==undefined) ? (window.PRACTICE_VARIANT%n)
+         : keep ? prLast[def.name] : Math.floor(prRand()*n);
   /* тот же вариант два раза подряд — уже заученный маршрут */
-  if(window.PRACTICE_VARIANT===undefined && n>1 && vi===prLast[def.name]) vi=(vi+1)%n;
+  if(window.PRACTICE_VARIANT===undefined && !keep && n>1 && vi===prLast[def.name]) vi=(vi+1)%n;
   prLast[def.name]=vi;
   const V=Object.assign({id:pr.variants[vi].id||String.fromCharCode(97+vi)}, pr.variants[vi]);
   graphOvr=b.city.graph;
@@ -9604,11 +9615,12 @@ function violationsTick(dt){
     const inside=Math.abs(s)<tz.l/2 && Math.abs(x)<tz.w/2;
     if(inside && !tz._inZone){ tz._inZone=true; tz._th0=car.th; tz._maxT=0; tz._blinkOk=(car.blink===tz.blink); }
     if(inside && car.blink===tz.blink) tz._blinkOk=true;
-    /* наибольшее отклонение курса внутри зоны, а не итог на выходе: на въезде на кольцо машина
-       уходит вправо и тут же доворачивает влево по кругу, итог на выходе почти ноль */
+    /* у въезда на кольцо (minTurn) — наибольшее отклонение курса внутри зоны: машина уходит вправо
+       и тут же доворачивает влево по кругу, итог на выходе почти ноль. У остальных зон — итог на
+       выходе: объезд машины или пешехода внутри зоны не поворот */
     if(inside) tz._maxT=Math.max(tz._maxT||0, Math.abs(angNorm(car.th-tz._th0)));
     if(!inside && tz._inZone){
-      const turned=Math.max(Math.abs(angNorm(car.th-tz._th0)), tz._maxT||0);
+      const fin=Math.abs(angNorm(car.th-tz._th0)), turned=tz.minTurn ? Math.max(fin, tz._maxT||0) : fin;
       console.warn('[FIX:no-blinker] выход из зоны: поворот '+Math.round(deg(turned))+'°, поворотник '
         +(tz._blinkOk?'был':'не был')+' ('+tz.blink+')');
       const minT=tz.minTurn||rad(25);
@@ -9940,6 +9952,8 @@ function nodeTurnTick(){
   if(!ruleSt) ruleSt={n:null, lane:null, laneT:-99};
   if(!n){ const lp=lanePos(); if(lp){ ruleSt.lane=lp; ruleSt.laneT=game.t; } }
   const was=ruleSt.n;
+  /* N5b и N5 разделяют 4 м: машина выходит из одного узла и в том же кадре уже в другом */
+  if(was && n!==was) nodeTurnExit(was);
   if(n && n!==was){
     ruleSt.n=n; ruleSt.th0=car.th; ruleSt.maxT=0; ruleSt.bl={L:seen('L'), R:seen('R')};
     ruleSt.entryLane = game.t-ruleSt.laneT<3 ? ruleSt.lane : null;
@@ -9951,24 +9965,25 @@ function nodeTurnTick(){
     if(Math.abs(t)<rad(15)){ if(seen('L')) ruleSt.bl.L=true; if(seen('R')) ruleSt.bl.R=true; }
     if(Math.abs(t)>Math.abs(ruleSt.maxT)) ruleSt.maxT=t;
   }
-  if(!n && was){
-    const rule=level.city.rules[was.id]||{kind:'equal'};
-    ruleSt.n=null;
-    if(was.round){
-      if(!seen('R')) vio('no-blinker','Съезд с кольца — поворот направо: правый поворотник (п. 8.1)');
-      return;
-    }
-    if(rule.kind==='bend') return;
-    const t=angNorm(car.th-ruleSt.th0), U=Math.abs(t)>rad(150);
-    const side = U ? 'L' : t>TURN_MIN ? 'R' : t<-TURN_MIN ? 'L' : null;
-    if(!side) return;
-    if(!ruleSt.bl[side]) vio('no-blinker','Поворот без поворотника ('+(side==='L'?'левый Q':'правый E')+')');
-    const ln=ruleSt.entryLane;
-    if(ln && ln.n>=2 && ln.k>=0){
-      const okPos = side==='R' ? ln.k===ln.n : (ln.k===1 || ln.tram);
-      if(!okPos) vio('turn-pos', side==='R' ? 'Направо — из крайней правой полосы (п. 8.5)'
-                                            : 'Налево и в разворот — из крайней левой полосы (п. 8.5)');
-    }
+}
+function nodeTurnExit(was){
+  const seen=(d)=>game.t-blinkOn[d]<2.0;
+  const rule=level.city.rules[was.id]||{kind:'equal'};
+  ruleSt.n=null;
+  if(was.round){
+    if(!seen('R')) vio('no-blinker','Съезд с кольца — поворот направо: правый поворотник (п. 8.1)');
+    return;
+  }
+  if(rule.kind==='bend') return;
+  const t=angNorm(car.th-ruleSt.th0), U=Math.abs(t)>rad(150);
+  const side = U ? 'L' : t>TURN_MIN ? 'R' : t<-TURN_MIN ? 'L' : null;
+  if(!side) return;
+  if(!ruleSt.bl[side]) vio('no-blinker','Поворот без поворотника ('+(side==='L'?'левый Q':'правый E')+')');
+  const ln=ruleSt.entryLane;
+  if(ln && ln.n>=2 && ln.k>=0){
+    const okPos = side==='R' ? ln.k===ln.n : (ln.k===1 || ln.tram);
+    if(!okPos) vio('turn-pos', side==='R' ? 'Направо — из крайней правой полосы (п. 8.5)'
+                                          : 'Налево и в разворот — из крайней левой полосы (п. 8.5)');
   }
 }
 /* п. 8.4: перестраиваясь, уступи тем, кто едет в той полосе прямо. Сзади ближе 2 м или догоняет быстрее,
@@ -13355,7 +13370,8 @@ function mirPresetNow(){
 function setTraffic(v){
   opt.traffic=v;
   try{ localStorage.setItem('trainer_traffic', v); }catch(e){}
-  if(level && level.def && (level.def.traffic || level.practice) && !level.def.examRoute) loadLevel(game.li);
+  if(level && level.def && (level.def.traffic || level.practice) && !level.def.examRoute){
+    prReuse=!!level.practice; loadLevel(game.li); }
 }
 function fullAvail(){ const el=document.documentElement; return !!(el.requestFullscreen || el.webkitRequestFullscreen); }
 const SETTINGS=[
@@ -13544,7 +13560,8 @@ function pressKey(code){
     case 'Escape': escAct(); break;
     case 'KeyH': helpKey(); break;
     case 'Slash': coachWhyToggle(); break;
-    case 'KeyN': if(game.done) openLevel(game.li+1,'next'); break;
+    case 'KeyN': if(game.done){ const ni=game.li+1;
+      openLevel(ni,'next', level.practice && LEVELS[ni] && LEVELS[ni].practice ? 'practice' : 'learn'); } break;
     case 'KeyY': finishLevel(); break;
     /* Q/E отданы поворотникам (ядро экзаменационного ритуала — прайм-клавиши у WASD);
        подворот камеры переехал на [ ] — до этого они были недокументированными дублями селектора */
@@ -14272,8 +14289,10 @@ function progLine(name){
          + (p.bestBlind!==undefined && p.bestBlind!==null ? ' · вслепую '+p.bestBlind+' см' : '');
   /* у городского урока время ничего не значит: чистый заезд — это без нарушений */
   const d=LEVELS.find(l=>l.name===name);
-  if(d && d.strict) return 'пройден '+p.n+'× · чисто '+p.clean+'×'
-    + (p.practice ? ' · практика: чисто '+p.practice.clean+' из '+p.practice.n : '');
+  if(d && d.strict){
+    const pr = p.practice ? 'практика: чисто '+p.practice.clean+' из '+p.practice.n : '';
+    return p.n ? 'пройден '+p.n+'× · чисто '+p.clean+'×'+(pr ? ' · '+pr : '') : pr;
+  }
   return 'пройден '+p.n+'× · чисто '+p.clean+'× · лучшее '+p.best.toFixed(1).replace('.',',')+'&nbsp;с';
 }
 /* экзаменационная запись: свой тип поверх trainer_progress, старые поля не трогаем */
