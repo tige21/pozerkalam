@@ -113,6 +113,11 @@
                   u0: o.u, v0: o.v, yaw0: o.yaw };
         level.actors.push(o); ctx.actor = o;
       }],
+    /* статист продвинулся по своему маршруту: поза — с его же пути */
+    [new RegExp('^машина прошла по маршруту ' + N + ' м$'), (d) => {
+      const a = ctx.actor; if (!a) throw new Error('нет машины');
+      a.act.s = +d; const q = trafPose(a.act.rt, a.act.s, {}); a.u = q.u; a.v = q.v; a.yaw = q.yaw;
+    }],
     /* куда игрок поедет из узла: команда маршрута — так же, как её даёт инспектор практики */
     [new RegExp('^игрок поворачивает на узле ' + S + ' к лучу курсом ' + N + '°$'), (id, yaw) => {
       if (!exam || !exam.route) throw new Error('маршрута нет — нужен уровень экзамена');
@@ -178,6 +183,15 @@
       if (!PENALTIES[code]) throw new Error('нет кода нарушения «' + code + '»');
       vio(code, PENALTIES[code].txt);
     }],
+    [/^прогресс пуст$/, () => { try { localStorage.removeItem(PROG_KEY); } catch (e) {} }],
+    [new RegExp('^урок ' + S + ' пройден чисто (с подсказками|в практике)$'), (name, how) => {
+      levelByName(name);
+      if (how === 'с подсказками') progAdd(name, 30, 0, undefined, false, 0); else progPractice(name, true, 0);
+    }],
+    [new RegExp('^урок ' + S + ' (не )?засчитан в готовность к экзамену$'), (name, not) => {
+      const i = levelByName(name), weak = examReadiness().weak;
+      if (!not === weak.includes(i)) throw new Error('урок ' + (weak.includes(i) ? 'в слабых' : 'засчитан'));
+    }],
     /* зачёт уровня: прогресс до и после — по имени уровня в localStorage */
     [/^уровень пройден$/, () => {
       const p0 = progOf(level.def.name) || { n: 0, clean: 0 };
@@ -224,6 +238,13 @@
       setBody(c.u + f.u * k, c.v + f.v * k, car.th);
       violationsTick(1 / 60);
       ctx.vio = vioEvents.map((e) => e.code);
+    }],
+    /* кадр детекторов на месте, потом машина сдвигается вперёд на N м и ещё кадр */
+    [new RegExp('^машина проезжает ' + N + ' м$'), (d) => {
+      vioEvents.length = 0; violationsTick(1 / 60);
+      const f = fuv(car.th), c = bodyPos(); setBody(c.u + f.u * +d, c.v + f.v * +d, car.th);
+      violationsTick(1 / 60);
+      ctx.vio = (ctx.vio || []).concat(vioEvents.map((e) => e.code));
     }],
     /* машина переезжает линию светофора на своей скорости: нос — на 0,5 м за линией */
     [/^машина пересекает стоп-линию$/, () => {

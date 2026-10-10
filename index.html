@@ -584,6 +584,16 @@ body.menu #overlay.lay-card{background:rgba(4,7,11,.62);pointer-events:auto}
 .srow .sl{flex:1 1 160px;font-size:14.5px;color:#e8eef6}
 .sd{display:block;margin-top:2px;font-size:12px;line-height:1.35;color:#93a7bd}
 #overlay button.minibtn{margin:4px 0 0;padding:2px 10px;font-size:12px;width:auto}
+#overlay button.prcard{display:flex;flex-direction:column;justify-content:flex-start;align-items:stretch;
+  width:100%;margin:0;text-align:left;font-family:inherit;font-weight:400;color:#fff;
+  background:rgba(20,28,38,.9);border:1px dashed rgba(159,208,255,.35);border-radius:12px;padding:9px 11px;cursor:pointer}
+.prcard .n,.prcard .t,.prcard .d{display:block}
+.prcard .n{font-size:11px;color:#9fd0ff;font-weight:700}
+.prcard .t{font-size:13.5px;color:#fff;margin:2px 0 3px;line-height:1.25}
+.prcard .d{font-size:11.5px;color:#93a7bd;line-height:1.4}
+.prcard.pass .n,.prcard.pass .d{color:#7fe0a4}
+body.compact #overlay button.prcard{padding:6px 8px}
+body.compact .prcard .d{display:none}
 #overlay ul.viol li{margin-bottom:6px}
 #overlay .sw{margin:0;flex:none;position:relative;width:52px;height:30px;padding:0;border-radius:999px;
   background:#2a3644;border-color:rgba(255,255,255,.18)}
@@ -675,7 +685,7 @@ body.menu #overlay.lay-card{background:rgba(4,7,11,.62);pointer-events:auto}
   <div class="lvl" id="lvlName">—</div>
   <div class="task" id="lvlTask">—</div>
   <div class="tip" id="lvlTip"></div>
-  <div class="tip" style="color:#9fd0ff;margin-top:5px">▸ нажми — пошаговая инструкция и ориентиры</div>
+  <div class="tip" id="lvlMore" style="color:#9fd0ff;margin-top:5px">▸ нажми — пошаговая инструкция и ориентиры</div>
 </div>
 
 <div class="panel" id="topright">
@@ -4536,7 +4546,10 @@ function propsNear(u, v){
    считается за микросекунды — путь можно перестраивать несколько раз в секунду */
 const ROUTE_STEP=2.0;              /* шаг дискретизации полилинии, м */
 const LANE_SHIFT=26;               /* за сколько метров до манёвра линия уходит в нужный ряд */
-function cityGraph(){ return (level && level.city && level.city.graph) || null; }
+/* graphOvr — граф строящегося города: build() практики прокладывает маршруты статистов, пока
+   level ещё прежний (с графом прошлого уровня, а то и без города вовсе) */
+let graphOvr=null;
+function cityGraph(){ return graphOvr || (level && level.city && level.city.graph) || null; }
 /* привязка точки к ближайшей улице: ребро и путь s от его начала. Точка внутри кольца
    не принадлежит ни одной улице — там снап отдаёт сам узел, иначе машину на кольце
    притягивало к ближайшему лучу и линия уезжала за спину через островок */
@@ -4792,7 +4805,9 @@ function trafficLight(u,v,yaw,group,offset){
 }
 function lightPhase(o){
   const base = (o.group==='EW' ? LIGHT_CYCLE/2 : 0) + (o.offset||0);
-  const t = ((game.t + base) % LIGHT_CYCLE + LIGHT_CYCLE) % LIGHT_CYCLE;
+  /* lightShift — сдвиг фаз на заезд практики: светофор встречает игрока каждый раз по-разному.
+     У учебных уровней и экзамена 0 — их показы и сценарии считаны от game.t */
+  const t = ((game.t + base + ((level && level.lightShift) || 0)) % LIGHT_CYCLE + LIGHT_CYCLE) % LIGHT_CYCLE;
   return t < LIGHT_GREEN ? 'G' : t < LIGHT_GREEN+LIGHT_YELLOW ? 'Y' : 'R';
 }
 /* жёлтый — запрещающий: тормозить надо на него, а не «успевать проскочить» */
@@ -5306,7 +5321,7 @@ function cycleTraffic(){
   try{ localStorage.setItem('trainer_traffic', opt.traffic); }catch(e){}
   /* уровень перезагружаем: машины расставляются в trafficInit при загрузке, а менять
      плотность на ходу — значит ронять машины посреди перекрёстка */
-  const on=level && level.def && level.def.traffic;
+  const on=level && level.def && (level.def.traffic || level.practice);
   if(on) loadLevel(game.li);
   const exam=on && level.def.examRoute;
   toast('Поток: '+TRAF_NAMES[opt.traffic]+(!on?' — на этом уровне потока нет'
@@ -5318,9 +5333,9 @@ function trafNearStart(rt, s0){
   return Math.hypot(p.u-level.start.u, p.v-level.start.v) < TRAF_START_CLEAR;
 }
 function trafficInit(){
-  const def=level.def;
-  if(!def.traffic) return;
-  const loops = def.traffic==='yard' ? trafYardLoops() : trafCityLoops();
+  const def=level.def, kind=level.practice ? 'city' : def.traffic;
+  if(!kind) return;
+  const loops = kind==='yard' ? trafYardLoops() : trafCityLoops();
   if(!loops || !loops.length){ console.warn('[traffic] петли не построены: '+def.name); return; }
   const key=trafKey(), spacing=TRAF_SPACING[key];
   /* «без машин» — город пустой: новичку сначала нужен сам манёвр, поток он включит потом */
@@ -5523,7 +5538,9 @@ function actorsTick(dt){
       s.s += s.v*dt;
       const p=trafPose(s.rt, s.s, _tp);
       a.u=p.u; a.v=p.v; a.yaw=p.yaw;
-      if(s.rt.open && s.s>=s.rt.len) s.done=true;   /* открытый путь актёра кончился */
+      if(s.rt.open && s.s>=s.rt.len){ s.done=true;   /* открытый путь актёра кончился */
+        /* статист практики уходит со сцены, а не встаёт посреди полосы препятствием */
+        if(s.vanish){ a.u=1e4; a.v=1e4; } }
       continue;
     }
     const wp=s.wps[s.i];
@@ -6884,6 +6901,14 @@ const LEVELS = [
 
 { name:'23 · Повороты на перекрёстке',
   strict:true,
+  practice:{ title:'повороты на перекрёстках',
+    intro:'Два поворота по команде на перекрёстках общего города, в потоке. Встречные при повороте налево — твоя забота.',
+    judged:'поворотник до манёвра, крайнее положение перед поворотом, выезд на свою полосу и пропуск встречных при повороте налево',
+    variants:[
+      {id:'a', start:['N2',180,44], moves:[['N2',270]], stop:['N2',270,56]},
+      {id:'b', start:['N1',90,32],  moves:[['N1',0],['N2',270]], stop:['N2',270,56]},
+      {id:'c', start:['N2',270,46], moves:[['N2',180],['N1',90]], stop:['N1',90,30]},
+      {id:'d', start:['N2',0,42],   moves:[['N2',90]], stop:['N2',90,26]} ] },
   task:'Проехать два перекрёстка: направо на первом, налево на втором. Поворотник — до манёвра, траектория — без выезда на встречную. Грубая ошибка (встречная, стоп-линия, столкновение) — попытка не засчитана: аварийная сразу, остальные со второй.',
   tip:'Правый поворот — по малой дуге, ближе к своему краю. Левый — от центра перекрёстка, с выходом на свою полосу.',
   steps:[
@@ -6965,6 +6990,14 @@ const LEVELS = [
 
 { name:'24 · Разворот на перекрёстке',
   strict:true,
+  practice:{ title:'разворот на перекрёстке',
+    intro:'Разворот на регулируемом перекрёстке общего города: из крайнего левого положения, пропустив встречных.',
+    judged:'крайнее левое положение, поворотник, пропуск встречных и выезд на свою половину',
+    variants:[
+      {id:'a', start:['N1',180,28], moves:[['N1',180]], stop:['N1',180,22]},
+      {id:'b', start:['N2',180,44], moves:[['N2',180]], stop:['N2',180,32]},
+      {id:'c', start:['N2',270,46], moves:[['N2',270]], stop:['N2',270,56]},
+      {id:'d', start:['N1',0,40],   moves:[['N1',0]],   stop:['N1',0,32]} ] },
   task:'Развернуться на перекрёстке в один приём: левый поворотник, крайнее левое положение у осевой, дуга от центра перекрёстка — и в свою полосу. Грубая ошибка (встречная, столкновение) — попытка не засчитана: аварийная сразу, остальные со второй.',
   tip:'Перед разворотом — крайнее левое положение (п. 8.5): левый борт у осевой. Круг разворота 11,8 м, поэтому дугу начинают от центра перекрёстка — её край уходит в устье поперечной улицы.',
   steps:[
@@ -7040,6 +7073,13 @@ const LEVELS = [
 
 { name:'25 · Пешеходный переход',
   strict:true,
+  practice:{ title:'пешеходы',
+    intro:'Переходы общего города: на нерегулируемом пешеход главнее, на повороте уступают тем, кто переходит улицу, куда поворачиваешь. Кто и когда выйдет — каждый раз по-новому.',
+    judged:'пропуск пешеходов (п. 14.1 и 13.1), остановка на зебре и место остановки',
+    variants:[
+      {id:'a', start:['N2',270,52], peds:['zav'], moves:[['N2',180]], stop:['N2',180,26]},
+      {id:'b', start:['N1',0,40],   peds:['sad'], moves:[['N1',270]], stop:['N1',270,42]},
+      {id:'c', start:['N4',180,62], peds:['vost'], moves:[['N4',0]],  stop:['N4',0,30]} ] },
   task:'Проехать два нерегулируемых перехода. На первом пешеход выходит с правого тротуара — остановись перед зеброй и пропусти его. На втором посмотри, куда он идёт: уходит по дальней половине — проезжай. Грубая ошибка (не уступил пешеходу, встречная, столкновение) — попытка не засчитана.',
   tip:'Пешеход, который вступил на переход, главнее (п. 14.1). Стоп-линии у нерегулируемой зебры нет: останавливаются перед самой зеброй.',
   steps:[
@@ -7121,6 +7161,16 @@ const LEVELS = [
 
 { name:'26 · Уступи дорогу', traffic:'yard',
   strict:true,
+  practice:{ title:'уступи дорогу и STOP',
+    intro:'Выезды со второстепенной: под «уступи», под STOP, на кольцо. Окно в потоке выбираешь сам — чипа с секундами нет.',
+    judged:'пропуск машин на главной и на кольце, полная остановка у STOP, поворотник',
+    variants:[
+      {id:'a', start:['N6',180,40], moves:[['N6',90],['N2',90]], stop:['N2',90,26],
+       actors:[{from:[-100,18], to:[-30,-4.95], sp:6.5, node:'N6', d:[16,30]}]},
+      {id:'b', start:['N5b',180,26], stopSign:true, moves:[['N5b',270]], stop:['N5b',270,34]},
+      {id:'c', start:['N4',270,38], moves:[['N4',180]], stop:['N4',180,30]},
+      {id:'d', start:['N6',-49.1,24], moves:[['N6',90],['N2',90]], stop:['N2',90,26],
+       actors:[{from:[-76.35,-40], to:[-30,-4.95], sp:5.5, node:'N6', d:[18,30]}]} ] },
   task:'Выезд на главную под знак «уступи»: остановиться у края, пропустить машину слева и повернуть направо со своим поворотником. Грубая ошибка (встречная, стоп-линия, столкновение) — попытка не засчитана: аварийная сразу, остальные со второй.',
   tip:'Знак «уступи» = чужая дорога. Правый поворотник, стоп у края, взгляд налево — и только в чистое окно.',
   steps:[
@@ -7206,6 +7256,16 @@ const LEVELS = [
    3,2…6,5 и 6,5…9,8; Заводская (восток) — полосы v −3,3…0 и −6,6…−3,3 */
 { name:'27 · Светофор: стоп на красный', traffic:'city',
   strict:true,
+  practice:{ title:'светофоры',
+    intro:'Регулируемые перекрёстки общего города: фаза выпадает каждый раз другая. Жёлтый у самой линии — решай по п. 6.14; налево на зелёный — пропусти встречных.',
+    judged:'проезд на запрещающий, стоп-линия, пропуск встречных при повороте налево, крайнее положение',
+    variants:[
+      {id:'a', start:['N1',180,28], moves:[['N1',0],['N2',0]], stop:['N2',0,34]},
+      {id:'b', start:['N1',0,44], moves:[['N1',90]], stop:['N1',90,30],
+       actors:[{from:[8.15,-104], to:[8.15,-20], sp:7, node:'N1', d:[30,46]}]},
+      {id:'c', start:['N2',270,46], moves:[['N2',90]], stop:['N2',90,26]},
+      {id:'d', start:['N1',90,32],  moves:[['N1',180]], stop:['N1',180,22],
+       actors:[{from:[-56,-71.65], to:[40,-71.65], sp:6, node:'N1', d:[24,38]}]} ] },
   task:'Подъехать к регулируемому перекрёстку, остановиться ДО стоп-линии на запрещающий сигнал, тронуться на зелёный и встать в зоне. Грубая ошибка (запрещающий сигнал, встречная, столкновение) — попытка не засчитана.',
   tip:'Жёлтый запрещает въезд, если можешь остановиться без резкого торможения. Загорелся у самой линии на скорости — проезжай, это разрешает п. 6.14. Линия — граница переднего бампера.',
   steps:[
@@ -7264,6 +7324,16 @@ const LEVELS = [
 
 { name:'28 · Перестроение до сплошной', traffic:'city',
   strict:true,
+  practice:{ title:'перестроения',
+    intro:'Перестроиться заранее: под поворот, под съезд, в обход стоящей машины. В соседней полосе кто-то едет — уступи ему.',
+    judged:'поворотник при перестроении, пропуск попутных в соседней полосе (п. 8.4), сплошная, крайнее положение перед поворотом',
+    variants:[
+      {id:'a', start:['N2',270,56], moves:[['N2',0]], stop:['N2',0,34],
+       actors:[{path:[[-80,-1.65],[-14,-1.65],[40,-1.65]], sp:9, node:'N2', d:[44,52]}]},
+      {id:'b', start:['N2',180,56], moves:[['N2',0]], stop:['N2',0,34], hazards:[[8.15,-34,0]],
+       actors:[{path:[[4.85,-104],[4.85,-14],[4.85,40]], sp:8.5, node:'N2', d:[44,54]}]},
+      {id:'c', start:['N1',180,28], moves:[['N1',0],['N2',270]], stop:['N2',270,56],
+       actors:[{path:[[4.85,-104],[4.85,-14],[4.85,40]], sp:8.5, node:'N1', d:[16,24]}]} ] },
   task:'В твоей полосе стоит машина с аварийкой, а через 30 м разметка станет сплошной. Перестроиться вправо с поворотником — пока это ещё можно. Грубая ошибка (сплошная, столкновение, встречная) — попытка не засчитана.',
   tip:'Перестроение начинается с сигнала, а не с руля. Сплошную не пересекают ни на сантиметр — даже если места полно.',
   steps:[
@@ -7324,6 +7394,12 @@ const LEVELS = [
 
 { name:'29 · Разворот на трамвайных путях', traffic:'city',
   strict:true,
+  practice:{ title:'разворот с трамвайных путей',
+    intro:'Разворот посреди проспекта Ленина: с путей попутного направления, пропустив встречный трамвай и машины.',
+    judged:'разворот с путей (п. 8.5), пропуск трамвая и встречных, поворотник',
+    variants:[
+      {id:'a', start:['N2',180,55], tram:'s1', moves:[['TRAM','s1'],['N1',270]], stop:['N1',270,40]},
+      {id:'b', start:['N2',0,54],   tram:'s2', moves:[['TRAM','s2'],['N3',90]], stop:['N3',90,19.5]} ] },
   /* точка опасности для чипа «окно» и показа: пересечение дуги со встречным путём и встречными
      полосами (u −8…−1,6). Штатная точка в 6 м перед капотом стоит на своём полотне и не видит
      встречных машин на u=−8,15 — показ выезжал под них (demo-vio) */
@@ -7432,6 +7508,16 @@ const LEVELS = [
 
 { name:'30 · Круговое движение', traffic:'city',
   strict:true,
+  practice:{ title:'кольцо',
+    intro:'Кольцо с трёх въездов, съезд по команде. Поток на кольце главнее; въезд и выезд — повороты направо.',
+    judged:'пропуск машин на кольце, поворотник на въезде и выезде, нужный съезд',
+    variants:[
+      {id:'a', start:['N4',270,38], moves:[['N4',180]], stop:['N4',180,30]},
+      {id:'b', start:['N4',270,38], moves:[['N4',0]],   stop:['N4',0,30]},
+      {id:'c', start:['N4',180,40], moves:[['N4',0]],   stop:['N4',0,30]},
+      {id:'d', start:['N4',180,40], moves:[['N4',270]], stop:['N4',270,44]},
+      {id:'e', start:['N4',0,34],   moves:[['N4',270]], stop:['N4',270,44]},
+      {id:'f', start:['N4',0,34],   moves:[['N4',180]], stop:['N4',180,30]} ] },
   task:'Въехать на кольцо, уступив тем, кто уже едет по нему, обогнуть островок и выйти на ВТОРОМ съезде — на север. Грубая ошибка (непропуск, столкновение) — попытка не засчитана.',
   tip:'На кольце преимущество у того, кто уже на нём. Въезд на кольцо — поворот направо (п. 8.5): правый поворотник. Перед своим съездом — снова правый.',
   steps:[
@@ -7519,6 +7605,18 @@ const LEVELS = [
 
 { name:'31 · Косой перекрёсток', traffic:'city',
   strict:true,
+  practice:{ title:'кто главный: знаки и помеха справа',
+    intro:'Перекрёстки, где приоритет читают по знакам и по правилу «помеха справа». На равнозначном Т главнее тот, кто справа, даже если ты едешь прямо.',
+    judged:'пропуск по знакам 2.1 и 2.4, помеха справа (п. 13.11), налево — пропуск встречных (п. 13.12)',
+    variants:[
+      {id:'a', start:['N6',180,40], moves:[['N6',-49.1]], stop:['N6',-49.1,24],
+       actors:[{from:[-40,4.95], to:[-104,24], sp:6.5, node:'N6', d:[20,34]},
+               {from:[-104,24], to:[-30,-4.95], sp:6.5, node:'N6', d:[22,36]}]},
+      {id:'b', start:['N3',180,40], moves:[['N3',270]], stop:['N3',270,19.5],
+       actors:[{from:[22,71.65], to:[-22,71.65], sp:5.5, node:'N3', d:[18,32]}]},
+      {id:'c', start:['N3',270,20], moves:[['N3',90]], stop:['N3',90,19.5],
+       actors:[{from:[8.15,40], to:[22,68.35], sp:5, node:'N3', d:[14,22]}]},
+      {id:'d', start:['N5b',180,26], moves:[['N5b',90],['N5',0]], stop:['N5',0,40]} ] },
   task:'Выехать со второстепенной на косой перекрёсток и уйти влево на съезд под 49°. Уступить всем, кто едет по главной. Грубая ошибка (непропуск, столкновение, встречная) — попытка не засчитана.',
   tip:'На косом перекрёстке привычный «поворот на 90°» не работает: смотри на форму заплатки и на знаки, а не на прямой угол.',
   steps:[
@@ -7843,6 +7941,7 @@ function anLevel(i){
 function anLevelStart(via){
   const p=anLevel(game.li); p.via=via;
   if(level && level.def.examRoute) p.exam_mode=examTrain()?'train':'real';
+  if(level && level.practice){ p.mode='practice'; p.variant=level.pvar ? level.pvar.id : null; }
   track('level_start', p);
 }
 /* «с какого устройства и как ему» — один замер за сессию после 20 с езды: на старте регулятор
@@ -8060,7 +8159,10 @@ function buildRenderList(obs){
 function loadLevel(i){
   examTeardown();
   game.li = ((i%LEVELS.length)+LEVELS.length)%LEVELS.length;
-  const def = LEVELS[game.li], b = def.build();
+  /* практика — тот же урок на общем городе: случайный вариант маршрута, полная расстановка правил,
+     без фаз, маркеров и показа. practiceOn ставит вход игрока (openLevel), перезагрузки его сохраняют */
+  const def = LEVELS[game.li], P = practiceOn && !!def.practice;
+  const b = P ? practiceBuild(def) : def.build();
   kerbHeld=[];
   for(const o of b.obs){ o.hw=o.w/2; o.hl=o.l/2; o.knocked=false; o._touch=false;
                          o._shadow=shadowPoly(o.u,o.v,o.w,o.l,o.yaw,o.h); o._sr=undefined; }
@@ -8084,9 +8186,10 @@ function loadLevel(i){
   }
   level = { def, obs:b.obs, rend:buildRenderList(b.obs), dec:b.dec, start:b.start, goal:b.goal,
             ramps:b.ramps||[], city:b.city||null, actors:b.obs.filter(o=>o.act),
+            practice:P, pvar:b.pvar||null, lightShift:b.lightShift||0,
             /* городу — запас 12 м: с 3 м разворот на L24 упирался в невидимую границу на v=-1,5 */
             bounds:{u0:u0-(b.city?12:3), u1:u1+(b.city?12:3), v0:v0-(b.city?12:3), v1:v1+(b.city?12:3)},
-            marks: def.marks ? def.marks() : {} };
+            marks: (def.marks && !P) ? def.marks() : {} };
   level.bld = level.obs.filter(o=>o.kind==='bld');
   bldGridBuild();
   /* обустройство рисуется уличными проходами вместе с препятствиями (окклюзия домами, отсечение), а в
@@ -8098,7 +8201,7 @@ function loadLevel(i){
   if(level.ramps.length) rampBuild(level);
   decBounds(level.dec);
   RAMP_ON = level.ramps.length>0;
-  if(def.phases) for(const p of def.phases){
+  if(def.phases && !P) for(const p of def.phases){
     p._marks = [];
     for(const n of (p.marks||[])){
       const m=level.marks[n];
@@ -8106,21 +8209,24 @@ function loadLevel(i){
       if(Array.isArray(m)) p._marks.push(...m); else p._marks.push(m);
     }
   }
-  level.idealDraw = buildIdealDraw(computeIdealPath());
+  level.idealDraw = P ? null : buildIdealDraw(computeIdealPath());
   /* поток — ПОСЛЕ идеальной траектории: computeIdealPath гоняет показ headless и actorsTick
      там не зовёт, так что созданные раньше машины встали бы поперёк образцового проезда */
   trafficInit();
-  if(def.examRoute) examInit();
+  if(def.examRoute || P) examInit();
   restart();
-  document.getElementById('lvlName').textContent = def.name;
-  document.getElementById('lvlTask').textContent = def.task;
-  document.getElementById('lvlTip').textContent  = def.tip;
+  /* карточка уровня в практике — тема и правила, без учебного «как»: совет уровня — это подсказка */
+  document.getElementById('lvlName').textContent = P ? def.name+' · практика' : def.name;
+  document.getElementById('lvlTask').textContent = P ? def.practice.intro : def.task;
+  document.getElementById('lvlTip').textContent  = P ? 'Судят '+def.practice.judged+'.' : def.tip;
+  document.getElementById('lvlMore').textContent = P ? '▸ нажми — маршрут и команды' : '▸ нажми — пошаговая инструкция и ориентиры';
   document.getElementById('lvlIdx').textContent  = 'уровень ' + (game.li+1) + ' / ' + LEVELS.length;
   /* level_start шлёт не загрузка, а игрок (openLevel, «Поехали», «Заново»): loadLevel зовут и
      старт страницы, и смена потока, и режим экзамена — воронка считала их попытками (#181) */
   /* маршрут показываем ДО старта: «слишком маленький и непонятный» был не про длину,
      а про то, что игрок не видел, куда его повезут */
   if(def.examRoute) showOv(examBriefHTML());
+  else if(P) showOv(practiceBriefHTML());
 }
 function restart(){
   missFwd=null;
@@ -8659,8 +8765,9 @@ function examFail(why){
   if(!examActive()) return;
   /* тренировочный прогон не обрывается: ошибка записывается в протокол и разбирается
      на месте, иначе новичок видит экран провала раньше, чем понимает, что сделал */
-  if(examTrain()){ examWhy=why; examWhyT=6; return; }
+  if(examFlags().forgiving){ examWhy=why; examWhyT=6; return; }
   exam.done=true; exam.failed=true; exam.failWhy=why;
+  if(exam.kind==='practice'){ practiceEnd(false); return; }
   track('exam_fail', { route:exam.routeId+1, mode:'real', score:exam.score });
   console.warn('[exam] НЕ СДАН — '+why);
   game.done=true;
@@ -9037,7 +9144,9 @@ function drawExamZone(){
 }
 function drawExamNav(){
   if(!examActive()) return;
-  if(exam.leg && exam.leg.draw){
+  const fl=examFlags();
+  if(!fl.zone) return;
+  if(exam.leg && exam.leg.draw && fl.line){
     for(const s of exam.leg.draw.segs) strokeGroundPath(s.pts, EXAM_LEG_COL, 3, [10,9], 0.038);
     for(const ch of exam.leg.draw.chev) strokeGroundPath(ch.pts, EXAM_LEG_COL, 2, null, 0.039);
   }
@@ -9048,7 +9157,7 @@ function drawExamNav(){
    Только тренировочный режим — настоящий инспектор ориентиров не расставляет.
    Список кэшируется по номеру этапа: drawSceneInto зовёт его каждый кадр и на каждое зеркало */
 function examMarks(){
-  if(!exam || !examTrain()) return null;
+  if(!exam || !examFlags().hints) return null;
   const st=exam.route[exam.stage];
   if(!st || !st.at) return null;
   if(exam._markStage!==exam.stage){
@@ -9063,6 +9172,15 @@ function examMarks(){
    на месте; «настоящий» — молчаливый инспектор и провал. Молчание учит только того,
    кто уже умеет: новичок в нём просто не понимает, что от него хотят */
 function examTrain(){ return opt.examMode!=='real'; }
+/* что показывает инспектор в каждом режиме. Практика городского урока — команды с метрами и карта в углу
+   (куда ехать), но ни линии в полосе, ни зоны манёвра, ни маячка (как ехать): решение — игроку.
+   Ошибку практика не прощает, как настоящий экзамен; датчики зазоров остаются — они есть в машине */
+function examFlags(){
+  if(exam && exam.kind==='practice') return {line:false, zone:false, hints:false, map:true, dist:true, sensors:true, forgiving:false};
+  const t=examTrain();
+  return {line:true, zone:true, hints:t, map:t, dist:t, sensors:t, forgiving:t};
+}
+let practiceOn=false;           /* следующая загрузка городского урока — в режиме практики */
 function setExamMode(m){
   opt.examMode=m;
   try{ localStorage.setItem('trainer_exammode', m); }catch(e){}
@@ -9076,15 +9194,16 @@ let examSavedOpts=null;
 /* инспектор молчалив: подсказки, маркеры и идеальная траектория выключаются в памяти,
    минуя pressKey — тот пишет trainer_marks в localStorage и затёр бы настройки игрока */
 function examInit(){
-  exam={score:0, log:[], done:false, failed:false, rollFired:false, handFired:false,
-        stage:0, route:level.def.examRoute(), trail:[], lu:null, lv:null,
+  const kind=level.practice ? 'practice' : 'exam';
+  exam={kind, score:0, log:[], done:false, failed:false, rollFired:false, handFired:false,
+        stage:0, route: kind==='practice' ? practiceRoute(level.pvar) : level.def.examRoute(), trail:[], lu:null, lv:null,
         leg:null, legT:0, zone:null, zoneStage:-1, _map:null};
   exam.routeId = (exam.route.id===undefined) ? -1 : exam.route.id;
   /* рестарт зовёт examInit повторно: сохранённые настройки уже лежат в saved,
      перезапись сохранила бы выключенные значения и teardown вернул бы «всё выключено» */
   if(!examSavedOpts) examSavedOpts={marks:opt.marks, guides:opt.guides, trails:opt.trails};
   /* в тренировочном режиме настройки игрока не трогаем: там подсказки — часть урока */
-  if(!examTrain()){ opt.marks=false; opt.guides=false; opt.trails=false; }
+  if(!examFlags().hints){ opt.marks=false; opt.guides=false; opt.trails=false; }
 }
 function examTeardown(){
   if(examSavedOpts){ opt.marks=examSavedOpts.marks; opt.guides=examSavedOpts.guides;
@@ -9094,6 +9213,7 @@ function examTeardown(){
 function examPass(){
   if(!examActive()) return;
   exam.done=true; exam.failed=false;
+  if(exam.kind==='practice'){ practiceEnd(true); return; }
   track('exam_pass', { route:exam.routeId+1, mode:examTrain()?'train':'real', score:exam.score });
   game.done=true;
   if(demo) stopDemo();
@@ -9126,6 +9246,271 @@ function examPassHTML(){
     +'<button data-act="pick" class="ghost">Выбрать уровень</button> '
     +'<button data-act="feedback:win" class="ghost">✉︎ Что-то не так</button>';
 }
+/* ---------- практика городского урока ----------
+   Учёба (фазы, маркеры, показ) отвечает на вопрос «как», практика проверяет, решает ли игрок сам. Тот же
+   урок идёт на общем городе с полной расстановкой правил: вариант маршрута по теме выпадает жребием,
+   светофоры сдвинуты по фазе, статисты и пешеходы выходят в разное время. Инспектор говорит только «куда»,
+   ошибки судят детекторы, итог — протокол с правилом к каждой ошибке. Движок — экзаменационный
+   (exam.kind='practice'), флаги режима — examFlags() */
+const STREET_ACC={'Ленина':'проспект Ленина','Садовая':'Садовую','Заводская':'Заводскую','Западная':'Западную',
+  'Восточная':'Восточную','Южная':'Южную','Парковая':'Парковую','Косой съезд':'Косой съезд'};
+const STREET_DAT={'Ленина':'проспекту Ленина','Садовая':'Садовой','Заводская':'Заводской','Западная':'Западной',
+  'Восточная':'Восточной','Южная':'Южной','Парковая':'Парковой','Косой съезд':'Косому съезду'};
+const ORD=['первый','второй','третий','четвёртый'];
+/* жребий практики: window.PRACTICE_SEED делает его повторяемым — так гейт проезжает каждый вариант */
+let prSeed=null;
+function prRand(){
+  if(prSeed===null) return Math.random();
+  prSeed=(Math.imul(prSeed,1664525)+1013904223)>>>0;
+  return prSeed/4294967296;
+}
+function armByYaw(id, deg){ return armOf(id, rad(deg)); }
+/* поза в крайней правой полосе луча узла на расстоянии d от центра, курсом к узлу */
+function laneStart(id, deg, d){
+  const n=cityGraph().V[id], a=armByYaw(id, deg), f=fuv(a.yaw), th=angNorm(a.yaw+Math.PI), r=ruv(th);
+  const off=(a.e.tram?TRAM_HW:0)+LANE_W*((a.e.lanes||1)-0.5);
+  return {u:n.u+f.u*d+r.u*off, v:n.v+f.v*d+r.v*off, th};
+}
+/* то же наружу — правая полоса по ходу от узла: там финиш у тротуара */
+function laneOut(id, deg, d){
+  const n=cityGraph().V[id], a=armByYaw(id, deg), f=fuv(a.yaw), r=ruv(a.yaw);
+  const off=(a.e.tram?TRAM_HW:0)+LANE_W*((a.e.lanes||1)-0.5);
+  return {u:n.u+f.u*d+r.u*off, v:n.v+f.v*d+r.v*off, a, n};
+}
+/* выехал из узла на нужный луч: дальше края узла, в пределах улицы, курсом вдоль неё */
+function pastArm(n, a, extra){
+  const f=fuv(a.yaw), r=ruv(a.yaw), R=n.round||n.r, hw=a.e.hw;
+  return s=>{ const du=s.u-n.u, dv=s.v-n.v, lon=du*f.u+dv*f.v, lat=du*r.u+dv*r.v;
+    return lon>R+(extra||5) && Math.abs(lat)<hw+1.5 && Math.abs(angNorm(s.th-a.yaw))<rad(45); };
+}
+/* команда на узле из графа: вид манёвра — по лучам въезда и выезда, имя улицы — по щиту */
+function stageMove(id, inYaw, outDeg){
+  const n=cityGraph().V[id], aIn=armOf(id, angNorm(inYaw+Math.PI)), aOut=armByYaw(id, outDeg), nm=aOut.name;
+  let cmd, short, turn;
+  if(n.round){
+    /* съезды считаются по ходу кольца: против часовой, азимут луча убывает */
+    const order=nodeArms(id).filter(a=>a!==aIn).map(a=>({a, d:((aIn.yaw-a.yaw)%TAU+TAU)%TAU})).sort((x,y)=>x.d-y.d);
+    const k=order.findIndex(x=>x.a===aOut);
+    cmd='На кольце — '+ORD[k]+' съезд, на '+STREET_ACC[nm]; short=ORD[k]+' съезд, на '+STREET_ACC[nm]; turn='U';
+  } else {
+    const kind=moveKind(aIn, aOut);
+    if(kind==='S'){ cmd='На перекрёстке — прямо, по '+STREET_DAT[nm]; short='прямо по '+STREET_DAT[nm]; turn='straight'; }
+    else if(kind==='U'){ cmd='На перекрёстке — разворот'; short='разворот на перекрёстке'; turn='U'; }
+    else { const w=kind==='L'?'налево':'направо';
+      cmd='На перекрёстке — '+w+', на '+STREET_ACC[nm]; short=w+' на '+STREET_ACC[nm]; turn=kind; }
+  }
+  return {cmd, short, at:{u:n.u, v:n.v}, turn, node:id, armOut:aOut, done:pastArm(n, aOut), _outYaw:aOut.yaw};
+}
+/* разворот с трамвайных путей посреди квартала: s1 — на север от N1, s2 — на юг от N3 */
+const TRAM_SITES={s1:{v:-35, dir:0}, s2:{v:35, dir:Math.PI}};
+function stageTramU(site){
+  const S=TRAM_SITES[site], north=S.dir===0;
+  return {cmd:'Развернись на Ленина — с трамвайных путей', short:'разворот с трамвайных путей', at:{u:0, v:S.v}, turn:'U',
+    done: north ? s=>s.v<S.v-11 && Math.abs(angNorm(s.th-Math.PI))<rad(35)
+                : s=>s.v>S.v+11 && Math.abs(angNorm(s.th))<rad(35),
+    _outYaw: north ? Math.PI : 0};
+}
+/* финиш: прижаться к тротуару справа и встать там, где это разрешено (п. 12.4), с поворотником (п. 8.1).
+   Место инспектор не называет — выбрать его и есть задача; нарушение пишется в протокол */
+const STOP_KERB=0.6;
+function stageStop(id, deg, d){
+  const p=laneOut(id, deg, d), n=p.n, a=p.a, f=fuv(a.yaw);
+  let held=0;
+  return {cmd:'Остановись у тротуара справа — где это разрешено', short:'остановка у тротуара', at:{u:p.u, v:p.v}, turn:'park',
+    done:s=>{
+      const lon=(s.u-n.u)*f.u+(s.v-n.v)*f.v;
+      const ok = lon>(n.round||n.r)+1 && Math.abs(angNorm(s.th-a.yaw))<rad(25) && s.right<=STOP_KERB && Math.abs(s.vel)<0.1;
+      if(!ok){ held=0; return false; }
+      if(++held<60) return false;
+      stopPlaceJudge();
+      return true; }};
+}
+function stopPlaceJudge(){
+  const c=level.city, g=cityGraph(), b=bodyPos(), r=ruv(car.th);
+  if(car.blink!=='R' && game.t-blinkOn.R>6) vio('no-blinker','Остановка без правого поворотника (п. 8.1)');
+  let why='';
+  for(const id in g.V){ if(id[0]==='@') continue; const n=g.V[id], R=n.round||n.r;
+    if(R && Math.hypot(b.u-n.u, b.v-n.v)-HALF_L<R+5){ why='ближе 5 м к перекрёстку'; break; } }
+  if(!why) for(const z of (c.zebras||[])){ const zf=fuv(z.yaw), zr=ruv(z.yaw);
+    const sz=(b.u-z.u)*zf.u+(b.v-z.v)*zf.v, xz=(b.u-z.u)*zr.u+(b.v-z.v)*zr.v;
+    if(Math.abs(xz)<z.w/2+1 && Math.abs(sz)<z.halfLen+HALF_L+5){ why='ближе 5 м к переходу'; break; } }
+  if(!why) for(const st of (c.stops||[])){ const du=st.u-b.u, dv=st.v-b.v;
+    if(du*r.u+dv*r.v>0 && Math.hypot(du,dv)<15+HALF_L){ why='ближе 15 м к остановке'; break; } }
+  if(why) vio('stop-place','Остановка '+why+' (п. 12.4)');
+}
+function practiceRoute(V){
+  if(!V) return [];
+  const st=[]; let yaw=level.start.th;
+  for(const m of V.moves){
+    const sg = m[0]==='TRAM' ? stageTramU(m[1]) : stageMove(m[0], yaw, m[1]);
+    st.push(sg); yaw=sg._outYaw;
+  }
+  st.push(stageStop(V.stop[0], V.stop[1], V.stop[2]));
+  return st;
+}
+/* правила на весь город: светофоры на всех четырёх подходах N1 и N2 (одна фаза на узел), знаки кольца на
+   каждом въезде, главная на N6, по заказу варианта — STOP на Южной. Учебные уровни и экзамен ставят
+   своё сами и этим не пользуются */
+function citySignage(b, V){
+  const put=(u,v,yaw,grp,off,su,sv,syaw,sw)=>putLight(b,u,v,yaw,grp,off,su,sv,syaw,sw);
+  put(10.9,-82.5,rad(180),'NS',0,   4.9,-82.5,0,9.8);
+  put(-10.9,-57.5,0,'NS',0,        -4.9,-57.5,rad(180),9.8);
+  put(13.0,-66.6,rad(90),'EW',0,    12.5,-68.35,rad(-90),3.3);
+  put(-17.5,-74.4,rad(-90),'EW',0, -17.0,-71.65,rad(90),3.3);
+  put(10.9,-12.5,rad(180),'NS',6,   4.9,-12.5,0,9.8);
+  put(-10.9,12.5,0,'NS',6,         -4.9,12.5,rad(180),9.8);
+  put(-13.0,-8.2,rad(-90),'EW',6,  -12.5,-3.3,rad(90),6.6);
+  put(13.0,8.2,rad(90),'EW',6,      12.5,3.3,rad(-90),6.6);
+  b.obs.push(sign('circle', 62,-8.6, rad(-90)), sign('yield', 59,-8.6, rad(-90)));
+  b.obs.push(sign('circle', 82.4,-18, rad(180)), sign('yield', 82.4,-21, rad(180)));
+  b.obs.push(sign('circle', 73.6,18, 0), sign('yield', 73.6,21, 0));
+  b.obs.push(sign('yield', -73.6,-11.0, rad(180)));
+  b.obs.push(sign('main', -65.8,7.7, rad(90)));
+  { const f=fuv(rad(-49.1)), r=ruv(rad(130.9)); b.obs.push(sign('main', -78+f.u*12+r.u*4.4, f.v*12+r.v*4.4, rad(-49.1))); }
+  if(V.stopSign){
+    b.obs.push(sign('stop', 68.4,-76.4, rad(180)));
+    const sl=stoplineDec(b.dec, 65.65,-75.6, 0, 3.3); sl.stop=true; b.city.stoplines.push(sl);
+  }
+}
+/* три нерегулируемые зебры общего города (на Садовой у N1 — регулируемая, пешеходы идут на зелёный
+   вдоль Ленина): своя улица, ось перехода, путь пешехода от бордюра к бордюру */
+const PR_ZEBRAS={
+  zav: {u:-24, v:0,   yaw:rad(90), w:13.2, a:{u:-24, v:-7.6}, b:{u:-24, v:7.6}, signs:[[-26.3,-7.7,270],[-21.7,7.7,90]]},
+  sad: {u:-14, v:-70, yaw:rad(90), w:6.6,  a:{u:-14, v:-74.4}, b:{u:-14, v:-65.6}, signs:[], light:'N1'},
+  vost:{u:78,  v:-48, yaw:0,       w:6.6,  a:{u:73.6, v:-48}, b:{u:82.4, v:-48}, signs:[[82.4,-50.3,180],[73.6,-45.7,0]]}
+};
+function prZebras(b, V){
+  for(const k in PR_ZEBRAS){ const Z=PR_ZEBRAS[k];
+    const z=zebraDec(b.dec, Z.u, Z.v, Z.yaw, Z.w); z.id=k; b.city.zebras.push(z);
+    for(const sg of Z.signs) b.obs.push(sign('ped', sg[0], sg[1], rad(sg[2])));
+  }
+  let pi=0;
+  for(const k of (V.peds||[])){
+    const Z=PR_ZEBRAS[k], mode=prRand();
+    if(mode<0.15) continue;                                   /* никого: переход пуст */
+    const fromA=prRand()<0.5, A=fromA?Z.a:Z.b, B=fromA?Z.b:Z.a;
+    const D=22+prRand()*14, sp=1.0+prRand()*0.5;
+    let trig;
+    if(Z.light){ const n=b.city.graph.V[Z.light], L=b.city.lights.find(x=>x.group==='NS' && Math.hypot(x.u-n.u,x.v-n.v)<20);
+      trig=s=>Math.hypot(s.u-n.u, s.v-n.v)<D+12 && (!L || lightPhase(L)==='G'); }
+    else trig=s=>Math.hypot(s.u-Z.u, s.v-Z.v)<D;
+    if(mode<0.3){ b.obs.push(pedActor([A, B], sp, ()=>false, 0, pi++)); continue; }   /* стоит у бордюра, не идёт */
+    b.obs.push(pedActor([A, B], sp, trig, 0.3+prRand()*0.8, pi++));
+    if(mode>0.9) b.obs.push(pedActor([B, A], 1.2, trig, 1.2, pi++));
+  }
+}
+/* статист под конфликт: путь — тот же cityRoute, что у потока, или прямая по точкам; выходит, когда игрок
+   подъехал к узлу на случайные D метров, и исчезает в конце пути */
+function prActors(b, V){
+  for(const A of (V.actors||[])){
+    let pts;
+    if(A.path) pts=A.path.map(q=>({u:q[0], v:q[1]}));
+    else { const r=cityRoute({u:A.from[0], v:A.from[1]}, {u:A.to[0], v:A.to[1]}, {side:'right'});
+      if(!r){ console.warn('[practice] статист без маршрута', A.from, A.to); continue; }
+      pts=r.pts.filter((q,i)=>i>0 && i<r.pts.length-1); }
+    if(pts.length<2) continue;
+    const rt=actorPath(pts[0].u, pts[0].v, pts.slice(1));
+    const o=pcar(pts[0].u, pts[0].v, 0, PALETTE[A.col||4]);
+    const q=trafPose(rt, 0, {}); o.yaw=q.yaw;
+    const n=b.city.graph.V[A.node], D=A.d[0]+(A.d[1]-A.d[0])*prRand();
+    o.act={rt, s:0, s0:0, sp:A.sp||6, v:A.sp||6, started:false, done:false, flow:false, wps:null, i:0, vanish:true,
+           trig:s=>Math.hypot(s.u-n.u, s.v-n.v)<D, u0:o.u, v0:o.v, yaw0:o.yaw};
+    b.obs.push(o);
+  }
+  for(const h of (V.hazards||[])) b.obs.push(pcar(h[0], h[1], h[2], PALETTE[5], true));
+}
+function prTram(b, V){
+  if(!V.tram) return;
+  const site=TRAM_SITES[V.tram], north=site.dir===0;
+  b.city.turnZones.push({u:0, v:site.v, yaw:site.dir, w:19.6, l:18, uturn:true, blink:'L', dir:site.dir});
+  b.city.yieldZones.push({u:0, v:site.v, yaw:0, w:19.6, l:16, dist:22});
+  b.obs.push(sign('uturn', north?11.0:-11.0, north?-46:46, north?rad(180):0));
+  b.obs.push(north
+    ? tramCar(-TRAM_HW/2, 40, 180, 140, 6.2, s=>s.u<3.4 && s.u>-3.4 && s.v>-48 && s.v<-28)
+    : tramCar(TRAM_HW/2, -40, 0, 140, 6.2, s=>s.u>-3.4 && s.u<3.4 && s.v<48 && s.v>28));
+}
+const prLast={};
+function practiceBuild(def){
+  const b=cityBase(), pr=def.practice, n=pr.variants.length;
+  prSeed = (window.PRACTICE_SEED!==undefined) ? (window.PRACTICE_SEED>>>0) : null;
+  let vi = (window.PRACTICE_VARIANT!==undefined) ? (window.PRACTICE_VARIANT%n) : Math.floor(prRand()*n);
+  /* тот же вариант два раза подряд — уже заученный маршрут */
+  if(window.PRACTICE_VARIANT===undefined && n>1 && vi===prLast[def.name]) vi=(vi+1)%n;
+  prLast[def.name]=vi;
+  const V=Object.assign({id:pr.variants[vi].id||String.fromCharCode(97+vi)}, pr.variants[vi]);
+  graphOvr=b.city.graph;
+  try{
+    citySignage(b, V);
+    b.city.rules=cityRuleMap(b.city, {lights:['N1','N2'],
+      signs:Object.assign({N6:{main:['Заводская','Косой съезд']}}, V.stopSign ? {N5b:{main:['Садовая']}} : {})});
+    prZebras(b, V);
+    prActors(b, V);
+    prTram(b, V);
+    const st=laneStart(V.start[0], V.start[1], V.start[2]);
+    console.info('[practice] '+def.name+' · вариант '+V.id);
+    return {obs:b.obs, dec:b.dec, city:b.city, start:st, goal:null, pvar:V, lightShift:prRand()*LIGHT_CYCLE};
+  } finally { graphOvr=null; }
+}
+/* встречная половина общего города для практики: центр кузова за осевой больше чем на 0,3 м вне узла и вне
+   зоны разворота — п. 9.2, 8.6. Ручные прямоугольники встречки знают только свои места */
+function oncomingTick(dt){
+  const c=level.city; if(!c.rules || !c.rules._yield) return;
+  const lp=lanePos();
+  let bad=false;
+  if(lp && lp.k===-1){
+    const lf=fuv(lp.ln.yaw), lr=ruv(lp.ln.yaw), b=bodyPos(), along=(fuv(car.th).u*lf.u+fuv(car.th).v*lf.v)>=0;
+    const x=(b.u-lp.ln.u)*lr.u+(b.v-lp.ln.v)*lr.v, xs=along?x:-x;
+    let inU=false;
+    for(const tz of (c.turnZones||[])) if(tz.uturn){ const f=fuv(tz.yaw||0), r=ruv(tz.yaw||0);
+      if(Math.abs((b.u-tz.u)*f.u+(b.v-tz.v)*f.v)<tz.l/2 && Math.abs((b.u-tz.u)*r.u+(b.v-tz.v)*r.v)<tz.w/2) inU=true; }
+    bad = xs<-0.3 && !inU;
+  }
+  if(bad){ c._oncT=(c._oncT||0)+dt; if(c._oncT>0.3 && !c._oncFired){ c._oncFired=true; vio('oncoming','Выезд на встречную половину'); } }
+  else { c._oncT=0; if(lp && lp.k>0) c._oncFired=false; }
+}
+function practiceBriefHTML(){
+  const d=level.def, pr=d.practice, started=exam.stage>0 || game.moved;
+  const rows=exam.route.map((st,i)=>
+    i<exam.stage ? '<li style="opacity:.45">✓ '+st.cmd+'</li>'
+    : i===exam.stage ? '<li><b style="color:#ffcf4d">▸ '+st.cmd+'</b></li>'
+    : '<li>'+(i+1)+'. '+st.cmd+'</li>').join('');
+  return '<h1>Практика: '+pr.title+'</h1>'
+    +'<p>'+pr.intro+'</p>'
+    +'<p class="sd">Команды — как у инспектора: куда ехать. Как ехать — решаешь сам: подсказок, линии на асфальте и показа нет. Судят '+pr.judged+'.</p>'
+    +examRouteSvg()
+    +'<ul class="startlist">'+rows+'</ul>'
+    +'<button data-act="brief">'+(started?'Продолжить':'Поехали')+'</button> '
+    +'<button data-act="learn" class="ghost">Учёба с подсказками</button> '
+    +'<button data-act="pick" class="ghost">Выбрать уровень</button>';
+}
+function practiceResultHTML(pass){
+  const d=level.def, clean=pass && exam.score===0, rows=vioRowsHTML(exam.log, true);
+  const head = !pass ? '<p><b>'+esc(exam.failWhy||'')+'</b></p>'
+    : '<p>Штрафные баллы: <b>'+exam.score+'</b> из допустимых '+(EXAM_FAIL_SUM-1)+(clean?' — чисто.':'.')+'</p>';
+  const p=progOf(d.name), r=p && p.practice;
+  return '<h1>'+(clean ? 'Практика — чисто' : pass ? 'Практика — зачёт с ошибками' : 'Практика — не засчитано')+'</h1>'
+    +'<p class="sd">'+esc(d.name)+' · вариант '+((level.pvar&&level.pvar.id)||'')+'</p>'
+    +head + examSvg()
+    +(rows ? '<ul class="startlist viol">'+rows+'</ul>' : '')
+    +(r ? '<p class="sd">Практика: заездов '+r.n+', чистых '+r.clean+'. Готовность к экзамену засчитывает только чистый.</p>' : '')
+    +'<p class="sd">'+(clean ? 'Следующий вариант будет другим: маршрут, сигналы и машины выпадают заново.'
+                             : 'Разбери ошибки — и ещё вариант. Не выходит — пройди урок с подсказками.')+'</p>'
+    +'<div class="winacts"><button data-act="learn" class="ghost">Учёба с подсказками</button>'
+    +'<button data-act="again" class="ghost">Ещё вариант</button>'
+    +'<span class="nextgo"><button data-act="next">Следующий уровень</button></span></div>'
+    +'<p class="winfb"><button data-act="feedback:'+(pass?'win':'fail')+'" class="linkbtn">✉︎ Что-то не так — написать</button></p>';
+}
+function practiceEnd(pass){
+  game.done=true;
+  if(demo) stopDemo();
+  game.prog=progPractice(level.def.name, pass, exam.score);
+  track(pass?'practice_pass':'practice_fail', Object.assign(anLevel(game.li),
+    {variant:level.pvar?level.pvar.id:null, score:exam.score, code:(exam.log[exam.log.length-1]||{}).code||null}));
+  console.warn('[practice] '+(pass?'зачёт':'не засчитано')+' · баллов '+exam.score);
+  if(pass){ tone(760,0.12,0.10,'sine'); setTimeout(()=>tone(1140,0.20,0.10,'sine'),130); }
+  else tone(220,0.4,0.1,'sawtooth');
+  showOv(practiceResultHTML(pass));
+}
 /* когда поворотник в последний раз горел: перестроение засчитывается корректным,
    если сигнал был включён до начала манёвра, а не мигнул уже поперёк разметки */
 const blinkLog={L:-9, R:-9};
@@ -9153,6 +9538,7 @@ function cityReset(){
                          o._seen=false; o._redSeen=false; o._ph=undefined; o._y614=false; o._pedIn=false; } }
   blinkLog.L=-9; blinkLog.R=-9;
   ruleSt=null; blinkOn.L=-99; blinkOn.R=-99;
+  if(c){ c._oncT=0; c._oncFired=false; }
 }
 /* непропуск ловится по моменту наибольшего сближения: на сколько секунд вперёд смотрим,
    насколько близко перед носом чужой машины и в какой её полосе оказался игрок */
@@ -9245,10 +9631,12 @@ function violationsTick(dt){
     /* п. 6.14: кто в момент смены зелёного на жёлтый уже не мог остановиться без резкого
        торможения, проезжает законно. Решение — в сам момент смены, а не при пересечении линии:
        стоявший на жёлтом у линии потом тоже «не может остановиться», но права у него нет */
-    if(was==='G' && ph==='Y' && s2<0) sl._y614 = -s2 < car.vel*car.vel/(2*STOP_614);
+    if(was==='G' && ph==='Y' && s2<0.3) sl._y614 = Math.max(0,-s2) < car.vel*car.vel/(2*STOP_614);
     if(s2<-0.1) sl._redSeen=true;
     if(!sl._redSeen) continue;
-    if(s2>0.3){ sl._redFired=true;
+    /* судим в кадр, когда нос пересёк линию, а не в 30 см за ней: жёлтый, загоревшийся в эти 30 см, делал
+       нарушителем того, кто пересёк линию на зелёный (нашёл бот практики, вариант 24a) */
+    if(s2>0){ sl._redFired=true;
       if(lightStops(sl.light) && Math.abs(car.vel)>0.1 && !(ph==='Y' && sl._y614))
         vio('redlight','Запрещающий сигнал: перед стоп-линией нужно стоять'); }
   }
@@ -9357,7 +9745,7 @@ function violationsTick(dt){
     }
   }
   pedYieldTick();
-  if(c.rules) nodeTurnTick();
+  if(c.rules){ nodeTurnTick(); oncomingTick(dt); }
   for(const a of level.actors){
     if(a._hitByPlayer && !a._vioFired){ a._vioFired=true;
       vio('collision-actor','Столкновение с участником движения'); }
@@ -9410,10 +9798,18 @@ function armSide(me, oth){
 }
 function armMain(rule, a){ return !!(rule.main && rule.main.includes(a.name)); }
 /* обязан ли me уступить oth на узле с правилом rule. me/oth: {aIn, aOut, kind, tram, onRing} */
+/* машина на кольце проедет мимо твоего въезда, только если он лежит на её оставшейся дуге: по ходу кольца
+   (против часовой азимут убывает) между ней и её съездом. Общий съезд ещё не конфликт — она может быть уже
+   за твоим въездом */
+function ringPasses(oth, entryYaw){
+  if(oth.bearing===undefined) return true;
+  const tot=((oth.bearing-oth.aOut.yaw)%TAU+TAU)%TAU, dx=((oth.bearing-entryYaw)%TAU+TAU)%TAU;
+  return dx>0.05 && dx<tot+0.2;
+}
 function mustYield(rule, me, oth){
   if(!rule || rule.kind==='bend') return false;
+  if(rule.kind==='ring') return !me.onRing && !!oth.onRing && ringPasses(oth, me.aIn.yaw);
   if(!movesConflict(me, oth)) return false;
-  if(rule.kind==='ring') return !me.onRing && !!oth.onRing;
   const side=armSide(me.aIn, oth.aIn);
   const leftMe=me.kind==='L'||me.kind==='U', fwdOth=oth.kind==='S'||oth.kind==='R';
   if(rule.kind==='light') return side==='oncoming' && leftMe && fwdOth;
@@ -9512,7 +9908,8 @@ function playerMove(n, aOut){
 }
 function actorMove(a, pa){
   const ps=pa.ps, onRing=!!ps.n.round && pa.inside;
-  return {aIn:ps.aIn, aOut:ps.aOut, kind:ps.kind, tram:!!a.act.rail, onRing};
+  return {aIn:ps.aIn, aOut:ps.aOut, kind:ps.kind, tram:!!a.act.rail, onRing,
+          bearing: onRing ? Math.atan2(a.u-ps.n.u, a.v-ps.n.v) : undefined};
 }
 /* въезд игрока в узел: кто из движущихся к узлу имеет преимущество и уже близко — тому помеха */
 function ruleYieldAtEntry(n){
@@ -9521,8 +9918,12 @@ function ruleYieldAtEntry(n){
   for(const a of level.actors){
     const s=a.act; if(s.ped || !s.started || s.done || !s.rt) continue;
     const pa=actorPassage(a, n.id); if(!pa) continue;
-    if(pa.inside ? pa.done>0.6 : (pa.toIn/Math.max(1, Math.abs(s.v))>RULE_ETA || Math.abs(s.v)<0.5)) continue;
-    if(!mustYield(rule, me, actorMove(a, pa))) continue;
+    const om=actorMove(a, pa);
+    if(n.round){ if(!om.onRing) continue;
+      const dx=((om.bearing-me.aIn.yaw)%TAU+TAU)%TAU;
+      if(dx*(n.round-3.5)/Math.max(1, Math.abs(s.v))>RULE_ETA) continue; }
+    else if(pa.inside ? pa.done>0.6 : (pa.toIn/Math.max(1, Math.abs(s.v))>RULE_ETA || Math.abs(s.v)<0.5)) continue;
+    if(!mustYield(rule, me, om)) continue;
     vio('yield', rule.kind==='light' ? 'Налево — уступи встречным, идущим прямо и направо (п. 13.4)'
       : rule.kind==='ring' ? 'На кольце главнее тот, кто уже на нём'
       : rule.kind==='signs' ? 'Ты на второстепенной: уступи едущим по главной'
@@ -10200,7 +10601,7 @@ function phaseTick(dt){
   curS.left=lastClear.left; curS.right=lastClear.right;
   curS.gap=level.actors.length ? trafficGap(c.u, c.v, 6, level.def.gapAt) : 99;
   curS.ped=level.actors.length ? pedAhead() : null;
-  const ph=level.def.phases;
+  const ph=level.practice ? null : level.def.phases;
   if(!ph){ curPhase=null; return; }
   let want=null;
   for(const p of ph) if(!p.when||p.when(curS)){ want=p; break; }
@@ -11254,7 +11655,7 @@ function render(dt){
   /* на тренировочном экзамене в углу нужна карта МАРШРУТА, а не миникарта: на 450 м
      поездки центрированная на машине карта не показывает, куда ехать, а свободного
      места рядом нет — между зеркалом и углом остаётся 70 px */
-  const routeMap = examActive() && examTrain();
+  const routeMap = examActive() && examFlags().map;
   if(small){ const k=clamp(H/390,0.6,1), sz=Math.round((hudMode===1?82:100)*k);
     if(routeMap) drawRouteMap(8, 5, sz, sz); else drawMinimap(8, 5, sz); }
   else {
@@ -11623,7 +12024,7 @@ function updateHUD(){
     MOB && !paused && (selBlockT>0 || (car.sel==='P' && !input.back)));
   /* DOM трогаем только на изменение: запись innerHTML/textContent каждый кадр — лишний пересчёт стилей */
   setText($('demoBtn'), demo ? '■ остановить показ' : '▶ демонстрация');
-  const demoVis = DEMOS[game.li] ? '' : 'none';
+  const demoVis = (DEMOS[game.li] && !level.practice) ? '' : 'none';
   if($('demoBtn').style.display!==demoVis) $('demoBtn').style.display=demoVis;
   /* боковые зеркала начинаются не выше 0.4·H: в невысоком окне они доходят до кнопки,
      а HTML-кнопка молча съедает тап, нацеленный в зеркало на канве */
@@ -11631,7 +12032,7 @@ function updateHUD(){
   if($('fbBtn').style.display!==fbVis) $('fbBtn').style.display=fbVis;
   /* регулировка потока на десктопе: ≡-меню есть только в тач-режиме, и без этой кнопки
      число машин было не поменять вовсе. На экзамене плотность одна для всех — кнопки нет */
-  const trafOn = level.def.traffic && !level.def.examRoute;
+  const trafOn = (level.def.traffic || level.practice) && !level.def.examRoute;
   const trafVis = (trafOn && (!opt.mirrors || mirrorRects().right.y>=242)) ? '' : 'none';
   if($('trafBtn').style.display!==trafVis) $('trafBtn').style.display=trafVis;
   /* кнопка называет переход, как и меню ≡: «поток: обычный · 7» читалось строкой состояния.
@@ -11662,7 +12063,7 @@ function updateHUD(){
     $('angVal').className = 'v '+(ad<=tol?'ok':(ad<=tol+20?'warn':'bad'));
   } else { setText($('angVal'),'—'); $('angVal').className='v'; }
   /* в настоящем режиме датчиков нет, как в реальной машине: зазоры скрыты, беспер молчит */
-  if(examActive() && !examTrain()){
+  if(examActive() && !examFlags().sensors){
     for(const id of ['cf','cb','cl','cr']){ setText($(id),'—'); $(id).className='v'; }
   } else {
     setClear($('cf'),lastClear.front); setClear($('cb'),lastClear.rear);
@@ -11705,11 +12106,11 @@ function updateHUD(){
     /* в тренировочном режиме к команде инспектора приклеиваем гейт селектора: без него
        первая команда «тронься» приходит игроку, стоящему в P, и трогаться нечем.
        В настоящем режиме инспектор молчит — там это часть проверки */
-    const gate = !examTrain() ? ''
+    const gate = !examFlags().dist ? ''
       : car.sel==='P' ? (MOB ? 'P · держи ТОРМОЗ, тапни D. ' : 'P · зажми тормоз (пробел) и включи передачу (Enter). ')
       : car.sel==='N' ? 'N · нейтраль, газ не работает. ' : '';
     coachCard('exam', nav.glyph, gate+nav.text+' · баллы: '+exam.score
-      +(examTrain()&&nav.dist!==null&&nav.dist<75 ? ' · '+nav.dist.toFixed(0)+' м' : '')); }
+      +(examFlags().dist&&nav.dist!==null&&nav.dist<75 ? ' · '+nav.dist.toFixed(0)+' м' : '')); }
   /* гайд троганья владеет карточкой целиком, пока не пройден: фазовые подсказки подождут */
   else if(tut && TUT[tut.i]){ const st=TUT[tut.i];
     coachCard(st.kind, st.icon, st.act(), null, {why:st.why}); }
@@ -11730,7 +12131,7 @@ function updateHUD(){
     else if(car.sel==='N') coachCard('gear','','N · нейтраль, газ не работает. '+nextStep);
     else if(curPhase) coachCard('act',curPhase.icon||'',curPhase.act||curPhase.hint,curPhase.goal||null,curPhase);
     /* у уровня с фазами нет coach: пробел в цепочке ронял бы HUD целиком */
-    else if(level.def.coach) coachCard('act','',level.def.coach(curS));
+    else if(level.def.coach && !level.practice) coachCard('act','',level.def.coach(curS));
     else coachCard('act','',genericCoach(curS));
   }
   coachGoalTick();
@@ -12446,8 +12847,9 @@ function showLevelPick(){ menuGo('levels'); }
    потока и режима экзамена и все гейты tools/ — воронка (и замок пейволла) живут здесь.
    Экзамен открывает свой бриф маршрута, и его не закрываем: раньше вызывающий hideOv() гасил
    бриф в тот же миг, и с карточки выбора маршрут перед стартом не видел никто */
-function openLevel(i, via){
+function openLevel(i, via, mode){
   if(levelLocked(i)){ paywallShow(i, via); return; }
+  practiceOn = mode==='practice' && !!(LEVELS[((i%LEVELS.length)+LEVELS.length)%LEVELS.length]||{}).practice;
   const offerWhy=offerWhyNot(i);
   if(!offerWhy){ offerShow(i, via); return; }
   if(AN_DEBUG && i>=OFFER.from && i<=OFFER.to) console.info('[pay] предложение не показано: '+offerWhy);
@@ -12455,7 +12857,7 @@ function openLevel(i, via){
   menu.root=null;
   lastSave();
   runCount();
-  if(!level.def.examRoute){ hideOv(); firstRunChain(); }
+  if(!exam){ hideOv(); firstRunChain(); }
   else menuSync();
   anLevelStart(via);
 }
@@ -12466,8 +12868,12 @@ function doAct(a){
   if(!a) return;
   /* уровень уже пройден или провален: закрывать оверлей нельзя — физика стоит на game.done */
   if(a==='resume' && game.done){
-    showOv(exam&&exam.done ? (exam.failed?examFailHTML():examPassHTML())
+    showOv(exam&&exam.done ? (exam.kind==='practice' ? practiceResultHTML(!exam.failed) : exam.failed?examFailHTML():examPassHTML())
          : (attempt&&attempt.failed) ? levelFailHTML() : winHTML()); return; }
+  /* практика и учёба одного урока: новый вариант строится заново — старт и маршрут у вариантов свои */
+  if(a==='practice'){ openLevel(game.li,'practice','practice'); return; }
+  if(a.indexOf('practice:')===0){ openLevel(+a.slice(9),'practice','practice'); return; }
+  if(a==='learn'){ openLevel(game.li,'learn','learn'); return; }
   if(a==='pick'){ showLevelPick(); return; }
   if(a==='back'){ menuBack(); return; }
   if(a.indexOf('menu:')===0){ menuGo(a.slice(5)); return; }
@@ -12478,7 +12884,7 @@ function doAct(a){
   if(a==='play'){ const pt=playTarget();
     console.info('[menu] играть →', pt.i+1, LEVELS[pt.i].name, '·', pt.why);
     /* экзамен всегда через бриф маршрута: продолжить его «Поехали» без брифа — значит ехать вслепую */
-    if(pt.i===game.li && !game.done && !level.def.examRoute){
+    if(pt.i===game.li && !game.done && !exam){
       hideOv(); lastSave(); if(runCount()) anLevelStart('play'); firstRunChain(); }
     else openLevel(pt.i,'play');
     return; }
@@ -12525,7 +12931,7 @@ function doAct(a){
   if(a==='exammode'){ setExamMode(examTrain()?'real':'train');
     if(level.def.examRoute) showOv(examBriefHTML()); else menuGo('main'); return; }
   if(a==='brief'){ hideOv(); return; }
-  if(a==='route'){ if(examActive()) showOv(examBriefHTML()); return; }
+  if(a==='route'){ if(examActive()) showOv(level.practice ? practiceBriefHTML() : examBriefHTML()); return; }
   if(a && a.indexOf('feedback')===0){
     openFeedback(a.indexOf(':')>0 ? a.split(':')[1] : 'game'); return; }
   if(a && a.indexOf('fb-kind:')===0){ fbSetKind(a.slice(8)); return; }
@@ -12536,8 +12942,12 @@ function doAct(a){
     if(a==='start'){ lastSave(); if(runCount()) anLevelStart('start'); }
     firstRunChain();
   }
-  else if(a==='next'){ adsInterstitial('next'); openLevel(game.li+1,'next'); }
-  else if(a==='again'){ adsInterstitial('again'); restart(); hideOv(); anLevelStart('again'); }
+  else if(a==='next'){ adsInterstitial('next');
+    const ni=(game.li+1)%LEVELS.length;
+    openLevel(ni,'next', level.practice && LEVELS[ni].practice ? 'practice' : 'learn'); }
+  else if(a==='again'){ adsInterstitial('again');
+    if(level.practice){ loadLevel(game.li); anLevelStart('again'); return; }
+    restart(); hideOv(); anLevelStart('again'); }
 }
 function ctrlHTML(){ return ''
   +'<div class="grid2"><ul>'
@@ -12606,6 +13016,17 @@ function levelPickHTML(tab){
   });
   let s=menuHead('Уровни', LEVEL_TABS, tab)+'<div class="mbody"><p class="mnote">'+LEVEL_TAB_NOTE[tab]+'</p>';
   for(const [k] of LEVEL_TABS) s+='<div class="lvgrid" data-tab="'+k+'"'+(k===tab?'':' hidden')+'>'+(groups[k]||'')+'</div>';
+  /* практика — отдельные кнопки, не карточки уровней: карточка открывает учёбу, а гейт меню считает
+     карточки вкладки по числу её уровней */
+  if(tab==='city'){
+    s+='<p class="mnote">Практика — тот же урок на общем городе: маршрут каждый раз другой, команды как у инспектора, подсказок нет. Готовность к экзамену засчитывает только чистую практику.</p><div class="lvgrid prgrid">';
+    LEVELS.forEach((l,i)=>{ if(!l.practice) return;
+      const pg=progOf(l.name), r=pg && pg.practice;
+      s+='<button type="button" class="prcard'+(r&&r.clean?' pass':'')+'" data-act="practice:'+i+'">'
+        +'<span class="n">'+(i+1)+(r&&r.clean?' ✓':'')+'</span><span class="t">практика: '+l.practice.title+'</span>'
+        +'<span class="d">'+(r ? 'заездов '+r.n+', чистых '+r.clean : 'ещё не начата')+'</span></button>'; });
+    s+='</div>';
+  }
   if(tab==='own'){
     if(!groups.own) s+='<p class="mnote">Своих площадок пока нет. Собери двор в редакторе — он появится здесь.</p>';
     s+='<button type="button" data-act="editor">Редактор площадок'+(MOB?'':' (K)')+'</button>';
@@ -12729,9 +13150,9 @@ function winHTML(){
 /* итоги городского урока: что нарушено и по какому правилу, а не лучшее время — время здесь ничего не
    значит, а «чисто» без единого слова про ошибки учило их не замечать. Наезды на бордюр — касания, их
    число в той же строке; каждое нарушение один раз, с правилом и ссылкой на уровень, где его отрабатывают */
-function vioRowsHTML(log){
+function vioRowsHTML(log, keepKerb){
   const by=new Map();
-  for(const l of log){ if(l.code==='kerb') continue; const r=by.get(l.code); if(r) r.n++; else by.set(l.code, {l, n:1}); }
+  for(const l of log){ if(l.code==='kerb' && !keepKerb) continue; const r=by.get(l.code); if(r) r.n++; else by.set(l.code, {l, n:1}); }
   let h='';
   for(const [code, r] of by){
     const tr=EXAM_TRAIN[code];
@@ -12756,6 +13177,8 @@ function cityWinHTML(p){
     +(rows?'<ul class="startlist viol">'+rows+'</ul>':'')
     +rec+advice
     +(level.def.transfer?'<h2>Запомни для реальной дороги</h2><p>'+level.def.transfer+'</p>':'')
+    +(level.def.practice ? '<p class="sd">Учёба вела тебя подсказками. Практика — тот же урок без них: '
+      +'маршрут каждый раз другой, решаешь сам.</p><button data-act="practice">Практика: сам</button>' : '')
     + winActsHTML();
 }
 function winActsHTML(){
@@ -12932,7 +13355,7 @@ function mirPresetNow(){
 function setTraffic(v){
   opt.traffic=v;
   try{ localStorage.setItem('trainer_traffic', v); }catch(e){}
-  if(level && level.def && level.def.traffic && !level.def.examRoute) loadLevel(game.li);
+  if(level && level.def && (level.def.traffic || level.practice) && !level.def.examRoute) loadLevel(game.li);
 }
 function fullAvail(){ const el=document.documentElement; return !!(el.requestFullscreen || el.webkitRequestFullscreen); }
 const SETTINGS=[
@@ -13000,6 +13423,15 @@ function setApply(id, ix){
    а на телефоне всё лежало в ≡ из нижней полосы — 25 кнопок одной сеткой */
 function pauseHTML(){
   const d=level.def, ex=examActive();
+  if(ex && level.practice)
+    return '<p class="pkick">Пауза · практика</p><h1>'+d.name+'</h1><div class="pstack">'
+      +'<button type="button" data-act="resume" data-focus>Продолжить</button>'
+      +'<button type="button" class="ghost" data-act="route">Маршрут и команды</button>'
+      +'<button type="button" class="ghost" data-act="again">Новый вариант</button>'
+      +'<button type="button" class="ghost" data-act="learn">Учёба с подсказками</button>'
+      +'<button type="button" class="ghost" data-act="menu:settings">Настройки</button>'
+      +'<button type="button" class="ghost" data-act="menu:levels">Уровни</button>'
+      +'<button type="button" class="ghost" data-act="mainmenu">Главное меню</button></div>';
   let s='<p class="pkick">Пауза</p><h1>'+d.name+'</h1><div class="pstack">'
     +'<button type="button" data-act="resume" data-focus>Продолжить</button>';
   if(ex) s+='<button type="button" class="ghost" data-act="route">Маршрут и команды</button>';
@@ -13552,7 +13984,7 @@ let demo=null;
 function demoActive(){ return !!demo; }
 function stopDemo(){ demo=null; for(const k in input) input[k]=false; }
 function startDemo(){
-  const d=DEMOS[game.li]; if(!d) return;
+  const d=DEMOS[game.li]; if(!d || (level && level.practice)) return;
   track('demo_start', anLevel(game.li));
   restart(); hideOv();
   if(d.start) setBody(d.start.u, d.start.v, d.start.th);
@@ -13770,7 +14202,9 @@ function progAll(){
     if(typeof a!=='object' || Array.isArray(a)) a={};
     for(const k in a){ const p=a[k];
       if(!p || typeof p!=='object' || Array.isArray(p)){ delete a[k]; continue; }
-      p.n=+p.n||0; p.clean=+p.clean||0; }
+      p.n=+p.n||0; p.clean=+p.clean||0;
+      if(p.practice!==undefined && (!p.practice || typeof p.practice!=='object' || Array.isArray(p.practice))) delete p.practice;
+      else if(p.practice){ const r=p.practice; r.n=+r.n||0; r.passed=+r.passed||0; r.clean=+r.clean||0; } }
     if(!progMigrated){ progMigrated=true;
       let ch=false;
       for(const from in PROG_RENAME){ const to=PROG_RENAME[from];
@@ -13787,6 +14221,18 @@ function progOf(name){ return progAll()[name] || null; }
 function progPassed(name){
   const p=progOf(name); if(!p) return false;
   return p.passed!==undefined ? p.passed>0 : (p.n||0)>0;
+}
+/* практика урока: сколько заездов, сколько засчитано и сколько чистых, лучший счёт */
+function progPractice(name, pass, score){
+  const a=progAll();
+  const p=a[name] || {n:0, clean:0, best:null, bestHits:null};
+  const r=p.practice || (p.practice={n:0, passed:0, clean:0, best:null});
+  r.n++;
+  if(pass){ r.passed++; if(score===0) r.clean++; if(r.best===null || r.best===undefined || score<r.best) r.best=score; }
+  a[name]=p;
+  try{ localStorage.setItem(PROG_KEY, JSON.stringify(a)); }catch(e){}
+  syncSoon();
+  return p;
 }
 /* чистый заезд — без касаний И без нарушений: «чисто» за поворот без поворотника или разворот не с путей
    поднимало готовность к экзамену тому, кто как раз и нарушал (#302) */
@@ -13826,7 +14272,8 @@ function progLine(name){
          + (p.bestBlind!==undefined && p.bestBlind!==null ? ' · вслепую '+p.bestBlind+' см' : '');
   /* у городского урока время ничего не значит: чистый заезд — это без нарушений */
   const d=LEVELS.find(l=>l.name===name);
-  if(d && d.strict) return 'пройден '+p.n+'× · чисто '+p.clean+'×';
+  if(d && d.strict) return 'пройден '+p.n+'× · чисто '+p.clean+'×'
+    + (p.practice ? ' · практика: чисто '+p.practice.clean+' из '+p.practice.n : '');
   return 'пройден '+p.n+'× · чисто '+p.clean+'× · лучшее '+p.best.toFixed(1).replace('.',',')+'&nbsp;с';
 }
 /* экзаменационная запись: свой тип поверх trainer_progress, старые поля не трогаем */
@@ -13873,7 +14320,11 @@ function examReadiness(){
   for(const i of EXAM_SET){
     const l=LEVELS[i]; if(!l) continue;
     const p=progOf(l.name);
-    if(p && (p.clean>0 || (p.bestErr!==undefined&&p.bestErr!==null&&p.bestErr<=16))) done++;
+    /* городской урок засчитывается чистой ПРАКТИКОЙ: пройденный с подсказками заезд показывает, что
+       игрок умеет следовать карточке, а не решать сам */
+    const ok = l.practice ? !!(p && p.practice && p.practice.clean>0)
+             : !!(p && (p.clean>0 || (p.bestErr!==undefined&&p.bestErr!==null&&p.bestErr<=16)));
+    if(ok) done++;
     else weak.push(i);
   }
   return {pct:Math.round(done/EXAM_SET.length*100), weak};
@@ -14284,6 +14735,8 @@ document.addEventListener('fullscreenchange',()=>{ setTimeout(resize,120);
   if(menu.scr==='settings') menuGo('settings', menu.tab, menu.from); });
 function showTask(){
   const d=LEVELS[game.li];
+  /* в практике «как выполнять» — это и есть подсказка, которой там нет: показываем бриф с маршрутом */
+  if(level && level.practice && exam){ showOv(practiceBriefHTML()); return; }
   showOv('<h1>'+d.name+'</h1><p>'+d.task+'</p>'
     +'<h2>Как парковаться — по шагам</h2><ol>'
     + d.steps.map(x=>'<li>'+x+'</li>').join('')
@@ -14549,7 +15002,7 @@ function honk(d){
 function parkBeep(dt){
   if(paused||!opt.sound||!AC) return;
   /* на экзамене парктроника нет — как в экзаменационной машине */
-  if(examActive() && !examTrain()){ beepT=0; return; }
+  if(examActive() && !examFlags().sensors){ beepT=0; return; }
   /* в P и N парктроник молчит — иначе машина у стены пищит бесконечно */
   if(car.gear===0){ beepT=0; return; }
   const d = car.gear<0 ? lastClear.rear : lastClear.front;
