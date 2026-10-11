@@ -128,6 +128,29 @@ check('телефон: плашек панели нет (@app-hud-mobile-no-tile
 check('телефон: подсказка — одна строка без плашки (@app-hud-mobile-hint-line)', hud.line.length === 0, hud.line.join(' | '));
 check('телефон: тап раскрывает полный текст подсказки и «почему» (@app-hud-mobile-hint-tap)', hud.tap.length === 0, hud.tap.join(' | '));
 
+/* портрет (#179): ссылка из мессенджера открывается вертикально, и это первый экран тренажёра. Было одно
+   «поверни телефон» на чёрном — ни названия, ни что это. Теперь название, строка о тренажёре, просьба повернуть
+   и, где браузер умеет полноэкранный режим, кнопка, которая поворачивает экран сама; в альбомной — экрана нет */
+const port = [];
+for (const [W, H] of sizes) {
+  const p4 = await browser.newPage({ viewport: { width: H, height: W }, deviceScaleFactor: 2, hasTouch: true, isMobile: true });
+  await p4.goto(url); await p4.waitForTimeout(400);
+  const r = await p4.evaluate(() => { setTouch(true);
+    const el = document.getElementById('rotate'), cs = getComputedStyle(el), h1 = el.querySelector('h1'), b = document.getElementById('rotFull');
+    const vis = (e) => !!e && getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().width > 0;
+    const rb = b && b.getBoundingClientRect();
+    return { shown: vis(el), cover: cs.position === 'fixed' && +cs.zIndex >= 30, title: h1 ? h1.textContent : '', text: el.textContent.replace(/\s+/g, ' ').length,
+      btn: vis(b), inView: !!rb && rb.bottom <= innerHeight && rb.top >= 0 && rb.height >= 40, full: fullAvail() }; });
+  /* тот же телефон, повёрнутый горизонтально: экрана нет */
+  await p4.setViewportSize({ width: W, height: H }); await p4.waitForTimeout(250);
+  const land = await p4.evaluate(() => { const el = document.getElementById('rotate'); return getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().width > 0; });
+  if (!r.shown || !r.cover || r.title !== 'По зеркалам' || r.text < 80 || (r.full && !(r.btn && r.inView)) || land)
+    port.push(`${H}x${W}: ${JSON.stringify(Object.assign(r, { land }))}`);
+  await p4.close();
+}
+check('телефон в портрете: название, что это и просьба повернуть, кнопка «Во весь экран» в кадре; в альбомной экрана нет (@app-portrait-start)',
+  port.length === 0, port.join(' | '));
+
 check('в консоли нет ошибок', errors.length === 0, errors.join(' | '));
 
 const failed = results.filter(r => !r.ok);

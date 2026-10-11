@@ -814,6 +814,22 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -15944,6 +15960,9 @@ function setTouch(on){
 function applyTouchMode(){
   document.body.classList.toggle('touch', MOB);
   document.body.classList.toggle('portrait', MOB && window.innerHeight>window.innerWidth);
+  /* «Во весь экран» поворачивает экран сам (lock в toggleFull) — там, где браузер это умеет: Android да,
+     iPhone нет, там кнопки нет и остаётся просьба повернуть */
+  const rf=$('rotFull'); if(rf) rf.hidden=!fullAvail() || isFull();
 }
 function bindHold(el, act){
   const on=(e)=>{ e.preventDefault(); initAudio(); if(paused) return;
@@ -16137,6 +16156,7 @@ $('gearVal').addEventListener('click',e=>{
   initAudio(); if(demo) stopDemo(); selectGear(d.gear);
 });
 $('restartBtn').addEventListener('click',()=>{ initAudio(); pressKey('KeyR'); });
+$('rotFull').addEventListener('click',()=>{ initAudio(); toggleFull(); });
 $('demoBtn').addEventListener('click',()=>{ initAudio(); if(demo) stopDemo(); else startDemo(); });
 $('fbBtn').addEventListener('click',()=>{ initAudio(); doAct('feedback:game'); });
 $('trafBtn').addEventListener('click',()=>{ initAudio(); cycleTraffic(); });
