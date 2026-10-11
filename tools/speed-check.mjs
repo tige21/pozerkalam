@@ -142,7 +142,9 @@ const CITY = await page.evaluate(() => LEVELS.findIndex((l) => l.traffic === 'ci
 /* 5. Значок ограничения */
 {
   const r = await page.evaluate(async (li) => {
-    const show = async () => { paused = false; await new Promise((res) => setTimeout(res, 300)); const b = document.getElementById('limBadge'); return { hidden: b.hidden, txt: b.textContent }; };
+    const show = async () => { paused = false; await new Promise((res) => setTimeout(res, 300)); const b = document.getElementById('limBadge'), r = b.getBoundingClientRect();
+      /* видимость — по кадру, а не по атрибуту: display:grid в CSS перебивал hidden, и на дворе висел пустой красный круг */
+      return { hidden: getComputedStyle(b).display === 'none' || r.width === 0, txt: b.textContent }; };
     openLevel(li, 'pick'); hideOv(); setBody(8.15, -40, 0); car.vel = 0; const lesson = await show();
     const ex = LEVELS.findIndex((l) => l.examRoute);
     opt.examMode = 'train'; loadLevel(ex); hideOv(); setBody(8.15, -40, 0); car.vel = 0; const train = await show();
