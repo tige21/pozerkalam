@@ -7,12 +7,13 @@
 секрет Яндекса не покидают сервис, токены выдаются в момент claim и в БД не лежат. Отличие от
 spark: claim требует nonce вкладки, начавшей вход, — sid виден в адресе возврата /play/#auth=<sid>.
 
-Запуск: python3 account.py [serve]; обслуживание: grant | revoke | list | stats (см. --help).
+Запуск: python3 account.py [serve]; обслуживание: grant | revoke | list | stats | promo (см. --help).
 """
 
 import argparse
 import base64
 import binascii
+import decimal
 import hashlib
 import hmac
 import json
@@ -39,6 +40,14 @@ MAX_LEVELS = 200
 NONCE_RE = re.compile(r'^[A-Za-z0-9_-]{32,128}$')
 PROVIDERS = ('vk', 'yandex')
 MODES = ('redirect', 'poll')
+PROMO_RE = re.compile(r'^[A-Z0-9_-]{3,32}$')
+PREMIUM = 'premium'
+RK_PAY_URL = 'https://auth.robokassa.ru/Merchant/Index.aspx'
+RK_SERVICE_URL = 'https://auth.robokassa.ru/Merchant/WebService/Service.asmx'
+RK_STATE_DONE = 100
+RK_STATE_CANCELED = (10, 60)
+RK_INV_MAX = 2 ** 31 - 1
+RK_INV_TRIES = 5
 # Повтор старого refresh в течение этой минуты — гонка двух вкладок, которые обновляют сессию
 # одновременно, а не кража: семью не отзываем, клиент перечитывает свежий refresh из хранилища.
 REUSE_GRACE = 60
@@ -64,6 +73,15 @@ class Config:
         self.pending_ttl = int(e.get('PENDING_TTL', '600'))
         self.http_timeout = float(e.get('PROVIDER_TIMEOUT', '10'))
         self.trust_xff = e.get('TRUST_X_REAL_IP', '1') == '1'
+        self.rk_login = e.get('ROBOKASSA_MERCHANT_LOGIN', '').strip()
+        self.pay_test = e.get('ROBOKASSA_IS_TEST', 'true').strip().lower() in ('1', 'true', 'yes')
+        keys = ('ROBOKASSA_TEST_PASSWORD_1', 'ROBOKASSA_TEST_PASSWORD_2') if self.pay_test \
+            else ('ROBOKASSA_PASSWORD_1', 'ROBOKASSA_PASSWORD_2')
+        self.rk_pass1, self.rk_pass2 = e.get(keys[0], '').strip(), e.get(keys[1], '').strip()
+        self.rk_pay_url = e.get('ROBOKASSA_PAY_URL', RK_PAY_URL)
+        self.rk_service_url = e.get('ROBOKASSA_SERVICE_URL', RK_SERVICE_URL).rstrip('/')
+        self.premium_price = int(e.get('PREMIUM_PRICE_KOPECKS', '14900'))
+        self.premium_title = e.get('PREMIUM_TITLE', 'Премиум «По зеркалам»: уровни 11–32 навсегда')[:128]
 
     @property
     def vk_on(self):
@@ -72,6 +90,10 @@ class Config:
     @property
     def ya_on(self):
         return bool(self.ya_id and self.ya_secret)
+
+    @property
+    def pay_on(self):
+        return bool(self.rk_login and self.rk_pass1 and self.rk_pass2)
 
     def enabled(self, provider):
         return self.vk_on if provider == 'vk' else self.ya_on if provider == 'yandex' else False
@@ -227,6 +249,19 @@ MIGRATIONS = [
     """
     -- ссылка на фото профиля у провайдера; сам файл не хранится
     ALTER TABLE accounts ADD COLUMN avatar TEXT;
+    """,
+    """
+    -- платежи и промокоды без внешнего ключа на аккаунт, как entitlements: запись об оплате
+    -- переживает удаление аккаунта; amount — в копейках, out_sum — сумма из уведомления как есть
+    CREATE TABLE payments(inv_id INTEGER PRIMARY KEY, account_id TEXT NOT NULL, product TEXT NOT NULL,
+        amount INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', test INTEGER NOT NULL,
+        created_at INTEGER NOT NULL, paid_at INTEGER, out_sum TEXT);
+    CREATE INDEX payments_account ON payments(account_id);
+    CREATE TABLE promo(code TEXT PRIMARY KEY, product TEXT NOT NULL DEFAULT 'premium',
+        tag TEXT NOT NULL DEFAULT '', max_uses INTEGER NOT NULL, uses INTEGER NOT NULL DEFAULT 0,
+        expires_at INTEGER, created_at INTEGER NOT NULL, disabled_at INTEGER);
+    CREATE TABLE promo_redemptions(code TEXT NOT NULL, account_id TEXT NOT NULL,
+        redeemed_at INTEGER NOT NULL, PRIMARY KEY(code, account_id));
     """,
 ]
 
@@ -410,8 +445,70 @@ def ya_profile(cfg, code):
     return uid, str(name).strip(), avatar
 
 
+def money(kopecks):
+    return '%d.%02d' % divmod(kopecks, 100)
+
+
+def receipt_json(name, kopecks):
+    """Байт в байт то, что даёт json.Marshal в spark: sum — число с двумя знаками (149.00), а не
+    float Python (149.0), кириллица не экранируется. В названии нет <, > и & — Go заменил бы их
+    на \\u003c и т. д."""
+    return ('{"items":[{"name":%s,"quantity":1,"sum":%s,"tax":"none","payment_method":"full_payment",'
+            '"payment_object":"service"}]}') % (json.dumps(name[:128], ensure_ascii=False), money(kopecks))
+
+
+def robokassa_pay_url(cfg, inv, kopecks, title, product):
+    """Подпись берёт Receipt в виде, уже раз закодированном (url.QueryEscape), а в адрес он уходит
+    закодированным второй раз — оба слоя нужны, иначе ошибка 29. Адреса возврата в подпись идут
+    СЫРЫМИ: документация Robokassa здесь неверна (проверено на живом auth.robokassa.ru, spark)."""
+    receipt = urllib.parse.quote_plus(receipt_json(title, kopecks), safe='')
+    back = cfg.play_url.split('?')[0]
+    out_sum, shp = money(kopecks), 'Shp_product=' + product
+    sign = sha256_hex(':'.join([cfg.rk_login, out_sum, str(inv), receipt, back, 'GET', back, 'GET',
+                                cfg.rk_pass1, shp]))
+    q = {'MerchantLogin': cfg.rk_login, 'OutSum': out_sum, 'InvId': str(inv), 'Description': title[:100],
+         'Receipt': receipt, 'SuccessUrl2': back, 'SuccessUrl2Method': 'GET', 'FailUrl2': back,
+         'FailUrl2Method': 'GET', 'Shp_product': product, 'SignatureValue': sign}
+    if cfg.pay_test:
+        q['IsTest'] = '1'
+    return cfg.rk_pay_url + '?' + urllib.parse.urlencode(sorted(q.items()))
+
+
+def robokassa_op_state(cfg, inv):
+    """Код состояния операции по OpStateExt; в тестовом режиме запрос не работает, туда не ходим."""
+    q = urllib.parse.urlencode({'MerchantLogin': cfg.rk_login, 'InvoiceID': str(inv),
+                                'Signature': sha256_hex('%s:%s:%s' % (cfg.rk_login, inv, cfg.rk_pass2))})
+    req = urllib.request.Request(cfg.rk_service_url + '/OpStateExt?' + q, method='GET')
+    try:
+        with _opener.open(req, timeout=cfg.http_timeout) as r:
+            xml = r.read(1 << 20).decode('utf-8', 'replace')
+    except urllib.error.HTTPError as e:
+        raise ProviderError('robokassa.opstate', e.code)
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise ProviderError('robokassa.opstate', 'net', type(e).__name__)
+
+    def code(block):
+        m = re.search(r'<(?:\w+:)?%s>\s*<(?:\w+:)?Code>\s*(\d+)\s*<' % block, xml)
+        return int(m.group(1)) if m else None
+    result, state = code('Result'), code('State')
+    if result != 0 or state is None:
+        raise ProviderError('robokassa.opstate', 200, 'result_' + str(result))
+    return state
+
+
+def notification_lookup(pairs, name):
+    for k, v in pairs:
+        if k == name:
+            return v
+    for k, v in pairs:
+        if k.lower() == name.lower():
+            return v
+    return ''
+
+
 class Rate:
-    LIMITS = {'start': (10, 600), 'claim': (200, 600), 'any': (120, 60)}
+    LIMITS = {'start': (10, 600), 'claim': (200, 600), 'any': (120, 60),
+              'promo': (10, 600), 'promo_acct': (10, 3600)}
 
     def __init__(self):
         self._hits = defaultdict(deque)
@@ -454,11 +551,15 @@ class App:
         return {'id': a['id'], 'name': a['name'], 'avatar': a['avatar'], 'providers': provs}
 
     def entitlements(self, c, acc_id):
+        # покупка из тестового платежа живёт только в тестовом режиме: до активации магазина форма
+        # Robokassa принимает тестовые карты, и кто нашёл ?paytest=1, остался бы с премиумом на бою
         t = now()
         rows = c.execute('SELECT product, MAX(COALESCE(expires_at, 0)) AS exp, '
                          'MAX(expires_at IS NULL) AS forever FROM entitlements '
                          'WHERE account_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?) '
-                         'GROUP BY product ORDER BY product', (acc_id, t))
+                         "AND NOT (?=0 AND source='robokassa' AND ref IN "
+                         "(SELECT 'inv:' || inv_id FROM payments WHERE test=1)) "
+                         'GROUP BY product ORDER BY product', (acc_id, t, int(self.cfg.pay_test)))
         return [{'product': r['product'], 'expires_at': None if r['forever'] else r['exp']} for r in rows]
 
     def new_session(self, c, acc_id, family=None, expires_at=None):
@@ -509,6 +610,7 @@ class App:
             paid = c.execute("UPDATE entitlements SET account_id=? WHERE account_id=? AND source!='manual'",
                              (anon, acc_id)).rowcount
             c.execute("DELETE FROM entitlements WHERE account_id=?", (acc_id,))
+            c.execute('UPDATE payments SET account_id=? WHERE account_id=?', (anon, acc_id))
             c.execute('DELETE FROM oauth_pending WHERE account_id=?', (acc_id,))
             c.execute('DELETE FROM accounts WHERE id=?', (acc_id,))
         log.info('account delete: acct=%s, платных покупок обезличено: %d', mask(acc_id), paid)
@@ -649,6 +751,138 @@ class App:
         return 200, {'data': merged, 'rev': rev}
 
 
+    def pay_create(self, acc_id, product):
+        cfg = self.cfg
+        if product != PREMIUM:
+            return 400, {'error': 'product'}
+        if not cfg.pay_on:
+            return 503, {'error': 'pay-off'}
+        inv = None
+        for _ in range(RK_INV_TRIES):
+            cand = secrets.randbelow(RK_INV_MAX) + 1
+            try:
+                with self.store.tx() as c:
+                    if any(e['product'] == PREMIUM for e in self.entitlements(c, acc_id)):
+                        return 409, {'error': 'owned'}
+                    c.execute('INSERT INTO payments(inv_id, account_id, product, amount, test, created_at) '
+                              'VALUES (?,?,?,?,?,?)', (cand, acc_id, product, cfg.premium_price, int(cfg.pay_test), now()))
+                inv = cand
+                break
+            except sqlite3.IntegrityError:
+                log.warning('pay create: InvId %d занят, новая попытка', cand)
+        if inv is None:
+            log.error('pay create: не нашли свободный InvId за %d попыток', RK_INV_TRIES)
+            return 500, {'error': 'internal'}
+        url = robokassa_pay_url(cfg, inv, cfg.premium_price, cfg.premium_title, product)
+        log.info('pay create: acct=%s inv=%d сумма %s test=%s', mask(acc_id), inv, money(cfg.premium_price), cfg.pay_test)
+        return 200, {'url': url, 'inv': inv, 'test': cfg.pay_test}
+
+    def pay_status(self, acc_id, inv):
+        r = self.store.conn().execute('SELECT status FROM payments WHERE inv_id=? AND account_id=?',
+                                      (inv, acc_id)).fetchone()
+        if not r:
+            return 404, {'error': 'not-found'}
+        return 200, {'status': 'paid' if r['status'] == 'paid' else 'pending'}
+
+    def robokassa_result(self, pairs):
+        """→ (статус, текст). Robokassa повторяет уведомление, пока не получит ровно OK<InvId>:
+        отвечаем так же на повтор и на чужой InvId (иначе она стучалась бы вечно), а 400 и 500
+        оставляем для подделки и для сбоя, который стоит повторить."""
+        cfg = self.cfg
+        if not cfg.pay_on:
+            return 503, 'pay off'
+        out_sum, inv_s = notification_lookup(pairs, 'OutSum'), notification_lookup(pairs, 'InvId')
+        got = notification_lookup(pairs, 'SignatureValue').strip().lower()
+        shp = {}
+        for k, v in pairs:
+            if k[:4].lower() == 'shp_' and k not in shp:
+                shp[k] = v
+        base = ':'.join([out_sum, inv_s, cfg.rk_pass2] + ['%s=%s' % (k, shp[k]) for k in sorted(shp)])
+        if not (out_sum and inv_s and got) or not hmac.compare_digest(sha256_hex(base), got):
+            log.warning('robokassa result: подпись не сошлась inv=%s', inv_s[:12])
+            return 400, 'bad sign'
+        if notification_lookup(pairs, 'IsTest').strip() not in ('', '0') and not cfg.pay_test:
+            log.error('robokassa result: тестовое уведомление на боевом сервисе inv=%s — не выдаём', inv_s[:12])
+            return 400, 'bad sign'
+        if not inv_s.isdigit() or not 0 < int(inv_s) <= RK_INV_MAX:
+            log.warning('robokassa result: кривой InvId %s', inv_s[:12])
+            return 400, 'bad inv'
+        inv = int(inv_s)
+        ok = (200, 'OK%d' % inv)
+        row = self.store.conn().execute('SELECT * FROM payments WHERE inv_id=?', (inv,)).fetchone()
+        if not row:
+            log.warning('robokassa result: неизвестный InvId %d — отвечаем OK, не выдаём', inv)
+            return ok
+        if row['status'] == 'paid':
+            log.info('robokassa result: повтор по оплаченному inv=%d', inv)
+            return ok
+        if bool(row['test']) != cfg.pay_test:
+            log.error('robokassa result: платёж inv=%d создан в другом режиме (test=%d) — не выдаём', inv, row['test'])
+            return 400, 'bad mode'
+        try:
+            same = decimal.Decimal(out_sum) == decimal.Decimal(row['amount']) / 100
+        except decimal.InvalidOperation:
+            same = False
+        if not same:
+            log.error('robokassa result: сумма inv=%d не сошлась (ждали %s) — не выдаём', inv, money(row['amount']))
+            return 400, 'bad sum'
+        if cfg.pay_test:
+            log.warning('robokassa result: inv=%d тестовый режим, OpStateExt не перечитываем — верим подписи', inv)
+        else:
+            try:
+                state = robokassa_op_state(cfg, inv)
+            except ProviderError as e:
+                log.error('robokassa result: inv=%d не удалось перечитать состояние (%s)', inv, e)
+                return 500, 'retry later'
+            if state in RK_STATE_CANCELED:
+                with self.store.tx() as c:
+                    c.execute("UPDATE payments SET status='canceled' WHERE inv_id=? AND status='pending'", (inv,))
+                log.info('robokassa result: inv=%d отменён (state %d)', inv, state)
+                return ok
+            if state != RK_STATE_DONE:
+                log.warning('robokassa result: inv=%d состояние %d не финальное — не выдаём', inv, state)
+                return ok
+        with self.store.tx() as c:
+            n = c.execute("UPDATE payments SET status='paid', paid_at=?, out_sum=? WHERE inv_id=? AND status!='paid'",
+                          (now(), out_sum, inv)).rowcount
+            if n:
+                c.execute("INSERT INTO entitlements(account_id, product, source, ref, granted_at, expires_at) "
+                          "VALUES (?,?,'robokassa',?,?,NULL) ON CONFLICT(account_id, product, ref) DO NOTHING",
+                          (row['account_id'], row['product'], 'inv:%d' % inv, now()))
+        log.info('robokassa result: inv=%d оплачен, acct=%s product=%s test=%s%s', inv, mask(row['account_id']),
+                 row['product'], cfg.pay_test, '' if n else ' (уже был оплачен)')
+        return ok
+
+    def promo_redeem(self, acc_id, raw):
+        code = raw.strip().upper() if isinstance(raw, str) else ''
+        if not PROMO_RE.match(code):
+            return 400, {'error': 'promo-format'}
+        t = now()
+        with self.store.tx() as c:
+            have = self.entitlements(c, acc_id)
+            if any(e['product'] == PREMIUM for e in have):
+                return 200, {'ok': True, 'already': True, 'entitlements': have}
+            p = c.execute('SELECT * FROM promo WHERE code=?', (code,)).fetchone()
+            if not p or p['disabled_at']:
+                log.warning('promo: неизвестный код acct=%s', mask(acc_id))
+                return 404, {'error': 'promo-unknown'}
+            if p['expires_at'] is not None and p['expires_at'] <= t:
+                return 410, {'error': 'promo-expired'}
+            if c.execute('SELECT 1 FROM promo_redemptions WHERE code=? AND account_id=?', (code, acc_id)).fetchone():
+                return 200, {'ok': True, 'already': True, 'entitlements': have}
+            n = c.execute('UPDATE promo SET uses=uses+1 WHERE code=? AND disabled_at IS NULL '
+                          'AND (expires_at IS NULL OR expires_at>?) AND uses<max_uses', (code, t)).rowcount
+            if not n:
+                return 410, {'error': 'promo-exhausted'}
+            c.execute('INSERT INTO promo_redemptions(code, account_id, redeemed_at) VALUES (?,?,?)', (code, acc_id, t))
+            c.execute('INSERT INTO entitlements(account_id, product, source, ref, granted_at, expires_at) '
+                      "VALUES (?,?,'promo',?,?,NULL) ON CONFLICT(account_id, product, ref) DO UPDATE SET "
+                      'expires_at=NULL, revoked_at=NULL, granted_at=excluded.granted_at',
+                      (acc_id, p['product'], 'promo:' + code, t))
+            out = self.entitlements(c, acc_id)
+        log.info('promo: %s (%s) acct=%s', code, p['tag'] or '-', mask(acc_id))
+        return 200, {'ok': True, 'product': p['product'], 'tag': p['tag'], 'entitlements': out}
+
     def sweep(self):
         with self.store.tx() as c:
             p = c.execute('DELETE FROM oauth_pending WHERE created_at<?', (now() - self.cfg.pending_ttl,)).rowcount
@@ -700,6 +934,15 @@ def make_handler(app):
             body = json.dumps(obj, ensure_ascii=False).encode()
             self.send_response(status)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def send_text(self, status, text):
+            body = text.encode()
+            self.send_response(status)
+            self.send_header('Content-Type', 'text/plain; charset=utf-8')
             self.send_header('Cache-Control', 'no-store')
             self.send_header('Content-Length', str(len(body)))
             self.end_headers()
@@ -758,7 +1001,45 @@ def make_handler(app):
 
         def route(self, method, path, q):
             if method == 'GET' and path == '/health':
-                return self.send_json(200, {'ok': True, 'vk': app.cfg.vk_on, 'yandex': app.cfg.ya_on})
+                return self.send_json(200, {'ok': True, 'vk': app.cfg.vk_on, 'yandex': app.cfg.ya_on,
+                                            'pay': app.cfg.pay_on, 'pay_test': app.cfg.pay_test})
+            if path == '/pay/robokassa/result' and method in ('GET', 'POST'):
+                if self.limited('any'):
+                    return
+                n = int(self.headers.get('Content-Length') or 0)
+                if n > MAX_BODY:
+                    return self.send_text(413, 'too big')
+                form = urllib.parse.parse_qsl(self.rfile.read(n).decode(errors='replace'), keep_blank_values=True) if n else []
+                return self.send_text(*app.robokassa_result(form + list(q.items())))
+            if path == '/promo/redeem' and method == 'POST':
+                if self.limited('promo'):
+                    return
+                acc = self.bearer()
+                if not acc:
+                    return self.send_json(401, {'error': 'auth'})
+                if not app.rate.allow(acc, 'promo_acct'):
+                    log.warning('rate: promo acct=%s', mask(acc))
+                    return self.send_json(429, {'error': 'rate'})
+                data, err = self.body_json()
+                if err:
+                    return self.send_json(*err)
+                return self.send_json(*app.promo_redeem(acc, data.get('code') if isinstance(data, dict) else None))
+            if path in ('/pay/create', '/pay/status'):
+                if self.limited('any'):
+                    return
+                acc = self.bearer()
+                if not acc:
+                    return self.send_json(401, {'error': 'auth'})
+                if path == '/pay/create' and method == 'POST':
+                    data, err = self.body_json()
+                    if err:
+                        return self.send_json(*err)
+                    return self.send_json(*app.pay_create(acc, data.get('product') if isinstance(data, dict) else None))
+                if path == '/pay/status' and method == 'GET':
+                    inv = q.get('inv', '')
+                    if not inv.isdigit() or int(inv) > RK_INV_MAX:
+                        return self.send_json(404, {'error': 'not-found'})
+                    return self.send_json(*app.pay_status(acc, int(inv)))
             if method == 'GET' and path == '/auth/callback':
                 if self.limited('any'):
                     return
@@ -882,6 +1163,54 @@ def cli_stats(app, a):
     for r in c.execute("SELECT product, source, COUNT(*) n FROM entitlements WHERE revoked_at IS NULL "
                        "AND (expires_at IS NULL OR expires_at>?) GROUP BY product, source", (t,)):
         print('покупка %s (%s): %d' % (r['product'], r['source'], r['n']))
+    for r in c.execute("SELECT status, test, COUNT(*) n FROM payments GROUP BY status, test ORDER BY status, test"):
+        print('платежи %s%s: %d' % (r['status'], ' (тест)' if r['test'] else '', r['n']))
+    for r in c.execute("SELECT COALESCE(NULLIF(p.tag, ''), '-') tag, COUNT(*) n FROM promo_redemptions x "
+                       "JOIN promo p ON p.code=x.code GROUP BY 1 ORDER BY 1"):
+        print('промокоды, метка %s: %d' % (r['tag'], r['n']))
+
+
+def promo_code(raw):
+    code = raw.strip().upper()
+    if not PROMO_RE.match(code):
+        raise SystemExit('код: 3–32 знака A–Z, 0–9, _ или -')
+    return code
+
+
+def cli_promo(app, a):
+    c = app.store.conn()
+    if a.promo_cmd == 'add':
+        code = promo_code(a.code)
+        if a.max < 1:
+            raise SystemExit('--max должен быть больше нуля')
+        until = None
+        if a.until:
+            try:
+                d = time.strptime(a.until, '%Y-%m-%d')
+            except ValueError:
+                raise SystemExit('--until: дата в виде ГГГГ-ММ-ДД')
+            until = int(time.mktime(d)) + 86400
+        with app.store.tx() as c:
+            if c.execute('SELECT 1 FROM promo WHERE code=?', (code,)).fetchone():
+                raise SystemExit('код уже есть: ' + code)
+            c.execute('INSERT INTO promo(code, product, tag, max_uses, expires_at, created_at) VALUES (?,?,?,?,?,?)',
+                      (code, a.product, a.tag, a.max, until, now()))
+        log.info('promo add: %s product=%s tag=%s max=%d', code, a.product, a.tag or '-', a.max)
+        print('создан: %s → %s, до %d использований%s' % (code, a.product, a.max, ', по ' + a.until if a.until else ''))
+    elif a.promo_cmd == 'off':
+        code = promo_code(a.code)
+        with app.store.tx() as c:
+            n = c.execute('UPDATE promo SET disabled_at=? WHERE code=? AND disabled_at IS NULL', (now(), code)).rowcount
+        log.info('promo off: %s строк %d', code, n)
+        print('выключено: %d' % n)
+    else:
+        t = now()
+        for r in c.execute('SELECT * FROM promo ORDER BY created_at, code'):
+            state = ('выключен' if r['disabled_at'] else 'истёк' if r['expires_at'] and r['expires_at'] <= t
+                     else 'исчерпан' if r['uses'] >= r['max_uses'] else 'активен')
+            print('%-32s  %-8s  %-10s  %d/%d  до %s  %s' % (
+                r['code'], r['tag'] or '-', r['product'], r['uses'], r['max_uses'],
+                time.strftime('%Y-%m-%d', time.localtime(r['expires_at'] - 1)) if r['expires_at'] else '—', state))
 
 
 def main(argv=None):
@@ -900,6 +1229,17 @@ def main(argv=None):
     ls.add_argument('--name', default='')
     ls.add_argument('--last', type=int, default=20)
     sub.add_parser('stats', help='сводка по аккаунтам и покупкам')
+    pr = sub.add_parser('promo', help='промокоды на премиум')
+    ps = pr.add_subparsers(dest='promo_cmd', required=True)
+    pa = ps.add_parser('add', help='создать код')
+    pa.add_argument('code')
+    pa.add_argument('--max', type=int, required=True, help='сколько раз можно применить')
+    pa.add_argument('--until', default='', help='последний день действия, ГГГГ-ММ-ДД включительно')
+    pa.add_argument('--tag', default='', help='метка канала: vk, tg, …')
+    pa.add_argument('--product', default=PREMIUM)
+    ps.add_parser('list', help='все коды')
+    po = ps.add_parser('off', help='выключить код')
+    po.add_argument('code')
     a = ap.parse_args(argv)
 
     lvl = os.environ.get('LOG_LEVEL', 'info').upper()
@@ -912,7 +1252,8 @@ def main(argv=None):
         log.info('слушаю 127.0.0.1:%d', app.cfg.port)
         srv.serve_forever()
     else:
-        {'grant': cli_grant, 'revoke': cli_revoke, 'list': cli_list, 'stats': cli_stats}[a.cmd](app, a)
+        {'grant': cli_grant, 'revoke': cli_revoke, 'list': cli_list, 'stats': cli_stats,
+         'promo': cli_promo}[a.cmd](app, a)
 
 
 if __name__ == '__main__':

@@ -11,7 +11,9 @@
    FAULT=offeroff показывает его без флага — @acct-offer-off; FAULT=offersite — на любой площадке —
    @acct-offer-site-only; FAULT=offerbuyer — и купившему — @acct-offer-not-buyer. FAULT=avatar — фото не рисуется —
    @acct-avatar-shown; FAULT=avfail — битое фото не убирается — @acct-avatar-fallback; FAULT=policy — строки об
-   обновлении политики нет — @acct-policy-note; FAULT=consent — нет согласия в форме отзывов — @acct-feedback-consent. */
+   обновлении политики нет — @acct-policy-note; FAULT=consent — нет согласия в форме отзывов — @acct-feedback-consent; FAULT=premiumsite — замок вне сайта —
+   @acct-premium-site-only; FAULT=premiumlogin — гость с покупкой — @acct-premium-login-first; FAULT=promo — промокод не
+   применяется — @acct-promo-redeem. */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -182,6 +184,20 @@ function mockApi(st) {
     }
     if (c.path === '/me' && c.method === 'DELETE') return { json: { ok: true } };
     if (c.path === '/auth/logout') return { json: { ok: true } };
+    if (c.path === '/pay/create' && c.method === 'POST') {
+      st.creates = (st.creates || 0) + 1;
+      if ((st.ent || []).some((e) => e.product === 'premium')) return { status: 409, json: { error: 'owned' } };
+      return { json: { url: 'https://auth.robokassa.ru/Merchant/Index.aspx?MerchantLogin=pozerkalam&InvId=777&IsTest=1', inv: 777, test: true } };
+    }
+    if (c.path.startsWith('/pay/status')) return { json: { status: st.paid ? 'paid' : 'pending' } };
+    if (c.path === '/promo/redeem' && c.method === 'POST') {
+      st.redeems = (st.redeems || []).concat([c.body && c.body.code]);
+      const r = (st.promo || {})[c.body && c.body.code];
+      if (!r) return { status: 404, json: { error: 'promo-unknown' } };
+      if (r.status) return { status: r.status, json: { error: r.error } };
+      st.ent = [{ product: 'premium', expires_at: null }];
+      return { json: { ok: true, product: 'premium', tag: r.tag || '', entitlements: st.ent } };
+    }
     if (c.path === '/progress' && c.method === 'PUT') {
       st.puts = (st.puts || 0) + 1;
       return { json: { data: Object.assign({}, st.server || {}, c.body.data), rev: st.puts } };
@@ -497,7 +513,7 @@ async function avatarState(page) {
   });
   const pv = await rbEvents(page, 'paywall_view');
   check('закрытый уровень: 🔒 на карточке, пейволл гостю с входом, без «Купить» до провайдера (@acct-paywall-screen)',
-    r.lock.cls && /🔒/.test(r.lock.n) && /в курсе/.test(r.lock.d) && r.li !== 19 && r.shown && r.h1 === 'Эстакада: трогание в горку'
+    r.lock.cls && /🔒/.test(r.lock.n) && /Премиум/.test(r.lock.d) && r.li !== 19 && r.shown && r.h1 === 'Эстакада: трогание в горку'
       && r.login === 2 && !r.buy && r.back && !r.restore && pv.length === 1 && pv[0].li === 20 && pv[0].via === 'pick',
     JSON.stringify({ ...r, pv }));
   check('консоль чиста на пейволле', realErrors(errors).length === 0, realErrors(errors).slice(0, 2).join(' | '));
@@ -510,11 +526,11 @@ async function avatarState(page) {
   await page.waitForTimeout(600);
   await page.evaluate(() => { window.PAYWALL_FORCE = [19]; doAct('start'); openLevel(19, 'pick'); });
   const before = await page.evaluate(() => ({ li: game.li, restore: !!document.querySelector('#overlay [data-act="pay-restore"]') }));
-  st.ent = [{ product: 'course', expires_at: null }];
+  st.ent = [{ product: 'premium', expires_at: null }];
   await page.evaluate(() => document.querySelector('#overlay [data-act="pay-restore"]').click());
   await page.waitForTimeout(500);
   const after = await page.evaluate(() => ({ li: game.li, ov: document.getElementById('overlay').style.display, ent: acct.ent.length }));
-  check('«Восстановить покупку»: /me с курсом открывает закрытый уровень (@acct-paywall-restore)',
+  check('«Восстановить покупку»: /me с премиумом открывает закрытый уровень (@acct-paywall-restore)',
     before.li !== 19 && before.restore && after.li === 19 && after.ov === 'none' && after.ent === 1, JSON.stringify({ before, after }));
   const buyer = await page.evaluate(() => { delete window.PAYWALL_FORCE; window.OFFER_FORCE = true; openLevel(20, 'pick');
     return { li: game.li, offer: !!document.querySelector('#overlay .offer') }; });
@@ -651,6 +667,85 @@ let offerViewA = [], offerClickA = [];
   check('форма отзывов: согласие на обработку у кнопки «Отправить», на сайте — со ссылкой на политику, в Яндекс Играх — без ссылки наружу (@acct-feedback-consent)',
     /соглашаешься/.test(r.site.text) && /\/privacy\/$/.test(r.site.href || '') && r.site.before && /соглашаешься/.test(r.ya.text) && r.ya.href === null,
     JSON.stringify(r));
+}
+
+/* ---------- Премиум за 149 ₽ (#335) ---------- */
+/* замок: уровни 1–10 бесплатны, 11–32 закрыты; только сайт — в ЯИ, VK, Telegram и во фрейме замка нет */
+{
+  const { ctx, page, errors } = await openGame({ auth: ['vk', 'yandex'], api: mockApi({}) });
+  await page.goto(PAGE + '?paytest=1'); await page.waitForTimeout(300);
+  const r = await page.evaluate((fault) => {
+    if (fault === 'premiumsite') window.paySite = () => true;
+    doAct('start'); showLevelPick();
+    const card = (i) => { const c = document.querySelector('.lvcard[data-lvl="' + i + '"]'); return { lock: c.classList.contains('locked'), d: c.querySelector('.d').textContent }; };
+    const out = { l10: card(9), l11: card(10), l32: card(31), path: noviceIdx().every((i) => !levelLocked(i)) };
+    openLevel(10, 'pick'); const ov = document.getElementById('overlay');
+    out.pay = { shown: !!ov.querySelector('.paywall'), price: /149 ₽ навсегда/.test(ov.textContent), login: ov.querySelectorAll('.acctbtns button').length,
+      buy: !!ov.querySelector('[data-act="pay-buy"]'), promo: !!ov.querySelector('[data-act="promo-open"]'), li: game.li };
+    menuGo('settings'); out.tab = [...document.querySelectorAll('#overlay [data-act^="tab:"]')].some((b) => b.dataset.act === 'tab:premium');
+    menuGo('exam'); out.ceiling = /в Премиуме/.test(document.getElementById('overlay').textContent);
+    const pl = window.anPlatform, fr = window.anFramed;
+    window.anPlatform = () => 'ya'; out.ya = levelLocked(10); window.anPlatform = () => 'vk'; out.vk = levelLocked(10); window.anPlatform = pl;
+    window.anFramed = () => true; out.frame = levelLocked(10); window.anFramed = fr;
+    return out;
+  }, FAULT);
+  check('Премиум: уровни 1–10 открыты, 11–32 закрыты с ценой, путь новичка свободен; пейволл гостю — цена и вход, без «Купить»; вкладка и потолок готовности (@acct-premium-lock)',
+    !r.l10.lock && r.l11.lock && /Премиум · 149 ₽/.test(r.l11.d) && r.l32.lock && r.path && r.pay.shown && r.pay.price && r.pay.login === 2 && !r.pay.buy && r.pay.promo
+      && r.pay.li !== 10 && r.tab && r.ceiling, JSON.stringify(r));
+  check('Премиум только на сайте: в Яндекс Играх, VK и во фрейме замка нет (@acct-premium-site-only)', !r.ya && !r.vk && !r.frame, JSON.stringify({ ya: r.ya, vk: r.vk, frame: r.frame }));
+  check('консоль чиста на Премиуме', realErrors(errors).length === 0, realErrors(errors).slice(0, 2).join(' | '));
+  await ctx.close();
+}
+/* покупка: только вошедший; «Купить» → /pay/create → форма Robokassa; возврат с InvId → статус → /me → уровень открыт */
+{
+  const st = {};
+  const { ctx, page, apiCalls } = await openGame({ auth: ['vk', 'yandex'], api: mockApi(st), storage: LOGGED });
+  await page.goto(PAGE + '?paytest=1'); await page.waitForTimeout(600);
+  await page.evaluate((fault) => { if (fault === 'premiumlogin') window.__acct = acct; doAct('start'); openLevel(12, 'pick'); }, FAULT);
+  const pay = await page.evaluate(() => ({ buy: !!document.querySelector('#overlay [data-act="pay-buy"]'), restore: !!document.querySelector('#overlay [data-act="pay-restore"]') }));
+  await Promise.all([page.waitForURL(/auth\.robokassa\.ru/, { timeout: 5000 }).catch(() => null), page.evaluate(() => document.querySelector('#overlay [data-act="pay-buy"]').click())]);
+  const went = page.url();
+  const create = apiCalls.find((c) => c.path === '/pay/create');
+  st.paid = true; st.ent = [{ product: 'premium', expires_at: null }];
+  await page.goto(PAGE + '?OutSum=149.00&InvId=777&SignatureValue=abc&IsTest=1&Shp_product=premium');
+  await page.waitForTimeout(1500);
+  const back = await page.evaluate(() => ({ li: game.li, url: location.search, ov: document.getElementById('overlay').style.display, prem: entitled('premium') }));
+  const ok = await rbEvents(page, 'purchase_ok');
+  check('покупка: «Купить за 149 ₽» у вошедшего ведёт на форму Robokassa, возврат с InvId открывает уровень, адрес очищен (@acct-premium-buy)',
+    pay.buy && pay.restore && /auth\.robokassa\.ru/.test(went) && create && /^Bearer /.test(create.auth) && create.body.product === 'premium'
+      && back.prem && back.li === 12 && back.url === '' && ok.length === 1, JSON.stringify({ pay, went: went.slice(0, 60), create: !!create, back, ok: ok.length }));
+  await ctx.close();
+}
+/* без аккаунта купить нельзя: у гостя нет «Купить», а payStart без входа на сервис не ходит */
+{
+  const st = {};
+  const { ctx, page, apiCalls } = await openGame({ auth: ['vk', 'yandex'], api: mockApi(st) });
+  await page.goto(PAGE + '?paytest=1'); await page.waitForTimeout(300);
+  const r = await page.evaluate(async (fault) => { doAct('start'); openLevel(12, 'pick');
+    if (fault === 'premiumlogin') { acct = { id: 'x', name: 'x', provider: 'vk', ent: [] }; }
+    await payStart('premium'); return { buy: !!document.querySelector('#overlay [data-act="pay-buy"]'), login: document.querySelectorAll('#overlay .acctbtns button').length }; }, FAULT);
+  const creates = apiCalls.filter((c) => c.path === '/pay/create').length;
+  check('гость не может купить: «Купить» нет, вход на месте, запроса оплаты нет (@acct-premium-login-first)', !r.buy && r.login === 2 && creates === 0, JSON.stringify({ ...r, creates }));
+  await ctx.close();
+}
+/* промокод: ссылка ?promo= подставляет код и открывает вкладку; гостю — вход; вошедшему — ответ сервера; ошибки — текстом */
+{
+  const st = { promo: { VK2026: { tag: 'vk' }, OLD: { status: 410, error: 'promo-expired' } } };
+  const { ctx, page } = await openGame({ auth: ['vk', 'yandex'], api: mockApi(st), storage: LOGGED });
+  await page.goto(PAGE + '?paytest=1&promo=vk2026'); await page.waitForTimeout(700);
+  const link = await page.evaluate(() => ({ tab: menu.scr === 'settings' && menu.tab === 'premium', val: (document.getElementById('promoInput') || {}).value, url: location.search }));
+  await page.evaluate(() => { document.getElementById('promoInput').value = 'old'; doAct('promo-go'); });
+  await page.waitForTimeout(400);
+  const bad = await page.evaluate(() => document.getElementById('overlay').textContent);
+  await page.evaluate((fault) => { if (fault === 'promo') window.promoRedeem = () => {}; document.getElementById('promoInput').value = 'VK2026'; doAct('promo-go'); }, FAULT);
+  await page.waitForTimeout(500);
+  const good = await page.evaluate(() => ({ text: document.getElementById('overlay').textContent, prem: entitled('premium'), lock: levelLocked(20) }));
+  const ev = await rbEvents(page, 'promo_redeem');
+  check('промокод: ссылка ?promo= открывает «Премиум» с кодом, ошибка — текстом, верный код открывает премиум, событие с меткой (@acct-promo-redeem)',
+    link.tab && link.val === 'VK2026' && link.url === '?paytest=1' && /Срок этого промокода закончился/.test(bad) && good.prem && !good.lock
+      && /Премиум активен/.test(good.text) && ev.length === 1 && ev[0].tag === 'vk' && (st.redeems || []).join(',') === 'OLD,VK2026',
+    JSON.stringify({ link, bad: /Срок/.test(bad), good: { prem: good.prem, lock: good.lock }, ev, redeems: st.redeems }));
+  await ctx.close();
 }
 
 await browser.close();

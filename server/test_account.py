@@ -89,6 +89,34 @@ class FakeProviders:
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
 
 
+class FakeRobokassa:
+    """Заглушка OpStateExt: отвечает XML с заданным кодом состояния и запоминает запросы."""
+
+    def __init__(self):
+        self.state, self.result, self.calls = 100, 0, []
+        fake = self
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                fake.calls.append(dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(self.path).query)))
+                body = ('<?xml version="1.0" encoding="utf-8"?><OperationStateResponse '
+                        'xmlns="http://merchant.roboxchange.com/WebService/"><Result><Code>%d</Code></Result>'
+                        '<State><Code>%d</Code></State></OperationStateResponse>' % (fake.result, fake.state)).encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/xml')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        self.srv = ThreadingHTTPServer(('127.0.0.1', 0), H)
+        self.srv.daemon_threads = True
+        self.base = 'http://127.0.0.1:%d' % self.srv.server_address[1]
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *a, **k):
         return None
@@ -101,6 +129,7 @@ class AccountTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.fake = FakeProviders()
+        cls.rk = FakeRobokassa()
         cls.log = io.StringIO()
         h = logging.StreamHandler(cls.log)
         h.setLevel(logging.DEBUG)
@@ -115,7 +144,14 @@ class AccountTest(unittest.TestCase):
                'VK_CLIENT_ID': 'vk-app', 'YANDEX_CLIENT_ID': 'ya-app', 'YANDEX_CLIENT_SECRET': 'ya-secret',
                'VK_BASE': self.fake.base, 'YA_OAUTH_BASE': self.fake.base, 'YA_LOGIN_BASE': self.fake.base,
                'OAUTH_CALLBACK_URL': 'https://pozerkalam.space/api/v1/auth/callback',
-               'PLAY_URL': 'https://pozerkalam.space/play/', 'PROVIDER_TIMEOUT': '3'}
+               'PLAY_URL': 'https://pozerkalam.space/play/', 'PROVIDER_TIMEOUT': '3',
+               'ROBOKASSA_MERCHANT_LOGIN': 'pozerkalam', 'ROBOKASSA_IS_TEST': 'true',
+               'ROBOKASSA_TEST_PASSWORD_1': 'tp1-secret', 'ROBOKASSA_TEST_PASSWORD_2': 'tp2-secret',
+               'ROBOKASSA_PASSWORD_1': 'lp1-secret', 'ROBOKASSA_PASSWORD_2': 'lp2-secret',
+               'ROBOKASSA_SERVICE_URL': self.rk.base}
+        self.env = env
+        self.rk.state, self.rk.result = 100, 0
+        self.rk.calls.clear()
         self.app = account.App(account.Config(env))
         self.srv = account.make_server(self.app, port=0)
         self.base = 'http://127.0.0.1:%d' % self.srv.server_address[1]
@@ -447,6 +483,411 @@ class AccountTest(unittest.TestCase):
         text = self.log.getvalue()
         self.assertIn('auth claim', text)
         for secret in (nonce, sid, q['state'], 'vk-ok', s['refresh'], s['access'], r2['refresh'], 'ya-secret', 'vk-at'):
+            self.assertNotIn(secret, text)
+
+    def test_old_db_gets_payment_tables_and_keeps_data(self):
+        path = os.path.join(self.tmp.name, 'old2.db')
+        import sqlite3
+        c = sqlite3.connect(path, isolation_level=None)
+        c.executescript(account.MIGRATIONS[0] + ';' + account.MIGRATIONS[1])
+        c.execute('CREATE TABLE schema_version(v INTEGER NOT NULL)')
+        c.execute('INSERT INTO schema_version(v) VALUES (2)')
+        c.execute("INSERT INTO accounts(id, name, created_at, last_seen_at) VALUES ('a1', 'Старый', 1, 1)")
+        c.execute("INSERT INTO entitlements VALUES ('a1', 'course', 'manual', '', 1, NULL, NULL)")
+        c.close()
+        store = account.Store(path)
+        q = store.conn()
+        self.assertEqual(q.execute('SELECT name FROM accounts').fetchone()[0], 'Старый')
+        self.assertEqual(q.execute('SELECT COUNT(*) FROM entitlements').fetchone()[0], 1)
+        for t in ('payments', 'promo', 'promo_redemptions'):
+            self.assertEqual(q.execute('SELECT COUNT(*) FROM ' + t).fetchone()[0], 0)
+        self.assertEqual(q.execute('SELECT v FROM schema_version').fetchone()[0], len(account.MIGRATIONS))
+        store.release()
+
+    # ---- оплата ----
+
+    def go_live(self):
+        cfg = self.app.cfg
+        cfg.pay_test, cfg.rk_pass1, cfg.rk_pass2 = False, 'lp1-secret', 'lp2-secret'
+
+    def create(self, tok):
+        st, body, _ = self.call('POST', '/pay/create', {'product': 'premium'}, tok)
+        self.assertEqual(st, 200, body)
+        return body
+
+    def notify(self, inv, out_sum='149.00', secret='tp2-secret', extra=None, sign_sum=None, method='POST',
+               shp=None, sig=None):
+        shp = {'Shp_product': 'premium'} if shp is None else shp
+        params = {'OutSum': out_sum, 'InvId': str(inv)}
+        params.update(shp)
+        params.update(extra or {})
+        base = ':'.join([sign_sum or out_sum, str(inv), secret] + ['%s=%s' % (k, shp[k]) for k in sorted(shp)])
+        params['SignatureValue'] = sig or hashlib.sha256(base.encode()).hexdigest().upper()
+        body = urllib.parse.urlencode(params)
+        url = self.base + '/pay/robokassa/result'
+        if method == 'GET':
+            req = urllib.request.Request(url + '?' + body, method='GET')
+        else:
+            req = urllib.request.Request(url, data=body.encode(), method='POST', headers={
+                'Content-Type': 'application/x-www-form-urlencoded', 'X-Real-IP': '10.5.5.5'})
+        try:
+            with OPENER.open(req, timeout=5) as r:
+                return r.status, r.read().decode(), r.headers
+        except urllib.error.HTTPError as e:
+            with e:
+                return e.code, e.read().decode(), e.headers
+
+    def premium(self, tok):
+        return [e for e in self.call('GET', '/me', token=tok)[1]['entitlements'] if e['product'] == 'premium']
+
+    def test_pay_url_signature_is_recomputed_independently(self):
+        tok = self.login()['access']
+        body = self.create(tok)
+        self.assertTrue(body['test'])
+        u = urllib.parse.urlsplit(body['url'])
+        self.assertEqual(u.scheme + '://' + u.netloc + u.path, 'https://auth.robokassa.ru/Merchant/Index.aspx')
+        q = dict(urllib.parse.parse_qsl(u.query))
+        receipt_once = q['Receipt']
+        raw = urllib.parse.unquote_plus(receipt_once)
+        self.assertEqual(q['MerchantLogin'], 'pozerkalam')
+        self.assertEqual((q['OutSum'], q['InvId'], q['IsTest'], q['Shp_product']), ('149.00', str(body['inv']), '1', 'premium'))
+        self.assertEqual((q['SuccessUrl2'], q['FailUrl2']), ('https://pozerkalam.space/play/',) * 2)
+        self.assertEqual((q['SuccessUrl2Method'], q['FailUrl2Method']), ('GET', 'GET'))
+        self.assertLessEqual(len(q['Description']), 100)
+        self.assertIn('"sum":149.00,', raw)
+        self.assertNotIn('": ', raw)
+        self.assertNotIn(', "', raw)
+        self.assertIn('Премиум «По зеркалам»', raw, 'кириллица не экранируется')
+        item = json.loads(raw)['items'][0]
+        self.assertEqual((item['tax'], item['payment_object'], item['payment_method'], item['quantity']),
+                         ('none', 'service', 'full_payment', 1))
+        self.assertEqual(receipt_once, urllib.parse.quote_plus(raw, safe=''))
+        base = ':'.join(['pozerkalam', '149.00', str(body['inv']), receipt_once, 'https://pozerkalam.space/play/', 'GET',
+                         'https://pozerkalam.space/play/', 'GET', 'tp1-secret', 'Shp_product=premium'])
+        self.assertEqual(q['SignatureValue'], hashlib.sha256(base.encode()).hexdigest())
+        row = self.app.store.conn().execute('SELECT * FROM payments WHERE inv_id=?', (body['inv'],)).fetchone()
+        self.assertEqual((row['account_id'], row['amount'], row['status'], row['test']),
+                         (self.call('GET', '/me', token=tok)[1]['account']['id'], 14900, 'pending', 1))
+
+    def test_pay_url_live_mode_has_no_istest_and_uses_live_password(self):
+        tok = self.login()['access']
+        self.go_live()
+        body = self.create(tok)
+        self.assertFalse(body['test'])
+        q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(body['url']).query))
+        self.assertNotIn('IsTest', q)
+        base = ':'.join(['pozerkalam', '149.00', str(body['inv']), q['Receipt'], 'https://pozerkalam.space/play/', 'GET',
+                         'https://pozerkalam.space/play/', 'GET', 'lp1-secret', 'Shp_product=premium'])
+        self.assertEqual(q['SignatureValue'], hashlib.sha256(base.encode()).hexdigest())
+
+    def test_pay_url_play_url_query_is_stripped(self):
+        tok = self.login()['access']
+        self.app.cfg.play_url = 'https://pozerkalam.space/play/?x=1'
+        q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(self.create(tok)['url']).query))
+        self.assertEqual(q['SuccessUrl2'], 'https://pozerkalam.space/play/')
+
+    def test_pay_create_guards(self):
+        self.assertEqual(self.call('POST', '/pay/create', {'product': 'premium'})[:2], (401, {'error': 'auth'}))
+        tok = self.login()['access']
+        for bad in ({'product': 'course'}, {}, {'product': 5}):
+            self.assertEqual(self.call('POST', '/pay/create', bad, tok)[:2], (400, {'error': 'product'}), bad)
+        self.app.cfg.rk_pass2 = ''
+        self.assertEqual(self.call('POST', '/pay/create', {'product': 'premium'}, tok)[:2], (503, {'error': 'pay-off'}))
+        self.assertEqual(self.call('GET', '/health')[1]['pay'], False)
+        self.app.cfg.rk_pass2 = 'tp2-secret'
+        h = self.call('GET', '/health')[1]
+        self.assertEqual((h['pay'], h['pay_test']), (True, True))
+        self.assertNotIn('secret', json.dumps(h))
+        acc = self.call('GET', '/me', token=tok)[1]['account']['id']
+        account.cli_grant(self.app, argparse.Namespace(account=acc, product='premium', days=0, ref='t'))
+        self.assertEqual(self.call('POST', '/pay/create', {'product': 'premium'}, tok)[:2], (409, {'error': 'owned'}))
+        self.assertEqual(self.app.store.conn().execute('SELECT COUNT(*) FROM payments').fetchone()[0], 0)
+
+    def test_pay_create_retries_taken_inv_id(self):
+        tok = self.login()['access']
+        first = self.create(tok)['inv']
+        picks = iter([first, first, first + 1 if first < 2 ** 31 - 1 else 1])
+        orig = account.secrets.randbelow
+        account.secrets.randbelow = lambda n: next(picks) - 1
+        try:
+            second = self.create(tok)['inv']
+        finally:
+            account.secrets.randbelow = orig
+        self.assertNotEqual(first, second)
+
+    def test_result_grants_premium_and_is_idempotent(self):
+        s = self.login()
+        tok = s['access']
+        inv = self.create(tok)['inv']
+        self.assertEqual(self.call('GET', '/pay/status?inv=%d' % inv, token=tok)[1], {'status': 'pending'})
+        st, text, h = self.notify(inv)
+        self.assertEqual((st, text), (200, 'OK%d' % inv))
+        self.assertIn('text/plain', h['Content-Type'])
+        self.assertEqual(self.premium(tok), [{'product': 'premium', 'expires_at': None}])
+        self.assertEqual(self.call('GET', '/pay/status?inv=%d' % inv, token=tok)[1], {'status': 'paid'})
+        self.assertEqual(self.notify(inv, method='GET')[:2], (200, 'OK%d' % inv))
+        self.assertEqual(self.notify(inv, out_sum='1.00')[:2], (200, 'OK%d' % inv), 'повтор по оплаченному — OK без разбора')
+        c = self.app.store.conn()
+        rows = c.execute("SELECT source, ref FROM entitlements WHERE product='premium'").fetchall()
+        self.assertEqual([(r['source'], r['ref']) for r in rows], [('robokassa', 'inv:%d' % inv)])
+        p = c.execute('SELECT status, out_sum, paid_at FROM payments WHERE inv_id=?', (inv,)).fetchone()
+        self.assertEqual((p['status'], p['out_sum']), ('paid', '149.00'))
+        self.assertIsNotNone(p['paid_at'])
+        self.assertEqual(self.call('POST', '/pay/create', {'product': 'premium'}, tok)[:2], (409, {'error': 'owned'}))
+
+    def test_pay_status_is_private(self):
+        a, b = self.login('vk')['access'], self.login('yandex')['access']
+        inv = self.create(a)['inv']
+        self.assertEqual(self.call('GET', '/pay/status?inv=%d' % inv, token=b)[0], 404)
+        self.assertEqual(self.call('GET', '/pay/status?inv=x', token=a)[0], 404)
+        self.assertEqual(self.call('GET', '/pay/status?inv=%d' % inv)[0], 401)
+
+    def test_result_accepts_long_sum_and_lowercase_key(self):
+        tok = self.login()['access']
+        inv = self.create(tok)['inv']
+        self.assertEqual(self.notify(inv, out_sum='149.000000')[:2], (200, 'OK%d' % inv))
+        self.assertEqual(len(self.premium(tok)), 1)
+        inv2 = self.create(self.login('yandex')['access'])['inv']
+        base = hashlib.sha256(('149.00:%d:tp2-secret:Shp_product=premium' % inv2).encode()).hexdigest()
+        q = urllib.parse.urlencode({'outsum': '149.00', 'invid': inv2, 'signaturevalue': base, 'Shp_product': 'premium'})
+        self.assertEqual(self.call('GET', '/pay/robokassa/result?' + q)[:2], (200, 'OK%d' % inv2))
+
+    def test_result_rejects_bad_signature_sum_and_foreign_shp(self):
+        tok = self.login()['access']
+        inv = self.create(tok)['inv']
+        for kw in ({'secret': 'wrong'}, {'sig': 'abc'}, {'sign_sum': '1.00'}, {'shp': {'Shp_product': 'course'}, 'sig': 'x'}):
+            st, text, _ = self.notify(inv, **kw)
+            self.assertEqual((st, text), (400, 'bad sign'), kw)
+        self.assertEqual(self.premium(tok), [])
+        self.assertIn('подпись не сошлась', self.log.getvalue())
+        st, text, _ = self.notify(inv, out_sum='1.00')
+        self.assertEqual((st, text), (400, 'bad sum'))
+        st, text, _ = self.notify(inv, out_sum='abc')
+        self.assertEqual(st, 400)
+        self.assertEqual(self.premium(tok), [])
+        self.assertEqual(self.call('POST', '/pay/robokassa/result')[0], 400)
+        self.assertEqual(self.app.store.conn().execute("SELECT status FROM payments").fetchone()[0], 'pending')
+
+    def test_result_unknown_inv_is_ok_without_grant(self):
+        tok = self.login()['access']
+        st, text, _ = self.notify(123456)
+        self.assertEqual((st, text), (200, 'OK123456'))
+        self.assertEqual(self.premium(tok), [])
+        self.assertIn('неизвестный InvId', self.log.getvalue())
+
+    def test_result_pay_off_answers_503(self):
+        self.app.cfg.rk_login = ''
+        self.assertEqual(self.notify(5)[0], 503)
+
+    def test_live_mode_rejects_istest_notification(self):
+        tok = self.login()['access']
+        self.go_live()
+        inv = self.create(tok)['inv']
+        st, text, _ = self.notify(inv, secret='lp2-secret', extra={'IsTest': '1'})
+        self.assertEqual(st, 400)
+        self.assertEqual(self.premium(tok), [])
+        self.assertEqual(self.rk.calls, [])
+
+    def test_live_mode_rereads_operation_state(self):
+        tok = self.login()['access']
+        self.go_live()
+        self.app.cfg.rk_service_url = self.rk.base
+        inv = self.create(tok)['inv']
+        self.rk.state = 50
+        self.assertEqual(self.notify(inv, secret='lp2-secret')[:2], (200, 'OK%d' % inv))
+        self.assertEqual(self.premium(tok), [], 'состояние не финальное — не выдаём')
+        self.rk.state = 100
+        self.assertEqual(self.notify(inv, secret='lp2-secret')[:2], (200, 'OK%d' % inv))
+        self.assertEqual(len(self.premium(tok)), 1)
+        call = self.rk.calls[-1]
+        want = hashlib.sha256(('pozerkalam:%d:lp2-secret' % inv).encode()).hexdigest()
+        self.assertEqual((call['MerchantLogin'], call['InvoiceID'], call['Signature']), ('pozerkalam', str(inv), want))
+
+    def test_live_mode_canceled_and_unreachable_state(self):
+        tok = self.login()['access']
+        self.go_live()
+        inv = self.create(tok)['inv']
+        self.rk.state = 10
+        self.assertEqual(self.notify(inv, secret='lp2-secret')[:2], (200, 'OK%d' % inv))
+        self.assertEqual(self.premium(tok), [])
+        self.assertEqual(self.app.store.conn().execute('SELECT status FROM payments').fetchone()[0], 'canceled')
+        self.rk.state = 100
+        self.app.cfg.rk_service_url = 'http://127.0.0.1:1'
+        self.assertEqual(self.notify(inv, secret='lp2-secret')[0], 500, 'Robokassa повторит позже')
+        self.assertEqual(self.premium(tok), [])
+        self.app.cfg.rk_service_url = self.rk.base
+        self.rk.result = 3
+        self.assertEqual(self.notify(inv, secret='lp2-secret')[0], 500)
+        self.assertEqual(self.premium(tok), [])
+
+    def test_test_payment_does_not_grant_after_switch_to_live(self):
+        tok = self.login()['access']
+        inv = self.create(tok)['inv']
+        self.go_live()
+        self.assertEqual(self.notify(inv, secret='lp2-secret')[0], 400)
+        self.assertEqual(self.premium(tok), [])
+
+    def test_test_mode_premium_is_void_in_live_mode(self):
+        tok = self.login()['access']
+        inv = self.create(tok)['inv']
+        self.assertEqual(self.notify(inv)[:2], (200, 'OK%d' % inv))
+        self.assertEqual(self.premium(tok), [{'product': 'premium', 'expires_at': None}])
+        self.go_live()
+        self.assertEqual(self.premium(tok), [], 'премиум из тестового платежа на бою не действует')
+        st, body, _ = self.call('POST', '/pay/create', {'product': 'premium'}, tok)
+        self.assertEqual(st, 200, 'купить по-настоящему можно: тестовая покупка не считается')
+
+    def test_delete_account_keeps_payment_anonymous(self):
+        s = self.login()
+        inv = self.create(s['access'])['inv']
+        self.notify(inv)
+        self.call('DELETE', '/me', token=s['access'])
+        row = self.app.store.conn().execute('SELECT account_id, status FROM payments WHERE inv_id=?', (inv,)).fetchone()
+        self.assertTrue(row['account_id'].startswith('deleted:'))
+        self.assertEqual(row['status'], 'paid')
+
+    # ---- промокоды ----
+
+    def promo_add(self, code, **kw):
+        a = dict(code=code, max=1, until='', tag='', product='premium', promo_cmd='add')
+        a.update(kw)
+        account.cli_promo(self.app, argparse.Namespace(**a))
+
+    def redeem(self, tok, code, ip='10.0.0.1'):
+        return self.call('POST', '/promo/redeem', {'code': code}, tok, ip=ip)
+
+    def test_promo_errors(self):
+        tok = self.login()['access']
+        self.assertEqual(self.call('POST', '/promo/redeem', {'code': 'ABC'})[:2], (401, {'error': 'auth'}))
+        for bad in ('', 'ab', 'x' * 33, 'ab c!', None, 5):
+            self.assertEqual(self.redeem(tok, bad)[:2], (400, {'error': 'promo-format'}), bad)
+        self.assertEqual(self.redeem(tok, 'NOPE')[:2], (404, {'error': 'promo-unknown'}))
+        self.promo_add('OFFCODE', max=5)
+        account.cli_promo(self.app, argparse.Namespace(promo_cmd='off', code='offcode'))
+        self.assertEqual(self.redeem(tok, 'offcode')[:2], (404, {'error': 'promo-unknown'}))
+        self.promo_add('OLDCODE', max=5)
+        self.app.store.conn().execute("UPDATE promo SET expires_at=? WHERE code='OLDCODE'", (int(time.time()) - 5,))
+        self.assertEqual(self.redeem(tok, 'OLDCODE')[:2], (410, {'error': 'promo-expired'}))
+        self.assertEqual(self.premium(tok), [])
+
+    def test_promo_success_exhaustion_and_replay(self):
+        a, b = self.login('vk')['access'], self.login('yandex')['access']
+        self.promo_add('VK2026', max=1, tag='vk')
+        st, body, _ = self.redeem(a, ' vk2026 ')
+        self.assertEqual((st, body['ok'], body['product'], body['tag']), (200, True, 'premium', 'vk'))
+        self.assertEqual(body['entitlements'], [{'product': 'premium', 'expires_at': None}])
+        self.assertEqual(self.premium(a), [{'product': 'premium', 'expires_at': None}])
+        self.assertEqual(self.redeem(b, 'VK2026')[:2], (410, {'error': 'promo-exhausted'}))
+        self.assertEqual(self.premium(b), [])
+        again = self.redeem(a, 'VK2026')[1]
+        self.assertEqual((again['ok'], again['already']), (True, True))
+        c = self.app.store.conn()
+        self.assertEqual(c.execute("SELECT uses FROM promo WHERE code='VK2026'").fetchone()[0], 1)
+        self.assertEqual(c.execute("SELECT ref, source FROM entitlements WHERE product='premium'").fetchone()[:], ('promo:VK2026', 'promo'))
+
+    def test_promo_already_premium_does_not_consume_use(self):
+        s = self.login()
+        tok, acc = s['access'], s['account']['id']
+        account.cli_grant(self.app, argparse.Namespace(account=acc, product='premium', days=0, ref='x'))
+        self.promo_add('SPARE1', max=1)
+        body = self.redeem(tok, 'SPARE1')[1]
+        self.assertEqual((body['ok'], body['already']), (True, True))
+        self.assertEqual(self.app.store.conn().execute("SELECT uses FROM promo").fetchone()[0], 0)
+        self.assertEqual(self.app.store.conn().execute('SELECT COUNT(*) FROM promo_redemptions').fetchone()[0], 0)
+
+    def test_promo_same_account_cannot_redeem_other_product_twice(self):
+        tok = self.login()['access']
+        self.promo_add('TRIAL1', max=5, product='course')
+        self.assertEqual(self.redeem(tok, 'TRIAL1')[0], 200)
+        self.assertEqual(self.redeem(tok, 'TRIAL1')[1]['already'], True)
+        self.assertEqual(self.app.store.conn().execute("SELECT uses FROM promo").fetchone()[0], 1)
+
+    def test_promo_rate_limit_counts_wrong_codes(self):
+        tok = self.login()['access']
+        codes = [self.redeem(tok, 'BAD%d' % i, ip='10.7.7.7')[0] for i in range(11)]
+        self.assertEqual(codes[:10], [404] * 10)
+        self.assertEqual(codes[10], 429)
+        other = self.login('yandex')['access']
+        self.assertEqual(self.redeem(other, 'BAD99', ip='10.7.7.6')[0], 404, 'лимит по адресу')
+
+    def test_promo_rate_limit_per_account_across_ips(self):
+        tok = self.login()['access']
+        codes = [self.redeem(tok, 'BAD%d' % i, ip='10.8.8.%d' % i)[0] for i in range(11)]
+        self.assertEqual(codes[:10], [404] * 10)
+        self.assertEqual(codes[10], 429)
+        other = self.login('yandex')['access']
+        self.assertEqual(self.redeem(other, 'BAD1', ip='10.8.9.1')[0], 404)
+
+    def test_promo_cli(self):
+        out = io.StringIO()
+        real, sys.stdout = sys.stdout, out
+        try:
+            self.promo_add('VK2026', max=300, until='2026-12-31', tag='vk')
+            with self.assertRaises(SystemExit):
+                self.promo_add('vk2026', max=1)
+            for bad in ('a', 'bad code'):
+                with self.assertRaises(SystemExit):
+                    self.promo_add(bad)
+            with self.assertRaises(SystemExit):
+                self.promo_add('DATE1', until='31.12.2026')
+            with self.assertRaises(SystemExit):
+                self.promo_add('ZERO1', max=0)
+            account.cli_promo(self.app, argparse.Namespace(promo_cmd='list'))
+            listing = out.getvalue()
+            account.cli_promo(self.app, argparse.Namespace(promo_cmd='off', code='VK2026'))
+            account.cli_promo(self.app, argparse.Namespace(promo_cmd='list'))
+            account.cli_stats(self.app, argparse.Namespace())
+        finally:
+            sys.stdout = real
+        text = out.getvalue()
+        self.assertIn('VK2026', listing)
+        self.assertIn('0/300', listing)
+        self.assertIn('2026-12-31', listing)
+        self.assertIn('активен', listing)
+        self.assertIn('выключен', text)
+
+    def test_promo_cli_through_main(self):
+        os.environ.update(ACCT_DB=self.env['ACCT_DB'], JWT_SECRET=self.env['JWT_SECRET'])
+        try:
+            real, sys.stdout = sys.stdout, io.StringIO()
+            try:
+                account.main(['promo', 'add', 'TG2026', '--max', '3', '--tag', 'tg'])
+                account.main(['promo', 'list'])
+                shown = sys.stdout.getvalue()
+            finally:
+                sys.stdout = real
+        finally:
+            os.environ.pop('ACCT_DB'), os.environ.pop('JWT_SECRET')
+        self.assertIn('TG2026', shown)
+
+    def test_stats_counts_payments_and_promo_by_tag(self):
+        tok = self.login()['access']
+        self.notify(self.create(tok)['inv'])
+        self.create(self.login('yandex')['access'])
+        self.promo_add('VK2026', max=3, tag='vk')
+        self.redeem(self.login('yandex')['access'], 'VK2026')
+        real, sys.stdout = sys.stdout, io.StringIO()
+        try:
+            account.cli_stats(self.app, argparse.Namespace())
+            text = sys.stdout.getvalue()
+        finally:
+            sys.stdout = real
+        self.assertIn('платежи paid (тест): 1', text)
+        self.assertIn('платежи pending (тест): 1', text)
+        self.assertIn('метка vk: 1', text)
+
+    def test_no_pay_secrets_in_log(self):
+        self.log.truncate(0)
+        self.log.seek(0)
+        tok = self.login()['access']
+        body = self.create(tok)
+        self.notify(body['inv'])
+        self.notify(body['inv'], secret='wrong')
+        self.go_live()
+        self.notify(99, secret='lp2-secret')
+        text = self.log.getvalue()
+        self.assertIn('robokassa result', text)
+        for secret in ('tp1-secret', 'tp2-secret', 'lp1-secret', 'lp2-secret', tok, body['url']):
             self.assertNotIn(secret, text)
 
 

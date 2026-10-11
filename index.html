@@ -284,6 +284,9 @@ body.compact #overlay .gbseg button{width:auto;margin:0;padding:10px 16px;font-s
   font-family:inherit;font-size:14px;line-height:1.5;color:#e6eef7;background:rgba(0,0,0,.32);
   border:1px solid rgba(255,255,255,.16);border-radius:10px}
 #overlay textarea.fbfield{min-height:118px;resize:vertical}
+#overlay .promorow{display:flex;gap:8px;align-items:stretch;max-width:420px}
+#overlay .promorow .fbfield{margin-top:0;flex:1;min-width:0;text-transform:uppercase}
+#overlay .promorow button{margin:0;flex:none}
 #overlay .fbfield:focus{border-color:rgba(159,208,255,.55)}
 #overlay .fbfield:focus-visible{outline:2px solid #7dd8ff;outline-offset:1px}
 #overlay .fbrow{display:flex;align-items:center;gap:8px;margin-top:12px;
@@ -13610,7 +13613,9 @@ async function authStart(provider){
   const nonce=b64url(crypto.getRandomValues(new Uint8Array(32)));
   const mode=authMode();
   const back=ovSnap(), backOpen=ovEl.style.display!=='none';
-  try{ sessionStorage.setItem('pz_nonce', nonce); sessionStorage.setItem('pz_ret', JSON.stringify({li:game.li})); }catch(e){}
+  /* куда вернуть после входа: на пейволл уровня или во вкладку «Премиум» — там игрок и начинал вход */
+  const ret={li:game.li, pay:ovCard.querySelector('.paywall') ? paywallLi : -1, prem:menu.scr==='settings' && menu.tab==='premium'};
+  try{ sessionStorage.setItem('pz_nonce', nonce); sessionStorage.setItem('pz_ret', JSON.stringify(ret)); }catch(e){}
   acctNote='';
   track('auth_start', {provider:provider, mode:mode});
   console.info('[auth] вход: '+provider+', режим '+mode);
@@ -13679,6 +13684,8 @@ function authClaimed(provider, r){
     toast('Вход выполнен: '+acct.name, 3);
     acctRerender();
     syncNow('login');
+    /* вход окном (poll): код, введённый гостем, ждёт в поле — применить его, не заставляя жать второй раз */
+    if(promoCode && premiumOn() && menu.scr==='settings' && menu.tab==='premium') promoRedeem(promoCode);
     return true;
   }
   authFail(provider, j.status==='failed' ? (j.reason||'provider')
@@ -13746,6 +13753,9 @@ async function authBoot(){
   if(ok && ret && ret.li>0 && ret.li<LEVELS.length && !levelLocked(ret.li)){
     loadLevel(ret.li);
     menuGo('main'); }
+  /* вход начинали с пейволла или вкладки «Премиум» — туда и возвращаем; отложенный промокод применяется сразу */
+  if(ok && ret && ret.pay>=0 && ret.pay<LEVELS.length){ if(levelLocked(ret.pay)) paywallShow(ret.pay,'login'); else openLevel(ret.pay,'login'); }
+  else if(ok && ((ret && ret.prem) || promoCode) && premiumOn()){ menuGo('settings','premium','main'); if(promoCode) promoRedeem(promoCode); }
 }
 
 /* синк прогресса: слияние делает сервер (server/account.py merge), клиент отдаёт свой
@@ -13833,37 +13843,56 @@ function acctRerender(){
 }
 
 /* ---------- пейволл ---------- */
-/* Задел под платёжку (M7). Список закрытых уровней пуст: сегодня не закрыто ничего, его заполнит
-   решение владельца (docs/monetization-m7.md). Кнопки «Купить» нет, пока не подключён провайдер:
-   payStart → провайдер → вебхук сервиса → grant → покупка приходит в /me. Замок стоит только на
-   входе игрока (openLevel): loadLevel зовут старт страницы и все гейты tools/, и замок в нём уронил
-   бы их в день, когда закроют первый уровень. Защита «от честных»: код уровней лежит в странице,
-   сервер честно хранит покупку, а клиентский замок снимается через DevTools */
-const PAYWALL={ product:'course', levels:[] };
+/* Премиум (#335, владелец 11.10.2026): уровни 11–32 — 149 ₽ навсегда, купить можно только с аккаунтом, промокод в
+   настройках — для раздач в соцсетях. Совет ECC: замок — только на сайте (web/pwa, не во фрейме): в Яндекс Играх,
+   VK и Telegram своя оплата запрещена, а входа в ЯИ нет. Включается флагом PAY_ON после активации магазина
+   Robokassa и пробной покупки владельцем; до того — ?paytest=1 на сессию (тестовый режим Robokassa) и
+   window.PREMIUM_FORCE для гейтов. Оплата: payStart → /pay/create → форма Robokassa → вебхук сервиса выдаёт
+   премиум → возврат на /play/ → /me. Замок стоит только на входе игрока (openLevel): loadLevel зовут старт
+   страницы и все гейты tools/. Защита «от честных»: код уровней лежит в странице, покупку честно хранит сервер */
+const PAYWALL={ product:'premium', from:10 };
 const PAY_ON=false;
-const PAY={ price:'' };
+const PAY={ price:'149 ₽' };
 let paywallLi=-1;
+let payTest=false;
+try{ payTest=/[?&]paytest=1(&|$)/.test(location.search) || sessionStorage.getItem('pz_paytest')==='1';
+  if(payTest) sessionStorage.setItem('pz_paytest','1'); }catch(e){}
+function paySite(){ const pl=anPlatform(); return (pl==='web' || pl==='pwa') && !anFramed() && location.protocol==='https:'; }
+function premiumOn(){ return AUTH_ON && paySite() && (PAY_ON || payTest || !!window.PREMIUM_FORCE); }
+/* кто прошёл уровень после 10-го до замка, сохраняет доступ (совет ECC): без премиума такой уровень не пройти,
+   значит запись о проходе и есть отметка «играл до замка» */
+function premiumGrand(){
+  const a=progAll();
+  for(let i=PAYWALL.from;i<LEVELS.length;i++){ const l=LEVELS[i], p=l && !l.custom && a[l.name]; if(p && p.n>0) return true; }
+  return false;
+}
+function premiumHas(){ return entitled(PAYWALL.product) || premiumGrand(); }
 function entitled(product){
   if(!acct || !Array.isArray(acct.ent)) return false;
   const t=Date.now();
   return acct.ent.some(e=> e && e.product===product && (!e.expires_at || e.expires_at*1000>t));
 }
-/* первый уровень грузится на старте страницы, свои площадки — работа самого игрока: их не закрыть */
+/* первый уровень грузится на старте страницы, свои площадки — работа самого игрока: их не закрыть.
+   PAYWALL_FORCE — список для гейтов: механизм проверяется и при выключенном замке */
 function levelLocked(i){
   const l=LEVELS[i];
   if(!l || l.custom || i===0) return false;
-  const list=Array.isArray(window.PAYWALL_FORCE) ? window.PAYWALL_FORCE : PAYWALL.levels;
-  return list.indexOf(i)>=0 && !entitled(PAYWALL.product);
+  if(Array.isArray(window.PAYWALL_FORCE)) return window.PAYWALL_FORCE.indexOf(i)>=0 && !entitled(PAYWALL.product);
+  return i>=PAYWALL.from && premiumOn() && !premiumHas();
 }
 function paywallHTML(i){
   const l=LEVELS[i]||{}, nm=String(l.name||'').split('· ')[1]||l.name||'';
-  let s='<div class="paywall"><h1>'+esc(nm)+'</h1>'
-    +'<p>Уровень входит в курс подготовки к экзамену.</p>'
-    +'<p>'+(PAY_ON && PAY.price ? 'Курс: <b>'+esc(PAY.price)+'</b>.' : 'Курс скоро откроется.')+'</p></div>';
-  if(!acct && AUTH_ON) s+=acctBtnsHTML('Покупка привязывается к аккаунту. Войди, чтобы купить.');
-  if(acct && PAY_ON) s+='<button data-act="pay-buy">Купить курс</button>';
-  if(acct) s+='<button data-act="pay-restore" class="ghost">Восстановить покупку</button>';
-  return s+'<button data-act="pick" class="ghost">Выбрать другой уровень</button>';
+  let s='<div class="paywall"><p class="pkick">Премиум</p><h1>'+esc(nm)+'</h1>'
+    +'<p>Уровни 11–32 — габариты, площадка, город по правилам, практика и экзамен с инспектором — открывает Премиум: '
+    +'<b>'+PAY.price+' навсегда</b>.</p>'
+    +'<p class="sd">Покупка привязывается к аккаунту и работает на любом устройстве после входа.</p></div>';
+  if(!acct) return s+(AUTH_ON ? acctBtnsHTML('Чтобы купить, войди через VK ID или Яндекс ID — так покупка не потеряется.') : '')
+    +'<button data-act="promo-open" class="ghost">Есть промокод</button>'
+    +'<button data-act="pick" class="ghost">Выбрать другой уровень</button>';
+  return s+'<button data-act="pay-buy">Купить за '+PAY.price+'</button>'
+    +'<button data-act="promo-open" class="ghost">Есть промокод</button>'
+    +'<button data-act="pay-restore" class="ghost">Восстановить покупку</button>'
+    +'<button data-act="pick" class="ghost">Выбрать другой уровень</button>';
 }
 function paywallShow(i, via){
   paywallLi=i;
@@ -13871,10 +13900,101 @@ function paywallShow(i, via){
   track('paywall_view', Object.assign(anLevel(i), {via:via, account:acct?1:0}));
   showOv(paywallHTML(i));
 }
-function payStart(product){
-  console.info('[pay] покупка: '+product+' — провайдер не подключён');
-  track('purchase_start', {product:product});
-  toast('Оплата появится скоро', 3);
+async function payStart(product){
+  if(!acct){ showOv(paywallHTML(paywallLi)); return; }
+  track('purchase_start', {product:product, li:paywallLi+1});
+  let r;
+  try{ r=await apiFetch('/pay/create','POST',{product:product}); }catch(e){ r={status:0, json:{}}; }
+  if(r.status===409){ await authMe(); if(paywallLi>=0 && !levelLocked(paywallLi)) openLevel(paywallLi,'restore'); return; }
+  if(r.status!==200 || !r.json.url){
+    console.warn('[pay] платёж не создан: '+r.status);
+    acctNote = r.status===503 ? 'Оплата сейчас недоступна — попробуй позже.' : 'Не получилось начать оплату: нет связи с сервером.';
+    showOv(acctNoteHTML()+paywallHTML(paywallLi)); return; }
+  console.info('[pay] платёж '+r.json.inv+(r.json.test?' (тест)':'')+' — на форму оплаты');
+  try{ sessionStorage.setItem('pz_pay', JSON.stringify({inv:r.json.inv, li:paywallLi})); }catch(e){}
+  location.assign(r.json.url);
+}
+/* возврат с формы оплаты: Robokassa ведёт на /play/ и дописывает InvId (и на успех, и на отказ — адрес один).
+   Доступ выдаёт вебхук сервиса, а не этот возврат: ждём, пока платёж станет оплаченным, и берём /me */
+async function payBoot(){
+  const m=/[?&]InvId=(\d+)/i.exec(location.search);
+  if(!m) return;
+  let ret=null;
+  try{ ret=JSON.parse(sessionStorage.getItem('pz_pay')||'null'); sessionStorage.removeItem('pz_pay'); }catch(e){}
+  try{ history.replaceState(null, '', location.pathname); }catch(e){}
+  if(!acct) return;
+  showOv('<h1>Проверяю оплату…</h1><p>Обычно это несколько секунд.</p>');
+  for(let k=0;k<12;k++){
+    let r; try{ r=await apiFetch('/pay/status?inv='+m[1],'GET'); }catch(e){ r={status:0, json:{}}; }
+    if(r.status===200 && r.json.status==='paid') break;
+    await new Promise(res=>setTimeout(res, 2000));
+  }
+  await authMe();
+  const li = ret && ret.li>=0 ? ret.li : -1;
+  if(entitled(PAYWALL.product)){
+    track('purchase_ok', {product:PAYWALL.product});
+    console.info('[pay] премиум открыт');
+    toast('Премиум открыт: все уровни доступны', 5);
+    if(li>=0) openLevel(li,'purchase'); else menuGo('main');
+    return; }
+  console.warn('[pay] оплата не подтвердилась, платёж '+m[1]);
+  acctNote='Оплата не подтвердилась. Если деньги списались, нажми «Восстановить покупку» через минуту.';
+  paywallLi = li>=0 ? li : PAYWALL.from;
+  showOv(acctNoteHTML()+paywallHTML(paywallLi));
+}
+/* промокод (#335): проверяет сервер — код кампании с лимитом, сроком и меткой соцсети, один на аккаунт.
+   ?promo=КОД в ссылке из поста подставляет код в поле; гость сначала входит, код ждёт в сессии и
+   применяется сразу после входа */
+let promoMsg='', promoBusy=false, promoCode='';
+try{
+  const m=/[?&]promo=([A-Za-z0-9_-]{3,32})(&|$)/.exec(location.search);
+  if(m){ promoCode=m[1].toUpperCase(); sessionStorage.setItem('pz_promo', promoCode);
+    history.replaceState(null, '', location.pathname+location.search.replace(/([?&])promo=[^&]*(&|$)/, '$1').replace(/[?&]$/, '')); }
+  else promoCode=sessionStorage.getItem('pz_promo')||'';
+}catch(e){}
+const PROMO_TEXT={ 'promo-format':'Такого промокода нет — проверь написание.', 'promo-unknown':'Такого промокода нет — проверь написание.',
+  'promo-expired':'Срок этого промокода закончился.', 'promo-exhausted':'Промокод закончился: все активации разобраны.',
+  rate:'Слишком много попыток. Попробуй через 10 минут.', net:'Нет связи с сервером. Попробуй ещё раз.' };
+async function promoRedeem(code){
+  code=String(code||'').trim().toUpperCase();
+  if(promoBusy) return;
+  if(!/^[A-Z0-9_-]{3,32}$/.test(code)){ promoMsg=PROMO_TEXT['promo-format']; promoRender(); return; }
+  promoCode=code; try{ sessionStorage.setItem('pz_promo', code); }catch(e){}
+  if(!acct){ promoMsg='Войди через VK ID или Яндекс ID — промокод применится сразу после входа.'; promoRender(); return; }
+  promoBusy=true;
+  let r;
+  try{ r=await apiFetch('/promo/redeem','POST',{code:code}); }catch(e){ r={status:0, json:{}}; }
+  promoBusy=false;
+  if(r.status===200 && r.json.ok){
+    promoCode=''; try{ sessionStorage.removeItem('pz_promo'); }catch(e){}
+    if(Array.isArray(r.json.entitlements)){ acct.ent=r.json.entitlements; authSave(); }
+    promoMsg = r.json.already ? 'Премиум уже есть на этом аккаунте.' : 'Промокод принят — Премиум открыт, все уровни доступны.';
+    if(!r.json.already) track('promo_redeem', {tag:r.json.tag||''});
+    console.info('[pay] промокод '+(r.json.already?'не нужен — премиум уже есть':'принят'));
+  } else {
+    const why = r.status===0 ? 'net' : r.status===429 ? 'rate' : (r.json && r.json.error) || 'promo-unknown';
+    promoMsg=PROMO_TEXT[why] || PROMO_TEXT['promo-unknown'];
+    track('promo_fail', {reason:why});
+    console.warn('[pay] промокод не принят: '+why);
+  }
+  promoRender();
+}
+function promoRender(){
+  if(menu.scr==='settings' && menu.tab==='premium') menuGo('settings','premium',menu.from);
+  else if(promoMsg) toast(promoMsg, 4);
+}
+function premiumTabHTML(){
+  if(premiumHas()) return '<p class="mok">Премиум активен: открыты все 32 уровня.</p>';
+  let s='<p class="mnote">Бесплатно — уровни 1–10. Премиум открывает 11–32: габариты, площадку, город, практику и экзамен — '
+    +'<b>'+PAY.price+' навсегда</b>.</p>';
+  if(!acct) s+=acctBtnsHTML('Покупка и промокод привязываются к аккаунту — войди через VK ID или Яндекс ID.');
+  else s+='<div class="mrow"><button type="button" data-act="pay-buy">Купить за '+PAY.price+'</button>'
+    +'<button type="button" class="ghost" data-act="pay-restore">Восстановить покупку</button></div>';
+  s+='<h2>Промокод</h2><div class="promorow"><input id="promoInput" class="fbfield" maxlength="32" autocapitalize="characters" '
+    +'autocorrect="off" spellcheck="false" enterkeyhint="done" placeholder="Например, VK2026" value="'+esc(promoCode)+'">'
+    +'<button type="button" data-act="promo-go"'+(promoBusy?' disabled':'')+'>Активировать</button></div>';
+  if(promoMsg) s+='<p class="mnote" role="status">'+esc(promoMsg)+'</p>';
+  return s;
 }
 async function payRestore(){
   const li=paywallLi;
@@ -14207,6 +14327,8 @@ function doAct(a){
   if(a==='auth-delete-yes'){ authDelete(); return; }
   if(a==='pay-restore'){ payRestore(); return; }
   if(a==='pay-buy'){ payStart(PAYWALL.product); return; }
+  if(a==='promo-open'){ promoMsg=''; menuGo('settings','premium', menu.scr ? menu.from : 'game'); return; }
+  if(a==='promo-go'){ const el=$('promoInput'); promoRedeem(el ? el.value : promoCode); return; }
   if(a==='offer-take'){ offerTake(); return; }
   if(a==='offer-skip'){ offerSkip(); return; }
   if(a==='offer-go'){ offerGo(); return; }
@@ -14311,7 +14433,7 @@ function levelPickHTML(tab){
       +'<span class="n">'+(l.custom?'★':(i+1))+(done?' ✓':'')+(locked?' 🔒':'')+'</span>'
       +'<span class="t">'+nm+'</span>'
       +'<span class="d">'
-      +(locked?'в курсе подготовки к экзамену':pg?progLine(l.name):esc(l.task||''))+'</span></button>';
+      +(locked?'Премиум · '+PAY.price:pg?progLine(l.name):esc(l.task||''))+'</span></button>';
   });
   let s=menuHead('Уровни', LEVEL_TABS, tab)+'<div class="mbody"><p class="mnote">'+LEVEL_TAB_NOTE[tab]+'</p>';
   for(const [k] of LEVEL_TABS) if(k!=='start') s+='<div class="lvgrid" data-tab="'+k+'"'+(k===tab?'':' hidden')+'>'+(groups[k]||'')+'</div>';
@@ -14360,10 +14482,12 @@ function lastSave(){ try{ localStorage.setItem('trainer_last', LEVELS[game.li].n
    по прямой, задним в карман, тесный карман, параллельная. Дриллы «стоп по линии» и «у тротуара» в путь не
    входят: показание там скрыто до остановки, случайная остановка проходит их в ~1 % — первым успехом им не
    быть. Номера уровней не меняются: прогресс и инструменты держатся за имена и номера */
+/* только бесплатные уровни (1–10): замок Премиума стоит после 10-го, и шаг пути за ним оборвал бы обучение
+   (совет ECC 11.10.2026) — тесный карман 11 заменён косым гаражом 9 */
 const NOVICE_PATH=['7 · Заезд в карман под 45°','10 · Выезд из тупика задним ходом',
-  '2 · Задним ходом в перпендикулярный карман','11 · Карман вплотную между двумя','1 · Параллельная парковка справа'];
+  '2 · Задним ходом в перпендикулярный карман','9 · Косой гараж во дворе','1 · Параллельная парковка справа'];
 const NOVICE_WHY=['передом, без заднего хода','задний ход по прямой','первый карман задним ходом',
-  'зона на 40 см шире машины','две дуги задним ходом'];
+  'задним ходом под углом','две дуги задним ходом'];
 function noviceIdx(){ return NOVICE_PATH.map(n=>LEVELS.findIndex(l=>l.name===n)).filter(i=>i>=0); }
 function noviceLeft(){ return noviceIdx().some(i=>!progPassed(LEVELS[i].name)); }
 /* следующий непройденный уровень пути после li; -1 — li не на пути или дальше по пути всё пройдено */
@@ -14611,6 +14735,11 @@ function menuExamHTML(){
     +'<div class="ptiles">'
     +'<div class="ptile"><b>'+rd.pct+'&nbsp;%</b><span>готовность: чистые заезды по '+EXAM_SET.length+' упражнениям экзамена</span></div>'
     +'<div class="ptile"><b>'+er.routes+' из 3</b><span>маршрутов сдано в настоящем режиме</span></div></div>';
+  /* готовность считается по уровням экзамена, и большая их часть — после 10-го: без этой строки потолок бесплатной
+     игры читался бы как обман (совет ECC) */
+  if(premiumOn() && !premiumHas()){ const np=EXAM_SET.filter(i=>i>=PAYWALL.from).length;
+    s+='<p class="mnote">Из '+EXAM_SET.length+' уровней готовности '+np+' — в Премиуме: без него готовность не поднимется выше '
+      +Math.round((EXAM_SET.length-np)/EXAM_SET.length*100)+'&nbsp;%. <button type="button" class="linkbtn" data-act="promo-open">Премиум</button></p>'; }
   if(er.routes>=3) s+='<p class="mok">Экзамен сдан в настоящем режиме на трёх разных маршрутах — ты готов.</p>';
   else if(er.train) s+='<p class="mnote">Репетиций в тренировочном режиме: '+er.train+'.</p>';
   if(rd.weak.length) s+='<h2>Сначала отработай</h2><div class="mrow">'
@@ -14736,8 +14865,12 @@ function setRowHTML(s){
     +'<button type="button" aria-label="'+s.label+': больше" data-act="set:'+s.id+':'+Math.min(s.vals.length-1,ix+1)+'"'
     +(ix>=s.vals.length-1?' disabled':'')+'>+</button></div></div>';
 }
+/* вкладка «Премиум» — только там, где стоит замок: на сайте с включённой оплатой */
+function setTabs(){ return premiumOn() ? SET_TABS.concat([['premium','Премиум']]) : SET_TABS; }
 function menuSettingsHTML(tab){
-  let s=menuHead('Настройки', SET_TABS, tab)+'<div class="mbody">';
+  if(tab==='premium' && !premiumOn()) tab='screen';
+  let s=menuHead('Настройки', setTabs(), tab)+'<div class="mbody">';
+  if(tab==='premium') s+=premiumTabHTML();
   for(const x of SETTINGS) if(x.tab===tab && (!x.show || x.show())) s+=setRowHTML(x);
   if(tab==='mirrors') s+='<div class="mrow"><button type="button" class="ghost" data-act="mirreset">Сбросить зеркала</button></div>'
     +'<p class="mnote">Зеркало можно повернуть, потянув прямо по нему.'+(MOB?'':' Колесо мыши над зеркалом меняет размер.')+'</p>';
@@ -16387,7 +16520,12 @@ track('app_open', Object.assign({ platform:anPlatform(), framed:anFramed(), mob:
   lang:(navigator.language||'').slice(0,8), runs:runsCnt, build:window.BUILD||'dev',
   account: AUTH_ON ? (acct?1:0) : null, provider: acct ? acct.provider : null }, anSource()));
 if(acct) anIdentify(acct.id);
-authBoot();
+authBoot().then(()=>{
+  payBoot();
+  /* ссылка из поста с ?promo=КОД: сразу вкладка «Премиум» с подставленным кодом */
+  if(promoCode && premiumOn() && !/[?&]InvId=/i.test(location.search)) menuGo('settings','premium','main');
+});
+document.addEventListener('keydown', e=>{ if(e.key==='Enter' && e.target && e.target.id==='promoInput'){ e.preventDefault(); promoRedeem(e.target.value); } });
 /* PWA: офлайн и мгновенный повторный вход; с file:// и без https молча пропускается */
 /* .catch обязателен: на file:// (и в любом origin без https) регистрация отвергается,
    и без обработчика это всплывает как Uncaught (in promise) в консоли игрока */

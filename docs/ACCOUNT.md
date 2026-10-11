@@ -119,6 +119,48 @@ pozerkalam-account.service — server/account.py (Python 3.11 stdlib + SQLite)
 во фрейме, `https:`); закрытый уровень показывает пейволл, купившему (`entitled('course')`)
 предложение не показывается. Включить — `OFFER.on=true`. Гейт — `@acct-offer-*` в account-check.
 
+## Премиум: оплата и промокоды
+
+Покупка — продукт `premium` в `entitlements`; игра читает его из `/me`. Оплата через Robokassa
+(`docs/PAYMENTS-ROBOKASSA.md`), промокод выдаёт тот же продукт без денег. Все пути с префиксом
+`/api/v1`, сервис видит их и без него.
+
+| Запрос | Ответ |
+|---|---|
+| `POST /pay/create` (Bearer) `{"product":"premium"}` | `200 {"url","inv","test"}`; `401 auth`; `400 product`; `503 pay-off` (нет ключей текущего режима); `409 owned` (премиум уже есть) |
+| `GET /pay/status?inv=N` (Bearer) | `200 {"status":"pending"\|"paid"}` по своему платежу, иначе `404` |
+| `POST /pay/robokassa/result` (форма, GET тоже) | `OK<InvId>` text/plain; `400 bad sign` / `bad sum` / `bad mode`; `500 retry later` (не удалось перечитать состояние) |
+| `POST /promo/redeem` (Bearer) `{"code"}` | `200 {"ok":true,"product","tag","entitlements"}`; уже есть премиум — `200 {"ok":true,"already":true,...}` без траты использования; `400 promo-format`; `404 promo-unknown` (нет или выключен); `410 promo-expired`; `410 promo-exhausted`; `429 rate` |
+| `GET /health` | дополнительно `pay`, `pay_test` |
+
+Таблицы (миграция 3): `payments` (`inv_id` — он же InvId Robokassa, сумма в копейках, статус
+`pending/paid/canceled`, флаг `test`), `promo` (`max_uses`, `uses`, `expires_at`, `tag`,
+`disabled_at`), `promo_redemptions` (код + аккаунт, один раз). Ключей на аккаунт нет: оплаченное и
+погашенное переживает удаление аккаунта (платёж обезличивается, как покупка).
+
+**Тест и бой.** `ROBOKASSA_IS_TEST=true|false` выбирает пару паролей: `ROBOKASSA_TEST_PASSWORD_1/2`
+или `ROBOKASSA_PASSWORD_1/2`. В тесте в адрес оплаты добавляется `IsTest=1`, а уведомление
+принимается по одной подписи (пароль #2): `OpStateExt` в тесте не работает. В бою уведомление с
+`IsTest=1` ничего не выдаёт, платёж, созданный в другом режиме, тоже, а перед выдачей состояние
+перечитывается через `OpStateExt` (код 100). Сумма из уведомления (`149.000000` годится) обязана
+совпасть с суммой платежа. Чужой InvId получает `OK` (иначе Robokassa стучалась бы вечно), но
+ничего не выдаёт. Адреса можно подменить: `ROBOKASSA_PAY_URL`, `ROBOKASSA_SERVICE_URL` (тесты).
+
+ResultURL в кабинете Robokassa: `https://pozerkalam.space/api/v1/pay/robokassa/result`, метод POST.
+SuccessUrl2/FailUrl2 — `PLAY_URL` без query; Robokassa сама дописывает к ним `OutSum`, `InvId`,
+`SignatureValue`, `Shp_product` и пр. Цена и название — `PREMIUM_PRICE_KOPECKS` (14900),
+`PREMIUM_TITLE`.
+
+Промокоды: перебор ограничен — 10 попыток за 10 минут с адреса и 10 за час с аккаунта, неверные
+коды считаются.
+
+```bash
+pz-account promo add VK2026 --max 300 --until 2026-12-31 --tag vk   # --until — последний день включительно
+pz-account promo list                                                # код, метка, использовано/лимит, срок, состояние
+pz-account promo off VK2026
+pz-account stats                                                     # платежи и погашения по меткам
+```
+
 ## Регистрация приложений (один раз, руками)
 
 **VK ID** — https://id.vk.com/about/business (тот же кабинет, что для spark):
@@ -171,6 +213,7 @@ pz-account list --name Егор              # найти id аккаунта
 pz-account grant <id> course             # выдать курс навсегда (тестер, пилот автошколы)
 pz-account grant <id> course --days 30 --ref pilot-school-1
 pz-account revoke <id> course
+pz-account promo list                    # промокоды премиума (подробнее — «Премиум: оплата и промокоды»)
 ```
 
 Восстановление базы из копии:
@@ -186,7 +229,7 @@ systemctl start pozerkalam-account
 ## Проверки
 
 ```bash
-python3 -m unittest server/test_account.py     # сервис: 21 тест на заглушке провайдеров
+python3 -m unittest server/test_account.py     # сервис: тесты на заглушках провайдеров и Robokassa
 PW_DIR=/tmp/pw node tools/account-check.mjs    # игра: вход, гость, синк, пейволл (@acct-*, @an-*)
 PW_DIR=/tmp/pw node tools/gherkin-run.mjs      # правила пейволла (acct/paywall.feature)
 ```

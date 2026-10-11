@@ -375,34 +375,48 @@ function unitCheck() {
   g('пейволл и покупки');
   {
     /* состояние игрока подменяется на время группы и возвращается: набор гоняется в живой странице */
-    const acct0 = acct, pf0 = window.PAYWALL_FORCE, t = Math.floor(Date.now() / 1000);
+    const acct0 = acct, pf0 = window.PAYWALL_FORCE, po0 = window.premiumOn, t = Math.floor(Date.now() / 1000);
+    let prog0 = null; try { prog0 = localStorage.getItem(PROG_KEY); } catch (e) {}
     try {
       window.PAYWALL_FORCE = [19];
       acct = null;
-      ok('без покупки уровень курса закрыт', levelLocked(19) === true);
-      ok('соседние уровни вне курса открыты', levelLocked(18) === false && levelLocked(20) === false);
+      ok('без покупки уровень из списка гейта закрыт', levelLocked(19) === true);
+      ok('соседние уровни вне списка открыты', levelLocked(18) === false && levelLocked(20) === false);
       window.PAYWALL_FORCE = [0, 19];
       ok('первый уровень не закрывается, даже если он в списке', levelLocked(0) === false);
-      acct = { id: 'u', name: 'u', provider: 'vk', ent: [{ product: 'course', expires_at: null }] };
-      ok('бессрочная покупка открывает курс', entitled('course') && levelLocked(19) === false);
-      acct.ent = [{ product: 'course', expires_at: t + 60 }];
-      ok('покупка со сроком через минуту открывает', entitled('course') === true);
-      acct.ent = [{ product: 'course', expires_at: t - 1 }];
-      ok('покупка, истёкшая секунду назад, не открывает', entitled('course') === false && levelLocked(19) === true);
-      acct.ent = [{ product: 'pilot', expires_at: null }];
-      ok('другой продукт курс не открывает', entitled('course') === false);
+      acct = { id: 'u', name: 'u', provider: 'vk', ent: [{ product: 'premium', expires_at: null }] };
+      ok('бессрочный премиум открывает', entitled('premium') && levelLocked(19) === false);
+      acct.ent = [{ product: 'premium', expires_at: t + 60 }];
+      ok('премиум со сроком через минуту открывает', entitled('premium') === true);
+      acct.ent = [{ product: 'premium', expires_at: t - 1 }];
+      ok('премиум, истёкший секунду назад, не открывает', entitled('premium') === false && levelLocked(19) === true);
+      acct.ent = [{ product: 'course', expires_at: null }];
+      ok('другой продукт премиум не открывает', entitled('premium') === false);
       acct.ent = [];
-      ok('пустой список покупок — ничего не открыто', entitled('course') === false);
-      /* своя площадка игрока — его работа, её не закрывает и попавший в список номер */
+      ok('пустой список покупок — ничего не открыто', entitled('premium') === false);
       acct = null;
       LEVELS.push({ name: '★ проверка', custom: true });
       window.PAYWALL_FORCE = [19, LEVELS.length - 1];
       ok('своя площадка не закрывается, даже если её номер в списке', levelLocked(LEVELS.length - 1) === false && levelLocked(19) === true);
       LEVELS.pop();
       delete window.PAYWALL_FORCE;
-      ok('пока список платных пуст, закрытых уровней нет', LEVELS.every((l, i) => levelLocked(i) === false));
+      /* замок Премиума: на file:// и без флага его нет; включённый — граница между 10-м и 11-м уровнем */
+      ok('без включённой оплаты закрытых уровней нет', LEVELS.every((l, i) => levelLocked(i) === false));
+      window.premiumOn = () => true;
+      try { localStorage.setItem(PROG_KEY, '{}'); } catch (e) {}
+      ok('уровни 1–10 бесплатны', [0, 1, 6, 9].every((i) => levelLocked(i) === false));
+      ok('уровни 11–32 закрыты без премиума', [10, 13, 19, 26, LEVELS.length - 1].every((i) => levelLocked(i) === true));
+      acct = { id: 'u', name: 'u', provider: 'vk', ent: [{ product: 'premium', expires_at: null }] };
+      ok('с премиумом открыты все', LEVELS.every((l, i) => levelLocked(i) === false));
+      acct = null;
+      try { localStorage.setItem(PROG_KEY, JSON.stringify({ [LEVELS[10].name]: { n: 1, clean: 1, best: 30 } })); } catch (e) {}
+      ok('прошедший уровень после 10-го до замка сохраняет доступ', premiumGrand() === true && levelLocked(25) === false);
+      try { localStorage.setItem(PROG_KEY, JSON.stringify({ [LEVELS[9].name]: { n: 3, clean: 1, best: 30 } })); } catch (e) {}
+      ok('прогресс только по бесплатным уровням доступ не даёт', premiumGrand() === false && levelLocked(10) === true);
+      ok('путь новичка — только бесплатные уровни', noviceIdx().length === 5 && noviceIdx().every((i) => i < PAYWALL.from));
     } finally {
-      acct = acct0; window.PAYWALL_FORCE = pf0;
+      acct = acct0; window.PAYWALL_FORCE = pf0; window.premiumOn = po0;
+      try { if (prog0 === null) localStorage.removeItem(PROG_KEY); else localStorage.setItem(PROG_KEY, prog0); } catch (e) {}
       if (LEVELS.length && LEVELS[LEVELS.length - 1].name === '★ проверка') LEVELS.pop();
     }
   }
