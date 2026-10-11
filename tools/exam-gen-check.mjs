@@ -47,7 +47,8 @@ const drive = (list, opts) => page.evaluate(([list, opts]) => list.map((s) => { 
   return { s, ok: r.done && !r.failed && r.score === 0 && !r.hits, r: (r.done ? '' : 'не доехал ') + 'этап ' + r.stage + '/' + r.stages + ' [' + r.log.join(' ') + ']', log: r.log }; }), [list, opts]);
 
 /* 1. Маршруты разные: 30 зёрен — не меньше 20 разных цепочек команд, каждый маршрут кончается финишем у
-      тротуара и укладывается в 5–12 этапов; на всех вместе есть кольцо, разворот с путей и эстакада */
+      тротуара и укладывается в 5–12 этапов; на всех вместе есть кольцо и разворот с путей. Эстакады нет ни в
+      одном: «трогание на подъёме» на автомате не сдают (владелец, 11.10.2026) */
 {
   const r = await page.evaluate((list) => {
     const sig = new Set(), bad = [], kinds = { ring: 0, tram: 0, ramp: 0 };
@@ -58,12 +59,12 @@ const drive = (list, opts) => page.evaluate(([list, opts]) => list.map((s) => { 
       if (rt.length < 5 || rt.length > 12) bad.push(s + ': этапов ' + rt.length);
       if (rt.some((x) => x.node && cityGraph().V[x.node].round)) kinds.ring++;
       if (rt.some((x) => x.turn === 'U' && !x.node)) kinds.tram++;
-      if (rt.some((x) => x.ramp)) kinds.ramp++;
+      if (rt.some((x) => x.ramp) || level.ramps.length) kinds.ramp++;
     }
     return { n: sig.size, bad, kinds };
   }, seeds(101, 30));
-  check('маршрут экзамена каждый раз новый: 30 зёрен — разные цепочки команд, финиш, 5–12 этапов, кольцо, разворот и эстакада встречаются (@exam-gen-variety)',
-    r.n >= 20 && !r.bad.length && r.kinds.ring > 0 && r.kinds.tram > 0 && r.kinds.ramp > 0,
+  check('маршрут экзамена каждый раз новый: 30 зёрен — разные цепочки команд, финиш, 5–12 этапов, кольцо и разворот встречаются, эстакады нет (@exam-gen-variety)',
+    r.n >= 20 && !r.bad.length && r.kinds.ring > 0 && r.kinds.tram > 0 && r.kinds.ramp === 0,
     r.n + ' разных из 30; кольцо ' + r.kinds.ring + ', разворот ' + r.kinds.tram + ', эстакада ' + r.kinds.ramp + (r.bad.length ? '; ' + r.bad.slice(0, 4).join('; ') : ''));
 }
 

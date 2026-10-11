@@ -69,6 +69,8 @@ await page.evaluate((fault) => {
 
 /* уровни с эстакадой — по признаку, не по номерам */
 const RL = await page.evaluate(() => LEVELS.map((d, i) => i).filter((i) => !LEVELS[i].custom && (loadLevel(i), level.ramps.length > 0)));
+/* эстакада — только в уроке 20: с экзамена она ушла 11.10.2026 (на автомате «трогание на подъёме» не сдают) */
+const RN = 1;
 
 /* камера сзади на подходе: точки на настиле и на земле сбоку от эстакады на той же дальности */
 const shot = async (li, setup) => page.evaluate(([li, setup]) => {
@@ -115,7 +117,7 @@ const shot = async (li, setup) => page.evaluate(([li, setup]) => {
 /* ---- настил отличается от земли и несёт узор ---- */
 const deck = [];
 for (const li of RL) deck.push(await shot(li, { kind: 'deck', back: 15, lat: 0 }));
-const dOk = deck.length >= 2 && deck.every((r) => Math.abs(r.deck.m - r.road.m) >= 18 && r.deck.sd >= 4);
+const dOk = deck.length >= RN && deck.every((r) => Math.abs(r.deck.m - r.road.m) >= 18 && r.deck.sd >= 4);
 check('настил эстакады отличается от дороги перед подъёмом (≥ 18 уровней яркости) и несёт узор — не плоская заливка (@render-ramp-deck)', dOk, JSON.stringify(deck));
 
 /* ---- бортики по всей длине каждого бока, высота — настил + бортик ---- */
@@ -150,12 +152,12 @@ const sides = await page.evaluate((RL) => {
   return out;
 }, RL);
 check('вдоль каждого бока каждой зоны эстакады — бортик без разрывов, высота у концов = настил по уклону + бортик (@render-ramp-sides)',
-  sides.zones >= 6 && sides.sides === sides.zones * 2 && !sides.bad.length, JSON.stringify(sides));
+  sides.zones >= 3 * RN && sides.sides === sides.zones * 2 && !sides.bad.length, JSON.stringify(sides));
 
 /* ---- стоп-линия на подъёме поверх настила ---- */
 const marks = [];
 for (const li of RL) marks.push(await shot(li, { kind: 'mark', back: 9, lat: 0 }));
-const mOk = marks.length >= 2 && marks.every((r) => r.line && r.line.m - r.deckNear.m >= 40);
+const mOk = marks.length >= RN && marks.every((r) => r.line && r.line.m - r.deckNear.m >= 40);
 check('стоп-линия на подъёме видна поверх настила — светлее настила рядом на ≥ 40 уровней (@render-ramp-marks)', mOk, JSON.stringify(marks));
 
 check('страница без исключений', !errors.length, errors.slice(0, 3).join(' | '));

@@ -6967,7 +6967,7 @@ const LEVELS = [
     'Снимай ручник не до газа, а под газом: машина уже тянет вперёд и не откатится.',
     'Откат виден по капоту: если ориентир в лобовом пополз вверх — ты катишься назад.',
   ],
-  transfer:'На реальном экзамене откат больше 0,3 м — пересдача. Ручник — не опция, а ритуал: тормоз → ручник → газ → снять.',
+  transfer:'На автомате это упражнение не сдают, но в горке в городе ритуал тот же: тормоз → ручник → газ → снять — и машина не покатится назад.',
   build(){
     const obs=[], dec=[];
     for(const s of [-1,1]){
@@ -7945,7 +7945,7 @@ const LEVELS = [
   ] },
 
 { name:'32 · Экзамен: маршрут с инспектором', traffic:'city',
-  task:'Экзаменационная поездка по городу: команды даёт инспектор. Маршрут каждый раз новый — повороты, кольцо, разворот с путей, эстакада и остановки у тротуара. Допустимо до 6 штрафных баллов; аварийная ошибка — незачёт сразу.',
+  task:'Экзаменационная поездка по городу: команды даёт инспектор. Маршрут каждый раз новый — повороты, кольцо, разворот с путей и остановки у тротуара. Допустимо до 6 штрафных баллов; аварийная ошибка — незачёт сразу.',
   tip:'Режим выбирается в разделе «Экзамен» и в брифинге. Тренировочный: фиолетовая лента ведёт по маршруту, карта в углу, ошибка разбирается на месте. Настоящий: только команды инспектора, без ленты и датчиков, грубая ошибка валит попытку.',
   steps:[
     'Маршрут каждый раз новый — заучить его не получится.',
@@ -7982,13 +7982,8 @@ const LEVELS = [
     b.obs.push(sign('circle', 62,-8.6, rad(-90)));
     b.obs.push(sign('yield',  59,-8.6, rad(-90)));
     b.obs.push(sign('yield', -73.6,-11.0, rad(180)));
-    /* эстакада на Восточной между кольцом и Садовой: подъём с обеих сторон, настил посередине —
-       маршрут может идти по ней и на север, и на юг */
-    const ramps=[ rampZone(78,-52.8,0,6.6,5.5,0.17),
-                  deckZone(78,-47.3,0,6.6,4.6,0.935),
-                  rampZone(78,-37.2,rad(180),6.6,5.5,0.17) ];
-    b.city.stoplines.push(stoplineDec(b.dec, 78,-50.2, 0, 6.6));
-    b.city.stoplines.push(stoplineDec(b.dec, 78,-39.8, rad(180), 6.6));
+    /* эстакады на экзамене нет: «остановку и трогание на подъёме» на автомате не сдают (владелец, 11.10.2026),
+       а в тренажёре только автомат. Упражнение осталось уроком 20 */
     /* встречка объявлена по НАПРАВЛЕНИЮ: после разворота та же половина дороги своя */
     b.city.oncoming.push({u:-4.9, v:-88, yaw:0, w:9.8, l:26});
     b.city.oncoming.push({u:-4.9, v:-58, yaw:0, w:9.8, l:20});
@@ -8012,7 +8007,7 @@ const LEVELS = [
     /* карманы у тротуара — не декаль мира: все шесть стояли голубым пунктиром в обоих режимах, и те, которых
        нет в маршруте. Названный командой карман рисует зона манёвра (drawExamZone) — там, где его засчитывает этап */
     for(const k in EXAM_POCK) for(const p of EXAM_POCK[k]) b.city.pockets.push(p);
-    return { obs:b.obs, dec:b.dec, city:b.city, ramps,
+    return { obs:b.obs, dec:b.dec, city:b.city,
              start:{u:8.15,v:-100,th:0}, goal:null }; }
   }
 ];
@@ -8950,7 +8945,7 @@ function examPenalty(code){
 }
 /* каждой ошибке — уровень, где её отрабатывают: протокол даёт ссылку «отработать» */
 const EXAM_TRAIN={rollback:19, 'handbrake-drive':19, collision:21, kerb:21, speed:27,
-  'no-blinker':22, oncoming:23, stopline:19, zebra:24, yield:25, 'collision-actor':25,
+  'no-blinker':22, oncoming:23, stopline:26, zebra:24, yield:25, 'collision-actor':25,
   redlight:26, 'stop-sign':26, 'solid-line':27, 'lane-blinker':27, 'tram-turn':28, ped:24, 'turn-pos':22, 'stop-place':21};
 /* первый проигрышный конец в игре: физика замирает на game.done, как при победе,
    а выход из замершего состояния — только через экран результата (ловушка resume) */
@@ -9818,22 +9813,6 @@ function stageStopGo(id, deg, d){
       if(game.t-t0<EXAM_HOLD) return false;
       was=true; stopPlaceJudge(); return false; }};
 }
-/* эстакада: бампер у стоп-линии на подъёме (не дальше 3,5 м и не за ней), полная остановка, трогание.
-   Откат на трогании судит examTick по car.roll */
-function stageRamp(sl){
-  const f=fuv(sl.yaw||0), r=ruv(sl.yaw||0);
-  let t0=-1, was=false;
-  /* точка этапа — в своей полосе перед линией: линия во всю ширину дороги, её центр лежит на оси */
-  return {cmd:'Эстакада: остановись у стоп-линии на подъёме и трогайся без отката', short:'стоп на подъёме',
-    at:{u:sl.u-f.u*2+r.u*LANE_W/2, v:sl.v-f.v*2+r.v*LANE_W/2}, turn:'stop', ramp:sl, _outYaw:sl.yaw||0,
-    done:s=>{
-      if(was) return s.vel>0.4;
-      const front=(s.u-sl.u)*f.u+(s.v-sl.v)*f.v+HALF_L;
-      if(!(front>-3.5 && front<0.3 && Math.abs(s.vel)<0.1)){ t0=-1; return false; }
-      if(t0<0) t0=game.t;
-      if(game.t-t0<EXAM_HOLD) return false;
-      was=true; return false; }};
-}
 /* почему здесь стоять нельзя (п. 12.4): у перекрёстка, у перехода, у остановки. Одно правило на судью
    (stopPlaceJudge) и на генератор маршрута, который ищет законное место заранее — pad — запас генератора */
 function stopWhy(b, th, pad){
@@ -9938,16 +9917,6 @@ function examGenRoute(seed, from, opts){
     if(id[0]!=='@') plan.push({id, out:aOut, si, pre:st.length});
     after=null;
     const e=aOut.e, nx=edgeOther(e,id), dir=aOut.yaw;
-    /* эстакада: стоп-линия на подъёме по ходу движения — этап на каждом проезде, линия обязывает всегда.
-       Остановка у тротуара на этой улице — только за линией: этапы идут по ходу движения */
-    let past=0;
-    for(const sl of ((level.city||{}).stoplines||[])){
-      if(sl.light || sl.stop || !(level.ramps||[]).length) continue;
-      if(Math.abs(angNorm((sl.yaw||0)-dir))>0.5) continue;
-      const A=g.V[id], B=g.V[nx], du=B.u-A.u, dv=B.v-A.v, L2=du*du+dv*dv||1;
-      const t=((sl.u-A.u)*du+(sl.v-A.v)*dv)/L2;
-      if(t>0 && t<1 && Math.hypot(sl.u-(A.u+du*t), sl.v-(A.v+dv*t))<e.hw){ st.push(stageRamp(sl)); past=Math.max(past, t*Math.sqrt(L2)+14); }
-    }
     /* разворот с путей: сайт лежит на этой улице по ходу — машина вернётся к узлу, из которого выехала */
     if(!used.tram && e.tram && need>0){
       const A=g.V[id], B=g.V[nx];
@@ -9956,9 +9925,9 @@ function examGenRoute(seed, from, opts){
       if(site && prRand()<0.6){ st.push(stageTramU(site)); used.tram=true; after='tram'; inYaw=angNorm(dir+Math.PI); continue; }
     }
     if(!used.stop && need>0 && need<=2){
-      const d=stopSpot(id, aOut, nx, 35, past); if(d!==null){ st.push(stageStopGo(id, deg(dir), d)); used.stop=true; }
+      const d=stopSpot(id, aOut, nx, 35, 0); if(d!==null){ st.push(stageStopGo(id, deg(dir), d)); used.stop=true; }
     }
-    if(need<=0){ const d=stopSpot(id, aOut, nx, 10, past); if(d!==null){ st.push(stageStop(id, deg(dir), d)); break; } }
+    if(need<=0){ const d=stopSpot(id, aOut, nx, 10, 0); if(d!==null){ st.push(stageStop(id, deg(dir), d)); break; } }
     id=nx; inYaw=dir;
   }
   if(!st.length || st[st.length-1].turn!=='park') return null;
@@ -14274,7 +14243,7 @@ const LEVEL_TABS=[['yard','Двор'],['drill','Габариты'],['pad','Пл�
 const LEVEL_TAB_NOTE={
   yard:'Параллельная парковка, карманы, развороты и выезды во дворе.',
   drill:'Показание нужной стороны скрыто: остановись, где считаешь нужным, — и увидишь ошибку в сантиметрах. Попытка одна, повтор — R.',
-  pad:'Упражнения площадки экзамена: эстакада, задний ход по коридору, остановка у тротуара.',
+  pad:'Упражнения площадки: эстакада, задний ход по коридору, остановка у тротуара.',
   city:'Грубая ошибка — столкновение, непропуск, красный — отменяет попытку, как на экзамене.',
   own:'Твои площадки из редактора, до пяти.' };
 function levelTab(i){
@@ -15602,8 +15571,9 @@ function examRuns(){
           train:(t.passed!==undefined ? t.passed : (p.passed||0)),
           bestScore:(r.bestScore===undefined?null:r.bestScore)};
 }
-/* готовность = чистые прохождения 12 экзаменационных манёвров-уровней */
-const EXAM_SET=[0,1,2,7,10,19,20,21,22,23,24,25,26,27,28,29,30];
+/* готовность = чистые прохождения уровней, чьи манёвры встречаются на экзамене. Эстакады (19) здесь нет:
+   «трогание на подъёме» на автомате не сдают, а в тренажёре только автомат (владелец, 11.10.2026) */
+const EXAM_SET=[0,1,2,7,10,20,21,22,23,24,25,26,27,28,29,30];
 function examReadiness(){
   let done=0; const weak=[];
   for(const i of EXAM_SET){
