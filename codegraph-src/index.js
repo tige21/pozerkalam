@@ -10452,23 +10452,37 @@ function predict(){
 }
 
 /* ---------- звук ----------
-   Весь звук — синтез WebAudio, без записей: игра — один файл, и запись мотора весила бы больше всего
-   остального звука. Граф: источники → шины (машина изнутри, мир снаружи, интерфейс) → мастер →
+   Звук — записи CC0 (assets/src/audio, журнал SOURCES.md), выбранные владельцем на прослушке 11.10.2026:
+   мотор двумя петлями одной машины (холостые и нагрузка) с высотой по оборотам автомата, шины, фон города,
+   голоса потока, трамвай; щелчки реле, рычага, селектора и ручника, удар, бордюр, гудок, звонок, стык,
+   проезд машины мимо. Файлы лежат рядом со страницей (audio/, собирает tools/audio/sfx.mjs) и качаются
+   только при первом включении звука: звук по умолчанию выключен, и тот, кто его не включал, не должен
+   качать ни байта. Пока записи грузятся и когда их нет (file://, 404, ошибка декодирования) звучит прежний
+   синтез WebAudio. Граф один: источники → шины (машина изнутри, мир снаружи, интерфейс) → мастер →
    компрессор → выход. Шина «снаружи» идёт через ФНЧ, который в салоне закрывается до 900 Гц: стекло и
    обшивка срезают верх, и город из кабины слышен глухо. Мастер гаснет без звука, на паузе, в фоне и на
    рекламе (требование площадок); в фоне контекст ещё и усыпляется.
-   До 11.10.2026 звук был один пилообразный осциллятор с высотой от скорости, писки и удар — без шин,
-   ветра, реле поворотника, потока и трамвая; владелец: «звуки города и машины очень плохие» */
+   До 11.10.2026 звук был один пилообразный осциллятор («звуки очень плохие»), затем синтез — его владелец
+   отверг на прослушке: «давай возьмём готовые звуки, как делали с моделями автомобилей» */
+/* sfx:begin — генерат tools/audio/sfx.mjs по assets/src/audio, руками не править */
+const SFX_MAN={"fp":"40640c26631dae5c","mk":0.050839,"files":{"loops":"audio/loops.fb639e52.mp3","shots":"audio/shots.109d3579.mp3"},"loops":{"idle":{"a":0.303991,"b":2.953719,"rpm":840},"load":{"a":3.313719,"b":4.858798,"rpm":1480},"tyres":{"a":5.218798,"b":10.718798},"bed":{"a":11.078798,"b":20.078798},"flow":{"a":20.438798,"b":21.625057},"tram":{"a":21.985057,"b":26.585057}},"shots":{"tick":{"a":0.233991,"d":0.1},"tock":{"a":0.413991,"d":0.1},"stalk":{"a":0.593991,"d":0.14},"sel":{"a":0.813991,"d":0.16},"handOn":{"a":1.053991,"d":0.58},"handOff":{"a":1.713991,"d":0.36},"hit":{"a":2.153991,"d":0.539773},"kerb":{"a":2.773764,"d":0.46},"horn":{"a":3.313764,"d":0.75},"bell":{"a":4.143764,"d":1.56},"clack":{"a":5.783764,"d":0.85},"pass":{"a":6.713764,"d":5.2,"p":2.55}}};
+/* sfx:end */
 let AC=null, SND=null, beepT=0;
 /* обороты на км/ч по ступеням четырёхступенчатого автомата: на первой 20 км/ч — 2400 об/мин */
 const ENG={idle:750, red:5800, k:[0, 120, 66, 44, 32], kR:125};
 const SND_FLOW=4, SND_REF=6, SND_FAR=70;
+/* проезд мимо: ближе PASS_D к слушателю и не тише PASS_V — иначе машину слышно только петлёй потока */
+const PASS_D=10, PASS_V=3, PASS_MAX=2;
 const AU={on:false, rpm:750, load:0, v:0, cabin:false, scrape:0, bed:0, flow:[], tram:null, lu:0, lv:0};
 /* кандидаты в голоса потока — из пула: по объекту на машину каждый кадр — работа сборщику мусора */
-const AU_POOL=Array.from({length:48}, ()=>({d:0, sp:0, pan:0})), AU_TRAM={d:0, sp:0, pan:0};
+const AU_POOL=Array.from({length:48}, ()=>({d:0, sp:0, pan:0, a:null})), AU_TRAM={d:0, sp:0, pan:0};
+/* st: 0 — не грузили, 1 — грузим, 2 — готовы, −1 — отказ (играет синтез) */
+const SFX={st:0, B:null};
 function sndGain(ctx, g){ const x=ctx.createGain(); x.gain.value=g||0; return x; }
 function sndFilt(ctx, type, f, q){ const b=ctx.createBiquadFilter(); b.type=type; b.frequency.value=f; if(q!==undefined) b.Q.value=q; return b; }
 function sndLoop(ctx, buf, off){ const s=ctx.createBufferSource(); s.buffer=buf; s.loop=true; s.start(0, off); return s; }
+/* каждый непрерывный источник графа — в список: при смене синтеза на записи старые глушатся по нему */
+function sndSrc(S, s){ S.src.push(s); return s; }
 /* шум детерминированный: запись для прослушки и проверка гейта повторяются байт в байт */
 function sndNoise(ctx){
   const n=ctx.sampleRate*2, b=ctx.createBuffer(1, n, ctx.sampleRate), d=b.getChannelData(0);
@@ -10483,9 +10497,59 @@ function sndEngineWave(ctx){
   return ctx.createPeriodicWave(re, im);
 }
 function sndPanner(ctx){ return ctx.createStereoPanner ? ctx.createStereoPanner() : null; }
-function audioBuild(ctx){
-  const S={ctx, nb:sndNoise(ctx), e:{rpm:ENG.idle, g:1, thr:0, acc:0, v:0}, lamp:false, trS:0, trK:0, trOn:false, bellT:-99};
-  const G=g=>sndGain(ctx, g), F=(t,f,q)=>sndFilt(ctx, t, f, q), wave=sndEngineWave(ctx);
+/* MP3 начинается с задержки кодера, и не каждый декодер её срезает: метка в начале файла показывает,
+   на сколько сдвинулись все места манифеста */
+function sfxShift(buf){
+  const d=buf.getChannelData(0), n=Math.min(d.length, Math.round(buf.sampleRate*0.4));
+  for(let i=0;i<n;i++) if(Math.abs(d[i])>0.3) return i/buf.sampleRate-SFX_MAN.mk;
+  return 0;
+}
+function sfxLoad(){
+  if(SFX.st || !AC) return;
+  if(!SFX_MAN){ SFX.st=-1; console.warn('[audio] манифеста записей нет — играет синтез'); return; }
+  /* из file:// fetch не читает соседние файлы, а Chrome ещё и пишет об этом ошибку — синтез без попытки */
+  if(location.protocol==='file:'){ SFX.st=-1; console.warn('[audio] из file:// записи недоступны — играет синтез'); return; }
+  SFX.st=1;
+  const ks=Object.keys(SFX_MAN.files);
+  Promise.all(ks.map(k=>fetch(SFX_MAN.files[k]).then(r=>{ if(!r.ok) throw new Error(r.status+' '+SFX_MAN.files[k]); return r.arrayBuffer(); })
+    .then(b=>AC.decodeAudioData(b))))
+    .then(bufs=>{
+      const B={man:SFX_MAN, buf:{}, sh:{}};
+      ks.forEach((k, i)=>{ B.buf[k]=bufs[i]; B.sh[k]=sfxShift(bufs[i]); });
+      SFX.B=B; SFX.st=2;
+      if(SND && !SND.B) sndSwap(B);
+    }, e=>{ SFX.st=-1; console.warn('[audio] записи не загрузились — играет синтез: '+((e&&e.message)||e)); });
+}
+/* записи пришли, когда синтез уже звучит: новый граф встаёт рядом, старый гаснет за 0,3 с и глохнет */
+function sndSwap(B){
+  const old=SND, t=AC.currentTime, S=audioBuild(AC, B);
+  S.e=old.e; S.lamp=old.lamp; S.trS=old.trS; S.trK=old.trK; S.trOn=old.trOn; S.bellT=old.bellT;
+  old.master.gain.cancelScheduledValues(t); old.master.gain._v=0; old.master.gain.setTargetAtTime(0, t, 0.08);
+  for(const s of old.src){ try{ s.stop(t+0.6); }catch(e){} }
+  setTimeout(()=>{ try{ old.comp.disconnect(); }catch(e){} }, 1200);
+  SND=S;
+}
+/* петля из файла петель: окно [a, b] записано с запасом, старт — в своей доле окна, чтобы голоса
+   из одной записи не звучали в унисон */
+function sfxLoopSrc(S, id, part){
+  const B=S.B, L=B.man.loops[id], sh=B.sh.loops, s=S.ctx.createBufferSource();
+  s.buffer=B.buf.loops; s.loop=true; s.loopStart=L.a+sh; s.loopEnd=L.b+sh;
+  s.start(0, L.a+sh+(part||0)*(L.b-L.a));
+  return sndSrc(S, s);
+}
+/* разовый звук из файла разовых: off — с какого места записи, dur — сколько играть (с отпуском 40 мс) */
+function sfxShot(S, id, t, bus, vol, rate, off, dur){
+  const B=S.B, x=B.man.shots[id], c=S.ctx, s=c.createBufferSource(), g=c.createGain();
+  const o=off||0, d=Math.max(0.01, Math.min(x.d-o, dur||x.d));
+  s.buffer=B.buf.shots; if(rate) s.playbackRate.value=rate;
+  g.gain.setValueAtTime(vol, t);
+  if(dur && dur<x.d-o){ g.gain.setValueAtTime(vol, t+Math.max(0, d-0.04)); g.gain.linearRampToValueAtTime(0, t+d); }
+  s.connect(g); g.connect(bus); s.start(t, x.a+B.sh.shots+o, d);
+  return s;
+}
+function audioBuild(ctx, B){
+  const S={ctx, B:B||null, src:[], nb:sndNoise(ctx), e:{rpm:ENG.idle, g:1, thr:0, acc:0, v:0}, lamp:false, trS:0, trK:0, trOn:false, bellT:-99, kerbT:-1, passN:0};
+  const G=g=>sndGain(ctx, g), F=(t,f,q)=>sndFilt(ctx, t, f, q);
   S.master=G(0);
   S.comp=ctx.createDynamicsCompressor();
   S.comp.threshold.value=-16; S.comp.knee.value=12; S.comp.ratio.value=5; S.comp.attack.value=0.003; S.comp.release.value=0.25;
@@ -10494,41 +10558,65 @@ function audioBuild(ctx){
   S.cab=F('lowpass', 16000, 0.5); S.cab.connect(S.master);
   S.out=G(1); S.out.connect(S.cab);
   S.ui=G(1); S.ui.connect(S.master);
+  /* ветер — шум без верха и с записями, и в синтезе: своей записи нет, на 19 км/ч он едва слышен */
+  S.wiLp=F('lowpass', 380, 0.7); S.wiG=G(0);
+  sndSrc(S, sndLoop(ctx, S.nb, 0.9)).connect(S.wiLp); S.wiLp.connect(S.wiG); S.wiG.connect(S.out);
+  if(S.B) sndBuildRec(S); else sndBuildSyn(S);
+  return S;
+}
+function sndBuildRec(S){
+  const ctx=S.ctx, G=g=>sndGain(ctx, g), F=(t,f,q)=>sndFilt(ctx, t, f, q);
+  /* мотор: холостые и нагрузка одной машины, доля нагрузки — по оборотам и газу; в салоне — за моторным щитом */
+  S.eI=sfxLoopSrc(S, 'idle', 0); S.eL=sfxLoopSrc(S, 'load', 0.3);
+  S.eIg=G(1); S.eLg=G(0); S.eLp=F('lowpass', 9000, 0.5); S.eGain=G(0);
+  S.eI.connect(S.eIg); S.eL.connect(S.eLg); S.eIg.connect(S.eLp); S.eLg.connect(S.eLp); S.eLp.connect(S.eGain); S.eGain.connect(S.inn);
+  S.tyS=sfxLoopSrc(S, 'tyres', 0); S.tyG=G(0); S.tyS.connect(S.tyG); S.tyG.connect(S.out);
+  S.bedS=sfxLoopSrc(S, 'bed', 0); S.bedG=G(0); S.bedS.connect(S.bedG); S.bedG.connect(S.out);
+  /* поток: четыре голоса из записи проезда, каждый со своим сдвигом и высотой — иначе хор */
+  S.flow=[];
+  for(let i=0;i<SND_FLOW;i++){
+    const s=sfxLoopSrc(S, 'flow', i*0.27), lp=F('lowpass', 6000, 0.6), g=G(0), p=sndPanner(ctx);
+    s.connect(lp); lp.connect(g);
+    if(p){ g.connect(p); p.connect(S.out); } else g.connect(S.out);
+    S.flow.push({s, lp, g, p, k:[1, 0.94, 1.07, 0.9][i]});
+  }
+  S.trRun=sfxLoopSrc(S, 'tram', 0); S.trLp=F('lowpass', 9000, 0.6); S.trG=G(0); S.trP=sndPanner(ctx);
+  S.trRun.connect(S.trLp); S.trLp.connect(S.trG);
+  if(S.trP){ S.trG.connect(S.trP); S.trP.connect(S.out); } else S.trG.connect(S.out);
+}
+function sndBuildSyn(S){
+  const ctx=S.ctx, G=g=>sndGain(ctx, g), F=(t,f,q)=>sndFilt(ctx, t, f, q), wave=sndEngineWave(ctx);
   /* мотор: две слегка расстроенные волны дают биение холостых, полпорядка — гул коленвала */
-  const osc=(w, f)=>{ const o=ctx.createOscillator(); if(typeof w==='string') o.type=w; else o.setPeriodicWave(w); o.frequency.value=f; return o; };
+  const osc=(w, f)=>{ const o=ctx.createOscillator(); if(typeof w==='string') o.type=w; else o.setPeriodicWave(w); o.frequency.value=f; return sndSrc(S, o); };
   S.eo1=osc(wave, 25); S.eo2=osc(wave, 25.3); S.eSub=osc('sine', 12.5);
   S.eMix=G(1); S.eo2g=G(0.45); S.eSubG=G(0.55); S.eLp=F('lowpass', 400, 0.9); S.eGain=G(0);
   S.eo1.connect(S.eMix); S.eo2.connect(S.eo2g); S.eo2g.connect(S.eMix); S.eSub.connect(S.eSubG); S.eSubG.connect(S.eMix);
   S.eMix.connect(S.eLp); S.eLp.connect(S.eGain); S.eGain.connect(S.inn);
   /* впуск — шум, полоса за оборотами, громкость за газом: под нагрузкой мотор «дышит» */
   S.inBp=F('bandpass', 300, 1.2); S.inG=G(0);
-  sndLoop(ctx, S.nb, 0.1).connect(S.inBp); S.inBp.connect(S.inG); S.inG.connect(S.eLp);
+  sndSrc(S, sndLoop(ctx, S.nb, 0.1)).connect(S.inBp); S.inBp.connect(S.inG); S.inG.connect(S.eLp);
   S.tyBp=F('bandpass', 500, 0.8); S.tyG=G(0);
-  sndLoop(ctx, S.nb, 0.5).connect(S.tyBp); S.tyBp.connect(S.tyG); S.tyG.connect(S.out);
-  S.wiLp=F('lowpass', 380, 0.7); S.wiG=G(0);
-  sndLoop(ctx, S.nb, 0.9).connect(S.wiLp); S.wiLp.connect(S.wiG); S.wiG.connect(S.out);
+  sndSrc(S, sndLoop(ctx, S.nb, 0.5)).connect(S.tyBp); S.tyBp.connect(S.tyG); S.tyG.connect(S.out);
   S.scBp=F('bandpass', 1600, 2.5); S.scG=G(0);
-  sndLoop(ctx, S.nb, 1.3).connect(S.scBp); S.scBp.connect(S.scG); S.scG.connect(S.inn);
+  sndSrc(S, sndLoop(ctx, S.nb, 1.3)).connect(S.scBp); S.scBp.connect(S.scG); S.scG.connect(S.inn);
   S.bedLp=F('lowpass', 240, 0.6); S.bedG=G(0);
-  sndLoop(ctx, S.nb, 1.7).connect(S.bedLp); S.bedLp.connect(S.bedG); S.bedG.connect(S.out);
+  sndSrc(S, sndLoop(ctx, S.nb, 1.7)).connect(S.bedLp); S.bedLp.connect(S.bedG); S.bedG.connect(S.out);
   /* поток: четыре голоса на ближайшие машины — мотор и шины, панорама и затухание по расстоянию */
   S.flow=[];
   for(let i=0;i<SND_FLOW;i++){
     const o=osc(wave, 30), og=G(0.5), nb=F('bandpass', 600, 0.9), lp=F('lowpass', 500, 0.7), g=G(0), p=sndPanner(ctx);
-    o.connect(og); og.connect(lp); sndLoop(ctx, S.nb, 0.23+i*0.37).connect(nb); nb.connect(lp); lp.connect(g);
+    o.connect(og); og.connect(lp); sndSrc(S, sndLoop(ctx, S.nb, 0.23+i*0.37)).connect(nb); nb.connect(lp); lp.connect(g);
     if(p){ g.connect(p); p.connect(S.out); } else g.connect(S.out);
-    o.start(0);
-    S.flow.push({o, lp, g, p, a:null});
+    S.flow.push({o, lp, g, p});
   }
   /* трамвай: низкий гул тележек, вой тягового мотора по скорости, гудение преобразователя на стоянке */
   S.trLp=F('lowpass', 130, 0.8); S.trM=osc('sawtooth', 80); S.trMbp=F('bandpass', 320, 4); S.trMg=G(0);
   S.trHum=osc('sine', 100); S.trHumG=G(0.06); S.trG=G(0); S.trP=sndPanner(ctx);
-  sndLoop(ctx, S.nb, 0.61).connect(S.trLp); S.trLp.connect(S.trG);
+  sndSrc(S, sndLoop(ctx, S.nb, 0.61)).connect(S.trLp); S.trLp.connect(S.trG);
   S.trM.connect(S.trMbp); S.trMbp.connect(S.trMg); S.trMg.connect(S.trG);
   S.trHum.connect(S.trHumG); S.trHumG.connect(S.trG);
   if(S.trP){ S.trG.connect(S.trP); S.trP.connect(S.out); } else S.trG.connect(S.out);
   for(const o of [S.eo1, S.eo2, S.eSub, S.trM, S.trHum]) o.start(0);
-  return S;
 }
 /* параметр двигается плавно и только когда значение заметно сменилось: setTargetAtTime на каждом
    кадре копил бы события в расписании десятков параметров */
@@ -10557,10 +10645,53 @@ function rpmStep(e, kmh, drive, thr, acc, dt){
   e.rpm += (target-e.rpm)*Math.min(1, dt/tau);
   return e.rpm;
 }
+/* высота записи мотора: обороты к оборотам записи, в пределах, где запись ещё звучит мотором, а не
+   «бурундуком» или гулом */
+function sfxRate(rpm, rec){ return clamp(rpm/rec, 0.7, 1.9); }
 function audioUpdate(S, st, t){
   sndSet(S.master.gain, st.on ? 0.8 : 0, t, 0.05);
   sndSet(S.cab.frequency, st.cabin ? 900 : 16000, t, 0.15);
   sndSet(S.out.gain, st.cabin ? 0.8 : 1, t, 0.15);
+  const vk=Math.min(1, st.v/16);
+  sndSet(S.wiG.gain, 0.2*vk*vk, t, 0.2);
+  if(S.B) audioUpdateRec(S, st, t, vk); else audioUpdateSyn(S, st, t, vk);
+}
+function audioUpdateRec(S, st, t, vk){
+  const M=S.B.man.loops, L=st.load, r=clamp((st.rpm-ENG.idle)/1500, 0, 1);
+  /* доля записи «под нагрузкой»: газ слышен сразу, обороты без газа (накат на второй) — наполовину */
+  const w=clamp(0.6*L+0.55*clamp((st.rpm-900)/900, 0, 1), 0, 1);
+  sndSet(S.eI.playbackRate, sfxRate(st.rpm, M.idle.rpm), t, 0.05);
+  sndSet(S.eL.playbackRate, sfxRate(st.rpm, M.load.rpm), t, 0.05);
+  sndSet(S.eIg.gain, Math.cos(w*Math.PI/2), t, 0.08);
+  sndSet(S.eLg.gain, 1.15*Math.sin(w*Math.PI/2), t, 0.08);
+  sndSet(S.eLp.frequency, st.cabin ? 1500+L*1000 : 9000, t, 0.15);
+  sndSet(S.eGain.gain, (st.cabin ? 0.3 : 0.26)*(0.8+0.25*L+0.2*r), t, 0.07);
+  sndSet(S.tyS.playbackRate, 0.85+0.5*vk, t, 0.2);
+  sndSet(S.tyG.gain, 0.65*Math.pow(vk, 1.1), t, 0.15);
+  sndSet(S.bedG.gain, st.bed*2.5, t, 0.8);
+  /* бордюр: запись трения повторяется, пока колесо прижато, — каждый раз чуть другой высоты */
+  if(st.scrape && t>=S.kerbT){ sfxShot(S, 'kerb', t, S.inn, 0.35+0.4*st.scrape, 0.9+((t*7.31)%0.2)); S.kerbT=t+0.3; }
+  else if(!st.scrape) S.kerbT=-1;
+  for(let i=0;i<S.flow.length;i++){
+    const V=S.flow[i], q=st.flow[i];
+    if(!q){ sndSet(V.g.gain, 0, t, 0.25); continue; }
+    /* машина, чей проезд мимо уже звучит записью, в петле потока притихает — иначе её слышно дважды */
+    const att=SND_REF/Math.max(SND_REF, q.d), duck=q.a && q.a._passT>t ? 0.3 : 1;
+    sndSet(V.s.playbackRate, V.k*(0.82+0.3*Math.min(1, q.sp/12)), t, 0.2);
+    sndSet(V.lp.frequency, 900+6000*att, t, 0.2);
+    sndSet(V.g.gain, 0.45*att*duck*(0.25+0.75*Math.min(1, q.sp/10)), t, 0.15);
+    if(V.p) sndSet(V.p.pan, q.pan, t, 0.06);
+  }
+  const T=st.tram;
+  if(T){
+    const att=SND_REF/Math.max(SND_REF, T.d), k=Math.min(1, T.sp/8);
+    sndSet(S.trG.gain, 1.1*att*(0.12+0.88*k), t, 0.15);
+    sndSet(S.trRun.playbackRate, 0.7+0.35*k, t, 0.2);
+    sndSet(S.trLp.frequency, 1500+7500*att, t, 0.2);
+    if(S.trP) sndSet(S.trP.pan, T.pan, t, 0.06);
+  } else sndSet(S.trG.gain, 0, t, 0.3);
+}
+function audioUpdateSyn(S, st, t, vk){
   /* четыре цилиндра, четыре такта: две вспышки за оборот, частота — обороты / 30 */
   const f=st.rpm/30, r=st.rpm/ENG.red, L=st.load;
   sndSet(S.eo1.frequency, f, t, 0.04); sndSet(S.eo2.frequency, f*1.012, t, 0.04); sndSet(S.eSub.frequency, f/2, t, 0.04);
@@ -10568,9 +10699,7 @@ function audioUpdate(S, st, t){
   sndSet(S.eGain.gain, (st.cabin ? 0.17 : 0.12)*(0.45+0.4*r+0.35*L), t, 0.07);
   sndSet(S.inBp.frequency, 180+st.rpm*0.35, t, 0.07);
   sndSet(S.inG.gain, 0.04+0.3*L*(0.3+r), t, 0.09);
-  const vk=Math.min(1, st.v/16);
   sndSet(S.tyG.gain, 0.24*Math.pow(vk, 1.3), t, 0.15); sndSet(S.tyBp.frequency, 280+st.v*45, t, 0.15);
-  sndSet(S.wiG.gain, 0.2*vk*vk, t, 0.2);
   sndSet(S.scG.gain, st.scrape ? Math.min(0.4, 0.1+st.scrape*0.3) : 0, t, 0.03);
   sndSet(S.bedG.gain, st.bed, t, 0.8);
   for(let i=0;i<S.flow.length;i++){
@@ -10592,7 +10721,7 @@ function audioUpdate(S, st, t){
     if(S.trP) sndSet(S.trP.pan, T.pan, t, 0.06);
   } else sndSet(S.trG.gain, 0, t, 0.3);
 }
-/* разовые звуки: всплеск шума через полосу (щелчки, стыки, удар) и тон с огибающей */
+/* разовые звуки синтеза: всплеск шума через полосу (щелчки, стыки, удар) и тон с огибающей */
 function sndBurst(S, t, bus, f, q, dur, vol, type){
   const c=S.ctx, s=c.createBufferSource(), b=sndFilt(c, type||'bandpass', f, q), g=c.createGain();
   s.buffer=S.nb; g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
@@ -10611,47 +10740,69 @@ function sndAt(S, pan, att){
 }
 /* реле поворотника щёлкает на каждом фронте лампы: включилась — «тик», погасла — «так» */
 function sndRelay(S, t, on){
+  if(S.B){ sfxShot(S, on ? 'tick' : 'tock', t, S.inn, 0.3); return; }
   sndBurst(S, t, S.inn, on ? 3400 : 2300, 7, 0.012, 0.5);
   sndTone(S, t, S.inn, on ? 1900 : 1300, 0.014, 0.05, 'square');
 }
 const SND_EVT={
-  sel:(S, t)=>{ sndBurst(S, t, S.inn, 1200, 3, 0.03, 0.35); sndTone(S, t, S.inn, 150, 0.05, 0.18, 'sine', 90); },
-  stalk:(S, t)=>sndBurst(S, t, S.inn, 2800, 4, 0.012, 0.3),
-  handOn:(S, t)=>{ for(let i=0;i<6;i++) sndBurst(S, t+i*0.028, S.inn, 2600, 5, 0.008, 0.22); },
-  handOff:(S, t)=>{ sndBurst(S, t, S.inn, 900, 2, 0.05, 0.3); sndTone(S, t, S.inn, 120, 0.06, 0.12, 'sine', 70); },
+  sel:(S, t)=>{ if(S.B) return sfxShot(S, 'sel', t, S.inn, 0.4); sndBurst(S, t, S.inn, 1200, 3, 0.03, 0.35); sndTone(S, t, S.inn, 150, 0.05, 0.18, 'sine', 90); },
+  stalk:(S, t)=>{ if(S.B) return sfxShot(S, 'stalk', t, S.inn, 0.3); sndBurst(S, t, S.inn, 2800, 4, 0.012, 0.3); },
+  handOn:(S, t)=>{ if(S.B) return sfxShot(S, 'handOn', t, S.inn, 0.4); for(let i=0;i<6;i++) sndBurst(S, t+i*0.028, S.inn, 2600, 5, 0.008, 0.22); },
+  handOff:(S, t)=>{ if(S.B) return sfxShot(S, 'handOff', t, S.inn, 0.4); sndBurst(S, t, S.inn, 900, 2, 0.05, 0.3); sndTone(S, t, S.inn, 120, 0.06, 0.12, 'sine', 70); },
 };
 function sndEvent(kind){
   if(!SND || !AU.on || !SND_EVT[kind]) return;
   SND_EVT[kind](SND, AC.currentTime);
 }
-/* удар: глухой провал тона и шум без верха — машину слышно корпусом, а не динамиком */
+/* удар: синтез — глухой провал тона и шум без верха, машину слышно корпусом, а не динамиком */
 function sndHit(S, t, k){
+  if(S.B){ sfxShot(S, 'hit', t, S.inn, 0.75*k); return; }
   sndTone(S, t, S.inn, 120, 0.24, 0.55*k, 'sine', 40);
   sndBurst(S, t, S.inn, 700, 0.7, 0.14, 0.45*k, 'lowpass');
 }
-/* гудок: два пилообразных тона через форманты 1,1 и 2,4 кГц — так звучит рупорный сигнал машины */
+/* гудок: запись звучит dur секунд с отпуском; синтез — два пилообразных тона через форманты 1,1 и 2,4 кГц */
 function sndHorn(S, t, pan, att, dur){
+  if(S.B){ sfxShot(S, 'horn', t, sndAt(S, pan, att), 0.6, 0, 0, dur); return; }
   const c=S.ctx, out=sndAt(S, pan, att), g=c.createGain(), f1=sndFilt(c, 'bandpass', 1100, 3), f2=sndFilt(c, 'bandpass', 2400, 4), m=sndFilt(c, 'lowpass', 3000, 0.7);
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.5, t+0.02);
   g.gain.setValueAtTime(0.5, t+dur-0.05); g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
   for(const f of [405, 507]){ const o=c.createOscillator(); o.type='sawtooth'; o.frequency.value=f; o.connect(g); o.start(t); o.stop(t+dur+0.02); }
   g.connect(f1); g.connect(f2); g.connect(m); f1.connect(out); f2.connect(out); m.connect(out);
 }
-/* звонок трамвая: три негармонических частоты колокола, два удара */
+/* звонок трамвая: синтез — три негармонических частоты колокола, два удара */
 function sndBell(S, t, pan, att){
   const out=sndAt(S, pan, att);
+  if(S.B){ sfxShot(S, 'bell', t, out, 0.6); return; }
   for(const k of [0, 0.26]) for(const [f, d, v] of [[1550, 1.3, 0.3], [2330, 0.9, 0.18], [3610, 0.5, 0.1]]) sndTone(S, t+k, out, f, d, v, 'sine');
 }
-/* стык рельса: два удара тележки с разносом по базе */
+/* стык рельса: запись — колёса тележки на стыке; синтез — два удара с разносом по базе */
 function sndClack(S, t, pan, att, gap){
   const out=sndAt(S, pan, att);
+  if(S.B){ sfxShot(S, 'clack', t, out, 0.5); return; }
   for(const k of [0, gap]){ sndBurst(S, t+k, out, 900, 1.5, 0.035, 0.6); sndTone(S, t+k, out, 75, 0.06, 0.3, 'sine', 50); }
+}
+/* проезд мимо: самый громкий момент записи приходится на миг, когда машина ближе всего; панорама
+   расписана заранее по прямой, по которой машина идёт, — слева направо или наоборот.
+   tc — секунды до сближения, dc — расстояние в нём, pan(q) — панорама через q секунд */
+function sndPass(S, t, tc, dc, pan, rate){
+  const x=S.B.man.shots.pass, k=rate||1, off=x.p-tc*k;
+  if(off<0 || off>=x.d-0.3) return false;
+  const c=S.ctx, g=c.createGain(), p=sndPanner(c), att=clamp(5/Math.max(5, dc), 0, 1);
+  g.gain.value=att;
+  if(p){
+    p.pan.setValueAtTime(clamp(pan(0), -1, 1), t);
+    for(let i=1, n=Math.ceil((x.d-off)/k/0.25);i<=n;i++) p.pan.linearRampToValueAtTime(clamp(pan(i*0.25), -1, 1), t+i*0.25);
+    g.connect(p); p.connect(S.out);
+  } else g.connect(S.out);
+  const s=sfxShot(S, 'pass', t, g, 0.55, k, off);
+  S.passN++; s.onended=()=>{ S.passN--; };
+  return true;
 }
 function initAudio(){
   voiceUnlock();
   /* вкладка в фоне усыпляет контекст — без resume звук после возврата пропадает */
   if(AC){ if(AC.state==='suspended' && document.visibilityState!=='hidden') AC.resume().catch(()=>{}); return; }
-  try{ AC=new (window.AudioContext||window.webkitAudioContext)(); SND=audioBuild(AC); }
+  try{ AC=new (window.AudioContext||window.webkitAudioContext)(); SND=audioBuild(AC, SFX.B); }
   catch(e){ AC=null; SND=null; console.warn('[audio] WebAudio недоступен — игра без звука'); }
 }
 /* слушатель — у машины, лево и право — по направлению взгляда: что видно слева, то и слышно слева */
@@ -10659,10 +10810,26 @@ function sndPan(u, v){
   const fu=-viewCam.f.x, fv=viewCam.f.z, n=Math.hypot(fu, fv)||1, du=u-AU.lu, dv=v-AU.lv, d=Math.hypot(du, dv)||1;
   return clamp((du*fv/n-dv*fu/n)/d, -1, 1);
 }
+/* машина потока подходит: по прямой её и своего хода — через сколько секунд и на каком расстоянии она
+   будет ближе всего; запись проезда стартует, когда до сближения ровно столько, сколько в записи до пика */
+function passCheck(S, a, s, c, t){
+  if(S.passN>=PASS_MAX || (s.v||0)<PASS_V || a._passT>t) return;
+  const f=fuv(a.yaw), cf=fuv(car.th), ru=a.u-c.u, rv=a.v-c.v, vu=f.u*s.v-cf.u*car.vel, vv=f.v*s.v-cf.v*car.vel, v2=vu*vu+vv*vv;
+  if(v2<4) return;
+  const tc=-(ru*vu+rv*vv)/v2, x=S.B.man.shots.pass;
+  if(tc<0.4 || tc>x.p) return;
+  const dc=Math.hypot(ru+vu*tc, rv+vv*tc);
+  if(dc>PASS_D) return;
+  const fu=-viewCam.f.x, fv=viewCam.f.z, n=Math.hypot(fu, fv)||1;
+  const pan=(q)=>{ const du=ru+vu*q, dv=rv+vv*q, d=Math.hypot(du, dv)||1; return (du*fv/n-dv*fu/n)/d; };
+  if(sndPass(S, t, tc, dc, pan, clamp(s.v/11, 0.85, 1.15))) a._passT=t+tc+2.5;
+}
 function audioTick(dt){
   if(!AC || !SND) return;
-  const S=SND, t=AC.currentTime, c=bodyPos();
   AU.on=opt.sound && !paused && document.visibilityState!=='hidden';
+  /* записи — только тому, кто включил звук */
+  if(AU.on && !SFX.st) sfxLoad();
+  const S=SND, t=AC.currentTime, c=bodyPos();
   /* звук включили, пока контекст спал после фона, — будим здесь: audioHide будит только при включённом звуке */
   if(AU.on && AC.state==='suspended' && !S.waking){ S.waking=true; AC.resume().then(()=>{ S.waking=false; }, ()=>{ S.waking=false; }); }
   AU.lu=c.u; AU.lv=c.v;
@@ -10680,7 +10847,8 @@ function audioTick(dt){
     const d=Math.hypot(a.u-c.u, a.v-c.v);
     if(a.kind==='tram'){ tram=a; AU.tram=AU_TRAM; AU_TRAM.d=d; AU_TRAM.sp=s.v||0; AU_TRAM.pan=sndPan(a.u, a.v); continue; }
     if(d>SND_FAR || n>=AU_POOL.length) continue;
-    const q=AU_POOL[n++]; q.d=d; q.sp=s.v||0; q.pan=sndPan(a.u, a.v);
+    if(S.B && AU.on && d<40) passCheck(S, a, s, c, t);
+    const q=AU_POOL[n++]; q.d=d; q.sp=s.v||0; q.pan=sndPan(a.u, a.v); q.a=a;
     AU.flow.push(q);
   }
   AU.flow.sort((x, y)=>x.d-y.d);
@@ -10698,7 +10866,7 @@ function audioTick(dt){
     }
     S.trS+=(s.v||0)*dt;
     const k=Math.floor(S.trS/12.5);
-    if(k!==S.trK){ S.trK=k; if(AU.on && T.d<60) sndClack(S, t, T.pan, att, 2.2/Math.max(1, s.v||1)); }
+    if(k!==S.trK){ S.trK=k; if(AU.on && T.d<60) sndClack(S, t, T.pan, att*Math.min(1, (s.v||0)/5), 2.2/Math.max(1, s.v||1)); }
   } else S.trOn=false;
 }
 /* фон: вкладка скрыта — мастер в ноль сразу (rAF стоит, тик не придёт), контекст спит; вернулась — проснулся */
