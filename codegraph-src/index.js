@@ -4680,6 +4680,7 @@ function citySnap(p){
    стартовая поза экзамена u=8.15 — это ровно 3.2 + 3.3*1.5 на Ленина, а карман на
    Садовой v=-68.35 — это 3.3*0.5 справа от осевой v=-70 при движении на запад */
 function laneOffset(e, side){
+  if(typeof side==='number') return side;        /* смещение задано числом — путь от машины начинается в её ряду */
   const b=e.tram?TRAM_HW:0;
   if(side==='tram') return e.tram ? TRAM_HW/2 : b+LANE_W*0.5;
   if(side==='left') return b+LANE_W*0.5;
@@ -4850,8 +4851,22 @@ function cityRoute(from, to, o){
     const prev=pts[pts.length-1];
     /* смещённая пара узлов стоит теснее суммы радиусов — прямого участка не остаётся */
     if((sb-sa)*dir<=0.2){ if(r.nodeEnd) cornerArc(g.V[r.nodeEnd], prev, g.V[r.nodeEnd], out); prevYaw=yawRun; continue; }
-    if(r.nodeStart) cornerArc(g.V[r.nodeStart], prev, lanePt(g, r.e, sa, laneOffset(r.e,'right')*dir), out, prevYaw, yawRun);
-    edgeRun(g, r.e, sa, sb, 'right', sideB, out);
+    /* o.keepLat — путь от машины: первый кусок начинается в том ряду, где она стоит, а не в правом. Иначе
+       машина, уже ушедшая влево к повороту, получала ленту вправо и обратно — петлю перед перекрёстком */
+    if(i===0 && o.keepLat && !s0.ring && !r.nodeStart){
+      const A=g.V[r.e.a], rt=ruv(r.e.yaw), lat=(from.u-A.u)*rt.u+(from.v-A.v)*rt.v;
+      edgeRun(g, r.e, sa, sb, lat*dir, sideB, out);
+      prevYaw=yawRun; legs.push({name:r.e.name, len:Math.abs(sb-sa)}); continue;
+    }
+    /* o.fine — путь ленты экзамена: дуга угла по радиусу машины (turnJoin); поток ездит по прежним дугам,
+       на них откалиброваны его гейты */
+    if(o.fine && r.nodeStart && prevYaw!==undefined && prev){
+      const rest=[]; edgeRun(g, r.e, sa, sb, 'right', sideB, (q)=>rest.push(q));
+      turnJoin(pts, rest, g.V[r.nodeStart], prevYaw, yawRun);
+    } else {
+      if(r.nodeStart) cornerArc(g.V[r.nodeStart], prev, lanePt(g, r.e, sa, laneOffset(r.e,'right')*dir), out, prevYaw, yawRun);
+      edgeRun(g, r.e, sa, sb, 'right', sideB, out);
+    }
     prevYaw=yawRun;
     legs.push({name:r.e.name, len:Math.abs(sb-sa)});
   }
@@ -9083,7 +9098,7 @@ function examNodeExit(n, out){
   next.id=exam.route.id; next.seed=rt.seed;
   next.plan=rt.plan.map(p=>({id:p.id, out:p.out, si:p.si>=0 ? p.si+off : -1, pre:p.pre+off}));
   exam.route=next; exam.planI=0; exam.stage=done.length; exam.rerouted=true;
-  exam.zoneStage=-1; examLegBuild();
+  exam.zoneStage=-1; exam._map=null; examLegBuild();
   if(examFlags().forgiving){ examWhy=EXAM_REROUTE_WHY; examWhyT=4; }
 }
 /* Команду инспектор даёт ЗАРАНЕЕ, как в жизни: «через 60 метров направо». Без этого
@@ -9149,39 +9164,177 @@ function nodeAt(sn){
 }
 /* склейка двух маршрутов, сходящихся в центре узла J (машина → команда → следующая команда):
    хвост первого за последней точкой полосы (сырой центр узла) и голова второго до первой
-   точки полосы (центр + дуга через центр) выбрасываются, вместо них — cornerArc по курсам
-   въезда и выезда. Без склейки линия шла в центр перекрёстка по диагонали и ломалась там
-   углом — то самое «пунктирная траектория абсолютно кривая» */
+   точки полосы выбрасываются, вместо них — дуга поворота turnJoin по курсам въезда и выезда.
+   Без склейки линия шла в центр перекрёстка по диагонали и ломалась там углом */
 function routeSplice(pts, b, J){
   let ia=-1; for(let i=pts.length-1;i>0;i--) if(pts[i].lane){ ia=i; break; }
   let ib=-1; for(let i=1;i<b.length-1;i++) if(b[i].lane){ ib=i; break; }
   if(!J || J.round || ia<1 || ib<0){ for(let i=1;i<b.length;i++) pts.push(b[i]); return; }
   const pA=pts[ia], qA=pts[ia-1], pB=b[ib], qB=b[ib+1];
+  const yawIn=Math.atan2(pA.u-qA.u, pA.v-qA.v);
   /* курс выезда — по полосе: следующая точка куска бывает сырым центром соседнего узла (N5 → N5b в 12 м),
      и курс на неё скашивал выезд на 17° */
-  const yawIn=Math.atan2(pA.u-qA.u, pA.v-qA.v);
   const yawOut=(qB && qB.lane) ? Math.atan2(qB.u-pB.u, qB.v-pB.v) : Math.atan2(pB.u-b[ib-1].u, pB.v-b[ib-1].v);
   pts.length=ia+1;
-  /* правый поворот в малом узле (N5, N5b — радиус 4,9 м): дуга по опорной точке пересечения полос проходила
-     в 0,8 м от бортового камня угла — машина по ленте задела бы его бортом. Здесь лента идёт дугой вокруг
-     самого угла на расстоянии полосы от кромки */
-  const turn=angNorm(yawOut-yawIn);
-  if((J.r||0)<7 && turn>0.5){
-    const ri=ruv(yawIn), ro=ruv(yawOut), fi=fuv(yawIn), d=LANE_W/2;
-    /* точка пересечения линий полос: вход — прямая через pA по fi, выход — через pB по fuv(yawOut) */
-    const fo=fuv(yawOut), den=fi.u*fo.v-fi.v*fo.u;
-    if(Math.abs(den)>1e-6){
-      const t=((pB.u-pA.u)*fo.v-(pB.v-pA.v)*fo.u)/den, X={u:pA.u+fi.u*t, v:pA.v+fi.v*t};
-      const K={u:X.u+(ri.u+ro.u)*d, v:X.v+(ri.v+ro.v)*d};
-      const a0=Math.atan2(-ri.u, -ri.v), a1=Math.atan2(-ro.u, -ro.v);
-      let da=angNorm(a1-a0);
-      for(let k=0;k<=8;k++){ const a=a0+da*k/8; pts.push({u:K.u+Math.sin(a)*d, v:K.v+Math.cos(a)*d}); }
-      for(let i=ib;i<b.length;i++) pts.push(b[i]);
-      return;
-    }
+  turnJoin(pts, b.slice(ib), J, yawIn, yawOut);
+}
+/* ---------- лента маршрута: путь заезда ----------
+   Путь строится ОДИН раз на маршрут — от позы старта через точки всех этапов, теми же кусками, что карта, —
+   и показывается от машины вперёд. До 11.10.2026 лента каждые 0,35 с строилась заново от машины: в узле и у
+   его края машина прилипала то к одной улице, то к другой, путь менялся скачком, а кусок до следующей
+   команды кончался крюком в центр перекрёстка. Бот экзамена насчитал на 8 маршрутах 1176 изломов круче 35° на
+   2 м и 250 шипов с разворотом — владелец: «у фиолетовой линии кривая траектория особенно на перекрестках».
+   Заново путь строится, только когда маршрут перестроил инспектор или машина ушла с пути дальше
+   EXAM_PATH_OFF, и никогда внутри узла: там машина стоит на нескольких улицах сразу */
+const RIBBON_RMIN=4.6;      /* дуга ленты: центр кузова на полном руле идёт по 4,06 м — плюс запас */
+const EXAM_PATH_OFF=4.5;             /* больше полосы: перестроение в соседний ряд путь не перестраивает */
+const RIBBON_KERB=HALF_W+0.25;
+let ribbonKerbs=null;       /* поребрики уровня — на время сборки пути, для проверки зазора дуги */
+function ribbonKerbGap(p){
+  let m=1e9;
+  for(const o of ribbonKerbs){
+    if(Math.abs(o.u-p.u)>o.l/2+6 || Math.abs(o.v-p.v)>o.l/2+6) continue;
+    const f=fuv(o.yaw), r=ruv(o.yaw), du=p.u-o.u, dv=p.v-o.v;
+    const lat=Math.abs(du*r.u+dv*r.v)-o.w/2, lon=Math.abs(du*f.u+dv*f.v)-o.l/2;
+    m=Math.min(m, Math.hypot(Math.max(0,lat), Math.max(0,lon)));
   }
-  cornerArc(J, pA, pB, p=>pts.push(p), yawIn, yawOut);
-  for(let i=ib;i<b.length;i++) pts.push(b[i]);
+  return m;
+}
+/* поворот в узле: дуга радиусом не меньше RIBBON_RMIN по касательной к полосе въезда и к полосе выезда.
+   Узлу не хватает места (правый поворот в малом узле) — дуга начинается раньше и кончается дальше; заденет
+   бортом угол поребрика — выезд уходит от угла на e и потом плавно возвращается в свою полосу: так тесный
+   угол проезжает живой водитель. До этого правый поворот в N5/N5b шёл дугой радиусом полполосы (1,65 м) —
+   по ней не проедет ни одна машина */
+function turnJoin(pts, rest, J, yawIn, yawOut){
+  if(!pts.length || !rest.length){ for(const q of rest) pts.push(q); return; }
+  const pA=pts[pts.length-1], pB=rest[0], turn=angNorm(yawOut-yawIn);
+  const push=(q)=>{ const n=pts[pts.length-1]; if(!n || Math.hypot(n.u-q.u, n.v-q.v)>0.05) pts.push(q); };
+  if(J.round || Math.abs(turn)>rad(150)){ cornerArc(J, pA, pB, push, yawIn, yawOut); for(const q of rest) push(q); return; }
+  if(Math.abs(turn)<rad(8)){ for(const q of rest) push(q); return; }
+  const fi=fuv(yawIn), fo=fuv(yawOut), sg=Math.sign(turn), tn=Math.tan(Math.abs(turn)/2);
+  const ri=ruv(yawIn), out=ruv(yawOut), Rmin=window.RIBBON_RMIN||RIBBON_RMIN;
+  const cr=fi.u*fo.v-fi.v*fo.u;
+  let best=null;
+  for(const e of [0, 0.4, 0.8, 1.2, 1.6]){
+    /* выезд смещён от угла наружу поворота: для правого — влево по ходу, для левого — вправо */
+    const B={u:pB.u-out.u*sg*e, v:pB.v-out.v*sg*e};
+    const ta=((B.u-pA.u)*fo.v-(B.v-pA.v)*fo.u)/cr;
+    const X={u:pA.u+fi.u*ta, v:pA.v+fi.v*ta};
+    const tb=(B.u-X.u)*fo.u+(B.v-X.v)*fo.v;
+    if(!(ta>-30 && tb>-30)) continue;
+    const R=clamp(Math.max(0.1, Math.min(ta, tb))/tn, Rmin, 25), T=R*tn;
+    const P1={u:X.u-fi.u*T, v:X.v-fi.v*T}, C={u:P1.u+ri.u*sg*R, v:P1.v+ri.v*sg*R};
+    const arc=[], n=Math.max(3, Math.ceil(Math.abs(turn)*R/1.0));
+    for(let i=0;i<=n;i++){ const y=yawIn+turn*i/n, r=ruv(y); arc.push({u:C.u-r.u*sg*R, v:C.v-r.v*sg*R}); }
+    /* возврат со смещённой линии выезда в свою полосу: сдвиг w спадает от e до нуля по smoothstep */
+    const P2=arc[arc.length-1], Ls=e>0 ? 6+5*e : 0;
+    for(let d=1; d<=Ls; d+=1){ const k=d/Ls, w=e*(1-k*k*(3-2*k));
+      arc.push({u:P2.u+fo.u*d-out.u*sg*(w-e), v:P2.v+fo.v*d-out.v*sg*(w-e)}); }
+    let gap=1e9; for(const q of arc) gap=Math.min(gap, ribbonKerbGap(q));
+    const cand={arc, P1, X, T, Ls, e, gap};
+    if(!best || (best.gap<RIBBON_KERB && gap>best.gap)) best=cand;
+    if(gap>=RIBBON_KERB){ best=cand; break; }
+  }
+  if(!best){ cornerArc(J, pA, pB, push, yawIn, yawOut); for(const q of rest) push(q); return; }
+  /* хвост въезда за началом дуги и голова выезда до конца возврата — лишние */
+  while(pts.length>1){ const q=pts[pts.length-1]; if((q.u-best.P1.u)*fi.u+(q.v-best.P1.v)*fi.v>-0.3) pts.pop(); else break; }
+  for(const q of best.arc) push(q);
+  const end=best.arc[best.arc.length-1];
+  let i=0; while(i<rest.length-1 && (rest[i].u-end.u)*fo.u+(rest[i].v-end.v)*fo.v<0.5) i++;
+  for(;i<rest.length;i++) push(rest[i]);
+}
+/* разворот с трамвайных путей: та же дуга полного руля, что рисует зона (uturnArc), и плавный выход в свою
+   полосу встречного направления. Разворот без зоны (тупик после пропущенной команды) — разрыв ленты: место
+   выбирает водитель, и линия его не назначает */
+function uturnJoin(pts, b, st){
+  const z=examZoneOf(st);
+  if(!z || z.kind!=='uturn'){ if(b.length>1){ const q=Object.assign({}, b[1], {brk:true}); pts.push(q); for(let i=2;i<b.length;i++) pts.push(b[i]); } return; }
+  const f=fuv(z.yaw), arc=[]; uturnArc(z, (q)=>arc.push(q));
+  const A=arc[0];
+  while(pts.length>1){ const q=pts[pts.length-1]; if((q.u-A.u)*f.u+(q.v-A.v)*f.v>-0.3) pts.pop(); else break; }
+  for(const q of arc) pts.push(q);
+  const E=arc[arc.length-1], back={u:-f.u, v:-f.v};
+  let j=1; while(j<b.length-1 && (b[j].u-E.u)*back.u+(b[j].v-E.v)*back.v<12) j++;
+  const Q=b[j], q2=b[Math.min(j+1, b.length-1)], L=Math.hypot(Q.u-E.u, Q.v-E.v)/3;
+  const d2=Math.hypot(q2.u-Q.u, q2.v-Q.v)||1, t2={u:(q2.u-Q.u)/d2, v:(q2.v-Q.v)/d2};
+  const c1={u:E.u+back.u*L, v:E.v+back.v*L}, c2={u:Q.u-t2.u*L, v:Q.v-t2.v*L};
+  for(let i=1;i<10;i++){ const t=i/10, it=1-t;
+    pts.push({u:it*it*it*E.u+3*it*it*t*c1.u+3*it*t*t*c2.u+t*t*t*Q.u, v:it*it*it*E.v+3*it*it*t*c1.v+3*it*t*t*c2.v+t*t*t*Q.v}); }
+  for(let i=j;i<b.length;i++) pts.push(b[i]);
+}
+/* путь по этапам с k0: куски cityRoute от точки к точке, склейка в узлах команд дугой, разворот — дугой зоны.
+   leg[k] — индекс, с которого в пути идёт кусок этапа k: там ищется точка команды */
+function examChain(from, k0){
+  const g=cityGraph(), pts=[], leg=[];
+  ribbonKerbs=(level.obs||[]).filter(o=>o.kind==='kerb');
+  let prev={u:from.u, v:from.v, th:from.th}, prevSt=null;
+  for(let k=k0;k<exam.route.length;k++){
+    const st=exam.route[k]; if(!st.at) continue;
+    const ring=st.node && g.V[st.node].round;
+    const r=cityRoute(prev, ring ? stageExit(st) : st.at, {side:examLegSide(st), th:prev.th, fine:true, keepLat:k===k0 && !!from.keepLat});
+    leg[k]=Math.max(0, pts.length-1);
+    if(r){
+      if(!pts.length) for(const q of r.pts) pts.push(q);
+      else if(prevSt && prevSt.turn==='U' && !prevSt.node) uturnJoin(pts, r.pts, prevSt);
+      else routeSplice(pts, r.pts, prevSt && prevSt.node && !g.V[prevSt.node].round ? g.V[prevSt.node] : null);
+    }
+    const x=stageExit(st), n=pts.length;
+    /* у этапа «прямо до точки» и у остановки курса нет — берём его с самого пути: от точки без курса
+       кратчайший путь мог пойти назад, и лента разворачивалась шипом */
+    const th = x.th!==undefined ? x.th : (n>1 ? Math.atan2(pts[n-1].u-pts[n-2].u, pts[n-1].v-pts[n-2].v) : prev.th);
+    prev={u:x.u, v:x.v, th}; prevSt=st;
+  }
+  ribbonKerbs=null;
+  return {pts, leg};
+}
+/* путь от машины: начало сводится с машины на полосу кубической кривой по её курсу — вместо прежней
+   поперечной ступеньки от капота к ряду */
+function examPathBuild(from, merge){
+  const ch=examChain(from, exam.stage), P=ch.pts;
+  if(merge && P.length>3){
+    const Lm=Math.max(6, Math.abs(car.vel)*0.8+5);
+    /* у конца маршрута пути может не хватить на всё сведение — тогда цель — предпоследняя точка */
+    let s=0, j=1; for(;j<P.length-2;j++){ s+=Math.hypot(P[j].u-P[j-1].u, P[j].v-P[j-1].v); if(s>=Lm) break; }
+    const Q=P[j], q2=P[j+1], d2=Math.hypot(q2.u-Q.u, q2.v-Q.v)||1, t2={u:(q2.u-Q.u)/d2, v:(q2.v-Q.v)/d2};
+    const f=fuv(car.vel<-0.3 ? car.th+Math.PI : car.th), L=s/3, A={u:from.u, v:from.v};
+    const c1={u:A.u+f.u*L, v:A.v+f.v*L}, c2={u:Q.u-t2.u*L, v:Q.v-t2.v*L}, cur=[A];
+    for(let i=1;i<10;i++){ const t=i/10, it=1-t;
+      cur.push({u:it*it*it*A.u+3*it*it*t*c1.u+3*it*t*t*c2.u+t*t*t*Q.u, v:it*it*it*A.v+3*it*it*t*c1.v+3*it*t*t*c2.v+t*t*t*Q.v}); }
+    P.splice(0, j, ...cur);
+    for(let k=exam.stage;k<ch.leg.length;k++) if(ch.leg[k]!==undefined) ch.leg[k]=Math.max(0, ch.leg[k]-j+cur.length);
+  }
+  const cum=[0]; for(let i=1;i<P.length;i++) cum.push(cum[i-1]+Math.hypot(P[i].u-P[i-1].u, P[i].v-P[i-1].v));
+  /* точка команды этапа — ближайшая к его at точка своего куска; на кольце — въезд на кольцо */
+  const cmd=[], g=cityGraph();
+  for(let k=exam.stage;k<exam.route.length;k++){
+    const st=exam.route[k]; if(!st.at || ch.leg[k]===undefined) continue;
+    const i0=ch.leg[k], i1=Math.min(P.length-1, (ch.leg[k+1]!==undefined ? ch.leg[k+1] : P.length-1)+40);
+    const N=st.node && g.V[st.node].round ? g.V[st.node] : null;
+    let bi=-1, bd=1e9;
+    for(let i=i0;i<=i1;i++){
+      if(N){ if(Math.hypot(P[i].u-N.u, P[i].v-N.v)<=N.round+1){ bi=i; break; } continue; }
+      const d=Math.hypot(P[i].u-st.at.u, P[i].v-st.at.v); if(d<bd){ bd=d; bi=i; }
+    }
+    if(bi>=0) cmd[k]=cum[bi];
+  }
+  exam.path={pts:P, cum, cmd, route:exam.route, i:0, s:0, off:0, yaw:0, at:P[0]};
+}
+function examPathProject(P, c){
+  if(P.pts.length<2){ P.off=1e9; return; }
+  let best=1e9, bi=P.i, bt=0;
+  for(let i=Math.max(0, P.i-6); i<Math.min(P.pts.length-1, P.i+90); i++){
+    const a=P.pts[i], b=P.pts[i+1], du=b.u-a.u, dv=b.v-a.v, L2=du*du+dv*dv||1e-9;
+    const t=clamp(((c.u-a.u)*du+(c.v-a.v)*dv)/L2, 0, 1), d=Math.hypot(c.u-a.u-du*t, c.v-a.v-dv*t);
+    if(d<best){ best=d; bi=i; bt=t; }
+  }
+  const a=P.pts[bi], b=P.pts[Math.min(bi+1, P.pts.length-1)];
+  P.i=bi; P.off=best; P.s=P.cum[bi]+(P.cum[Math.min(bi+1, P.cum.length-1)]-P.cum[bi])*bt;
+  P.yaw=Math.atan2(b.u-a.u, b.v-a.v); P.at={u:a.u+(b.u-a.u)*bt, v:a.v+(b.v-a.v)*bt};
+}
+function inNodeArea(c){
+  const g=cityGraph(); if(!g) return false;
+  for(const id in g.V){ const N=g.V[id], R=N.round||N.r||0; if(R && Math.hypot(c.u-N.u, c.v-N.v)<R+1) return true; }
+  return false;
 }
 /* откуда путь продолжается за этапом и каким курсом: за узлом — на луче выезда, за кольцом — на съезде,
    за остановкой и разворотом — с их курсом. Без курса cityRoute выбирал бы кратчайший путь в любую сторону */
@@ -9190,44 +9343,41 @@ function stageExit(st){
     const p=laneOut(st.node, deg(st.armOut.yaw), R+2); return {u:p.u, v:p.v, th:st.armOut.yaw}; }
   return {u:st.at.u, v:st.at.v, th:st._outYaw};
 }
-function examLegBuild(){
-  exam.legT=EXAM_LEG_T; exam.leg=null;
-  const st=exam.route[exam.stage]; if(!st || !st.at) return;
-  const nx=exam.route[exam.stage+1];
-  /* точка команды «на кольце — такой-то съезд» стоит в центре кольца, то есть на островке:
-     вести линию туда нельзя, да и «доехал» там значит «съехал». Поэтому линия идёт СКВОЗЬ
-     кольцо к следующей команде, а цифра на карточке считается до въезда на кольцо. Без
-     этого линия пропадала ровно там, где игрок выбирает съезд: обе точки лежали на кольце,
-     графу было нечего искать, и cityRoute отдавал null */
-  const rs=citySnap(st.at), N=rs && rs.ring;
-  /* на кольце цель — его съезд по команде: кратчайший путь к следующей команде мог взять другой съезд */
-  const tgt=N ? stageExit(st) : st.at;
-  const a=cityRoute(bodyPos(), tgt, {side:examLegSide(st), th:car.th});
-  if(!a) return;
-  const pts=a.pts.slice();
-  if(N){
-    let L=0;
-    for(let i=1;i<a.pts.length;i++){
-      const p=a.pts[i];
-      if(Math.hypot(p.u-N.u, p.v-N.v)<=N.round+1){ a.len=L; break; }
-      L+=Math.hypot(p.u-a.pts[i-1].u, p.v-a.pts[i-1].v);
-    }
-  }
-  if(nx && nx.at){
-    const x=stageExit(st), b=cityRoute(x, nx.at, {side:examLegSide(nx), th:x.th});
-    if(b) routeSplice(pts, b.pts, N ? null : nodeAt(rs));
-  }
-  let L=0, cut=pts.length;
-  for(let i=1;i<pts.length;i++){ L+=Math.hypot(pts[i].u-pts[i-1].u, pts[i].v-pts[i-1].v);
-    if(L>EXAM_LEG_MAX){ cut=i+1; break; } }
-  const use=pts.slice(0,cut);
-  exam.leg={pts:use, dist:a.len, stage:exam.stage, draw:buildIdealDraw(use)};
+/* лента — кусок пути заезда от проекции машины вперёд до EXAM_LEG_MAX; путь при этом не трогается, поэтому
+   лента впереди не перекраивается. dist — по пути до точки команды этапа */
+function examLegSlice(){
+  exam.legT=EXAM_LEG_T;
+  const P=exam.path, st=exam.route[exam.stage];
+  if(!P || !st || !st.at){ exam.leg=null; return; }
+  const pts=[P.at];
+  for(let i=P.i+1;i<P.pts.length && P.cum[i]-P.s<=EXAM_LEG_MAX;i++) pts.push(P.pts[i]);
+  if(pts.length<2){ exam.leg=null; return; }
+  const c=bodyPos(), dist=P.cmd[exam.stage]!==undefined ? Math.max(0, P.cmd[exam.stage]-P.s) : Math.hypot(st.at.u-c.u, st.at.v-c.v);
+  exam.leg={pts, dist, stage:exam.stage, draw:buildIdealDraw(pts)};
   if(exam.zoneStage!==exam.stage){ exam.zoneStage=exam.stage; exam.zone=examZoneOf(st); }
 }
 function examLegTick(dt){
   exam.legT=(exam.legT||0)-(dt||0);   /* headless-прогоны зовут examTick без dt */
-  if(!exam.leg || exam.leg.stage!==exam.stage || exam.legT<=0) examLegBuild();
+  const st=exam.route[exam.stage];
+  if(!st || !st.at){ exam.leg=null; return; }
+  const c=bodyPos();
+  let P=exam.path, fresh=false;
+  if(P && P.route===exam.route && P.cmd[exam.stage]!==undefined){
+    examPathProject(P, c);
+    /* ушёл с пути (или едет против него) — путь заново от машины, но не внутри узла */
+    const away=P.off>EXAM_PATH_OFF || (Math.abs(car.vel)>0.5 && Math.cos(angNorm((car.vel<0 ? car.th+Math.PI : car.th)-P.yaw))<-0.2);
+    if(away && !inNodeArea(c)) P=null;
+  } else P=null;
+  if(!P){
+    const fromStart=!exam.path && exam.stage===0 && level.start && Math.hypot(c.u-level.start.u, c.v-level.start.v)<1;
+    examPathBuild({u:c.u, v:c.v, th:car.th, keepLat:!fromStart}, !fromStart);
+    examPathProject(exam.path, c); fresh=true;
+    if(exam.path.pts.length<2){ exam.leg=null; return; }
+  }
+  if(fresh || exam.legT<=0 || !exam.leg || exam.leg.stage!==exam.stage) examLegSlice();
 }
+/* инструменты и смена этапа зовут сборку ленты напрямую: путь остаётся, обновляется кусок */
+function examLegBuild(){ exam.legT=0; examLegTick(0); }
 /* ---------- зона манёвра ----------
    «Где разворачиваться» — второй вопрос владельца. Линия ведёт К точке, но сама точка была
    маячком без размеров: ни границ зоны, ни трамвайного полотна, ни направления дуги.
@@ -9330,7 +9480,7 @@ function examInit(){
   const kind=level.practice ? 'practice' : 'exam';
   exam={kind, score:0, log:[], done:false, failed:false, rollFired:false, handFired:false,
         stage:0, route: kind==='practice' ? practiceRoute(level.pvar) : level.def.examRoute(), trail:[], lu:null, lv:null,
-        leg:null, legT:0, zone:null, zoneStage:-1, _map:null};
+        leg:null, legT:0, path:null, zone:null, zoneStage:-1, _map:null};
   exam.routeId = (exam.route.id===undefined) ? -1 : exam.route.id;
   /* рестарт зовёт examInit повторно: сохранённые настройки уже лежат в saved,
      перезапись сохранила бы выключенные значения и teardown вернул бы «всё выключено» */
@@ -12561,23 +12711,9 @@ function render(dt){
    кварталов и на вопрос «куда ехать» не отвечал */
 function examMapPath(){
   if(exam._map) return exam._map;
-  const pts=[], used={};
-  let prev=level.start ? {u:level.start.u, v:level.start.v, th:level.start.th} : null, prevNode=null;
-  for(const st of exam.route){
-    if(!st.at) continue;
-    if(prev){
-      const ring=st.node && cityGraph().V[st.node].round;
-      const r=cityRoute(prev, ring ? stageExit(st) : st.at, {side:examLegSide(st), th:prev.th});
-      if(r){
-        if(!pts.length) for(const p of r.pts) pts.push(p);
-        else routeSplice(pts, r.pts, prevNode);
-        for(const lg of r.legs) if(lg.name) used[lg.name]=true;
-      }
-    }
-    const x=stageExit(st);
-    prev=(x.th!==undefined) ? x : {u:st.at.u, v:st.at.v};
-    prevNode=st.node && !cityGraph().V[st.node].round ? nodeAt(citySnap(st.at)) : null;
-  }
+  const used={};
+  const pts=level.start ? examChain({u:level.start.u, v:level.start.v, th:level.start.th}, 0).pts : [];
+  for(const p of pts){ const sn=citySnap(p); if(sn && sn.e && sn.e.name && sn.d<4) used[sn.e.name]=true; }
   /* улицу подписываем один раз — на самом длинном её куске, иначе «Ленина» встанет трижды */
   const names=[];
   for(const nm in used){
@@ -15077,11 +15213,12 @@ function buildIdealDraw(pts){
   if(!pts) return null;
   const segs=[]; let cur=null;
   for(const p of pts){
-    if(!cur || cur.rev!==p.rev){ cur={rev:p.rev, pts:[]}; segs.push(cur); }
+    if(!cur || cur.rev!==p.rev || p.brk){ cur={rev:p.rev, brk:!!p.brk, pts:[]}; segs.push(cur); }
     cur.pts.push({u:p.u, v:p.v});
   }
-  /* стыкуем сегменты, чтобы линия не рвалась на смене направления */
-  for(let i=1;i<segs.length;i++) segs[i].pts.unshift(segs[i-1].pts[segs[i-1].pts.length-1]);
+  /* стыкуем сегменты, чтобы линия не рвалась на смене направления; разрыв (brk) — место выбирает водитель */
+  for(let i=1;i<segs.length;i++) if(!segs[i].brk) segs[i].pts.unshift(segs[i-1].pts[segs[i-1].pts.length-1]);
+  for(let i=segs.length-1;i>=0;i--) if(segs[i].pts.length<2) segs.splice(i,1);
   /* лента со стрелками (см. «язык наложений»): вперёд — фиолетовая, задним ходом — розовая */
   for(const s of segs) s.rb=ribbonOf(s.pts, RIB_HW, true);
   return {segs};

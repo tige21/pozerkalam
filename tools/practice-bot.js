@@ -101,11 +101,17 @@
     return null;
   }
   /* трамвай у места разворота: ждём на своём пути, пока не пройдёт */
+  /* разворот с путей ждёт трамвай и встречный поток (п. 8.8): машина на встречной половине, которой до места
+     разворота меньше 6 с, проедет сквозь дугу. Бот ждал только трамвай, и проходил маршруты, пока ему везло
+     со временем: с точным расстоянием до разворота он приезжал на секунду позже и ловил встречную */
   function tramWait(st) {
     if (!st || st.node || st.turn !== 'U') return false;
-    for (const a of level.actors) { const s = a.act; if (!s.rail || !s.started || s.done) continue;
+    const my = Math.sign(Math.cos(car.th));
+    for (const a of level.actors) { const s = a.act; if (!s || s.ped || !s.started || s.done) continue;
       const toward = (st.at.v - a.v) * Math.cos(a.yaw) > 0, d = Math.abs(a.v - st.at.v);
-      if ((toward && d / Math.max(1, Math.abs(s.v)) < 14) || d < 10) return true; }
+      if (s.rail) { if ((toward && d / Math.max(1, Math.abs(s.v)) < 14) || d < 10) return true; continue; }
+      if (Math.sign(Math.cos(a.yaw)) === my || Math.abs(a.u - st.at.u) > 12) continue;
+      if ((toward && d / Math.max(1, Math.abs(s.v)) < 6) || d < 8) return true; }
     return false;
   }
   function blinkFor(st, distToAt) {
