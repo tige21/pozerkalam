@@ -11,7 +11,7 @@
    fetch из file:// соседние файлы не читает, поэтому гейт сам раздаёт корень репозитория по http.
 
      PW_DIR=/tmp/pw node tools/audio-check.mjs
-     FAULT=nomaster|nomute|flatrpm|relay|pan|clip|nosample|nofallback|seam PW_DIR=/tmp/pw node tools/audio-check.mjs
+     FAULT=nomaster|nomute|flatrpm|relay|pan|clip|nosample|nofallback|seam|kerbspam PW_DIR=/tmp/pw node tools/audio-check.mjs
 
    Код 1 — хоть одна проверка не прошла. */
 import { createRequire } from 'node:module';
@@ -388,6 +388,37 @@ const play = async (page, li) => {
   });
   check('без WebAudio игра идёт без звука, предупреждение «[audio]», без исключений (@app-audio-no-ctx)',
     r.dt > 0.2 && r.ac && P.warns.length >= 1 && !P.errors.length, 'время ' + r.dt.toFixed(2) + ', warn ' + P.warns.length + (P.errors[0] ? ', ' + P.errors[0] : ''));
+  await exitPage(P);
+}
+
+/* 11. Бордюр звучит при наезде, а не всё время, пока колесо на нём: запись повторялась каждые 0,3 с, и съехавший
+       на обочину слушал скрежет без конца (владелец, 11.10.2026). Касание мигает каждый третий кадр — так машину
+       выталкивают из бордюра, и мигание не должно считаться новым наездом */
+{
+  const P = await openPage({});
+  await play(P.page, 0);
+  const r = await P.page.evaluate((fault) => {
+    if (fault === 'kerbspam') { KERB_SND.gap = 0.3; KERB_SND.max = 99; KERB_SND.fade = 1; }
+    if (!SFX.B) return { err: 'записи не загружены' };
+    const ctx = new OfflineAudioContext(2, 44100 * 12, 44100), S = audioBuild(ctx, SFX.B), shots = [];
+    const f = window.sfxShot;
+    window.sfxShot = (S2, name, t, bus, g, rate) => { if (name === 'kerb') shots.push({ t: +t.toFixed(2), g: +g.toFixed(3) }); return f(S2, name, t, bus, g, rate); };
+    const st = { on: true, rpm: ENG.idle, load: 0, v: 3, cabin: false, scrape: 0, touch: false, bed: 0, flow: [], tram: null };
+    try {
+      for (let i = 0; i < 12 * 60; i++) { const t = i / 60;
+        /* 1–7 с вдоль бордюра; 7–7,3 съехал на миг; 7,3–8,5 снова на нём; 8,5–10 съехал; с 10 — новый наезд; с 11 — стоит */
+        const on = (t >= 1 && t < 7 && i % 3 !== 0) || (t >= 7.3 && t < 8.5) || t >= 10;
+        st.touch = on; st.scrape = on && t < 11 ? 0.6 : 0;
+        audioUpdate(S, st, t);
+      }
+    } finally { window.sfxShot = f; }
+    return { shots };
+  }, FAULT);
+  const sh = r.shots || [], first = sh.filter((x) => x.t < 9), second = sh.filter((x) => x.t >= 9);
+  const ok = !r.err && first.length >= 1 && first.length <= 2 && Math.abs(first[0].t - 1) < 0.05
+    && first.every((x, k) => k === 0 || x.g < first[k - 1].g) && second.length === 1 && Math.abs(second[0].t - 10) < 0.05;
+  check('бордюр: трение звучит при наезде, пока колесо на нём — ещё одно тихое напоминание, не больше; новый наезд — снова (@app-audio-kerb-once)',
+    ok, r.err || JSON.stringify(sh));
   await exitPage(P);
 }
 

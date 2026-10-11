@@ -10811,7 +10811,7 @@ const ENG={idle:750, red:5800, k:[0, 120, 66, 44, 32], kR:125};
 const SND_FLOW=4, SND_REF=6, SND_FAR=70;
 /* проезд мимо: ближе PASS_D к слушателю и не тише PASS_V — иначе машину слышно только петлёй потока */
 const PASS_D=10, PASS_V=3, PASS_MAX=2;
-const AU={on:false, rpm:750, load:0, v:0, cabin:false, scrape:0, bed:0, flow:[], tram:null, lu:0, lv:0};
+const AU={on:false, rpm:750, load:0, v:0, cabin:false, scrape:0, touch:false, bed:0, flow:[], tram:null, lu:0, lv:0};
 /* кандидаты в голоса потока — из пула: по объекту на машину каждый кадр — работа сборщику мусора */
 const AU_POOL=Array.from({length:48}, ()=>({d:0, sp:0, pan:0, a:null})), AU_TRAM={d:0, sp:0, pan:0};
 /* st: 0 — не грузили, 1 — грузим, 2 — готовы, −1 — отказ (играет синтез) */
@@ -10886,7 +10886,7 @@ function sfxShot(S, id, t, bus, vol, rate, off, dur){
   return s;
 }
 function audioBuild(ctx, B){
-  const S={ctx, B:B||null, src:[], nb:sndNoise(ctx), e:{rpm:ENG.idle, g:1, thr:0, acc:0, v:0}, lamp:false, trS:0, trK:0, trOn:false, bellT:-99, kerbT:-1, passN:0};
+  const S={ctx, B:B||null, src:[], nb:sndNoise(ctx), e:{rpm:ENG.idle, g:1, thr:0, acc:0, v:0}, lamp:false, trS:0, trK:0, trOn:false, bellT:-99, kerbT:0, kerbN:0, kerbOff:-99, kerbOn:0, passN:0};
   const G=g=>sndGain(ctx, g), F=(t,f,q)=>sndFilt(ctx, t, f, q);
   S.master=G(0);
   S.comp=ctx.createDynamicsCompressor();
@@ -10995,6 +10995,21 @@ function audioUpdate(S, st, t){
   sndSet(S.wiG.gain, 0.2*vk*vk, t, 0.2);
   if(S.B) audioUpdateRec(S, st, t, vk); else audioUpdateSyn(S, st, t, vk);
 }
+/* наезд на бордюр звучит один раз: запись трения — в начале касания, а пока колесо остаётся на бордюре и машина
+   едет вдоль — ещё не больше max−1 раз (одно тихое напоминание), через gap с и тише (fade). Раньше запись повторялась каждые
+   0,3 с, пока колесо прижато: «слишком много раз звучит… если пользователь уже заехал — противно» (владелец,
+   11.10.2026). Касание мигает от кадра к кадру — машину выталкивают из бордюра, — поэтому новым наездом
+   считается касание после rearm с без него. Возврат — громкость очередной записи, 0 — молчать */
+const KERB_SND={gap:2.5, max:2, fade:0.55, rearm:0.6};
+function kerbSndTick(S, st, t){
+  const on = st.touch!==undefined ? !!st.touch : st.scrape>0;
+  if(!on){ if(S.kerbOff===null) S.kerbOff=t; return 0; }
+  if(S.kerbOff!==null && t-S.kerbOff>KERB_SND.rearm){ S.kerbN=0; S.kerbT=t; S.kerbOn=t; }
+  S.kerbOff=null;
+  if(!st.scrape || S.kerbN>=KERB_SND.max || t<S.kerbT) return 0;
+  const k=Math.pow(KERB_SND.fade, S.kerbN); S.kerbN++; S.kerbT=t+KERB_SND.gap;
+  return k;
+}
 function audioUpdateRec(S, st, t, vk){
   const M=S.B.man.loops, L=st.load, r=clamp((st.rpm-ENG.idle)/1500, 0, 1);
   /* доля записи «под нагрузкой»: газ слышен сразу, обороты без газа (накат на второй) — наполовину */
@@ -11008,9 +11023,7 @@ function audioUpdateRec(S, st, t, vk){
   sndSet(S.tyS.playbackRate, 0.85+0.5*vk, t, 0.2);
   sndSet(S.tyG.gain, 0.65*Math.pow(vk, 1.1), t, 0.15);
   sndSet(S.bedG.gain, st.bed*2.5, t, 0.8);
-  /* бордюр: запись трения повторяется, пока колесо прижато, — каждый раз чуть другой высоты */
-  if(st.scrape && t>=S.kerbT){ sfxShot(S, 'kerb', t, S.inn, 0.35+0.4*st.scrape, 0.9+((t*7.31)%0.2)); S.kerbT=t+0.3; }
-  else if(!st.scrape) S.kerbT=-1;
+  { const k=kerbSndTick(S, st, t); if(k) sfxShot(S, 'kerb', t, S.inn, (0.35+0.4*st.scrape)*k, 0.9+((t*7.31)%0.2)); }
   for(let i=0;i<S.flow.length;i++){
     const V=S.flow[i], q=st.flow[i];
     if(!q){ sndSet(V.g.gain, 0, t, 0.25); continue; }
@@ -11039,7 +11052,10 @@ function audioUpdateSyn(S, st, t, vk){
   sndSet(S.inBp.frequency, 180+st.rpm*0.35, t, 0.07);
   sndSet(S.inG.gain, 0.04+0.3*L*(0.3+r), t, 0.09);
   sndSet(S.tyG.gain, 0.24*Math.pow(vk, 1.3), t, 0.15); sndSet(S.tyBp.frequency, 280+st.v*45, t, 0.15);
-  sndSet(S.scG.gain, st.scrape ? Math.min(0.4, 0.1+st.scrape*0.3) : 0, t, 0.03);
+  /* синтез трения — непрерывный шум: при наезде полный, если колесо осталось на бордюре — гаснет за 1,5 с */
+  kerbSndTick(S, st, t);
+  const kf=S.kerbOff===null ? clamp(1-(t-S.kerbOn-1)/1.5, 0, 1) : 1;
+  sndSet(S.scG.gain, st.scrape ? Math.min(0.4, 0.1+st.scrape*0.3)*kf : 0, t, 0.03);
   sndSet(S.bedG.gain, st.bed, t, 0.8);
   for(let i=0;i<S.flow.length;i++){
     const V=S.flow[i], q=st.flow[i];
@@ -11177,7 +11193,7 @@ function audioTick(dt){
   if(dt>0){ S.e.acc += ((v-(S.e.v||0))/dt - S.e.acc)*Math.min(1, dt/0.3); S.e.v=v; }
   AU.rpm=rpmStep(S.e, v*3.6, car.sel==='D' ? 1 : car.sel==='R' ? -1 : 0, S.e.thr, S.e.acc, dt);
   AU.load=S.e.thr; AU.v=Math.abs(car.vel); AU.cabin=opt.camMode===CAM_FP;
-  AU.scrape=COL_ST.touch && AU.v>0.15 ? Math.min(1, AU.v/3) : 0;
+  AU.touch=COL_ST.touch; AU.scrape=COL_ST.touch && AU.v>0.15 ? Math.min(1, AU.v/3) : 0;
   AU.bed=level.city ? (opt.traffic==='off' ? 0.025 : 0.045) : 0.015;
   AU.flow.length=0; AU.tram=null;
   let tram=null, n=0;
