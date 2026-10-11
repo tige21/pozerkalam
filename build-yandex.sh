@@ -56,6 +56,8 @@ print('адаптер вставлен,', len(s), 'байт')
 PYEOF
 
 echo "==> zip"
-(cd build/yandex && rm -f ../yandex.zip && zip -q -9 ../yandex.zip index.html)
+# записи звука лежат рядом со страницей: игра качает их относительным путём audio/… при включении звука
+rm -rf build/yandex/audio && cp -R audio build/yandex/audio
+(cd build/yandex && rm -f ../yandex.zip && zip -q -9 -r ../yandex.zip index.html audio)
 ls -la build/yandex.zip
 echo "ГОТОВО: build/yandex.zip — загружать в кабинет Яндекс Игр"

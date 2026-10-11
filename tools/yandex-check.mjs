@@ -34,7 +34,8 @@ function findChrome() {
   console.error('Chromium не найден'); process.exit(2);
 }
 
-if (process.env.REBUILD === '1' || !fs.existsSync(BUILD_HTML)) {
+const BUILD_AUDIO = path.join(path.dirname(BUILD_HTML), 'audio');
+if (process.env.REBUILD === '1' || !fs.existsSync(BUILD_HTML) || !fs.existsSync(BUILD_AUDIO)) {
   console.log('==> build-yandex.sh');
   execFileSync(path.join(ROOT, 'build-yandex.sh'), { cwd: ROOT, stdio: 'inherit' });
 }
@@ -62,6 +63,8 @@ const server = http.createServer((req, res) => {
   const p = new URL(req.url, 'http://x').pathname;
   if (p === '/sdk.js') { res.writeHead(200, { 'Content-Type': 'application/javascript' }); return res.end(SDK_MOCK); }
   if (p === '/' || p === '/index.html') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(html); }
+  const m = /^\/audio\/([a-z]+\.[0-9a-f]{8}\.mp3)$/.exec(p);
+  if (m && fs.existsSync(path.join(BUILD_AUDIO, m[1]))) { res.writeHead(200, { 'Content-Type': 'audio/mpeg' }); return res.end(fs.readFileSync(path.join(BUILD_AUDIO, m[1]))); }
   res.writeHead(404); res.end();
 });
 await new Promise(r => server.listen(0, '127.0.0.1', r));
@@ -147,6 +150,18 @@ const run = await page.evaluate(() => ({ level: game.li, paused, faces: typeof f
 check('уровень 1 запущен из билда площадки: кадр идёт, консоль чистая (@dist-yandex-console-clean)',
   run.level === 0 && !run.paused && run.faces > 0 && errors.length === 0,
   JSON.stringify(run) + (errors.length ? ' ошибки: ' + errors.join(' | ') : ''));
+
+/* 7. записи звука лежат в архиве рядом со страницей и грузятся из него при включении звука */
+const zipList = execFileSync('unzip', ['-Z1', path.join(ROOT, 'build', 'yandex.zip')], { encoding: 'utf8' }).split('\n').filter(Boolean);
+const snd = await page.evaluate(async () => {
+  opt.sound = true; initAudio(); paused = false;
+  for (let i = 0; i < 80 && SFX.st < 2 && SFX.st >= 0; i++) await new Promise((r) => setTimeout(r, 100));
+  return { st: SFX.st, rec: !!(SND && SND.B), files: SFX_MAN ? Object.values(SFX_MAN.files) : [] };
+});
+const inZip = snd.files.filter((f) => zipList.includes(f));
+check('записи звука в архиве площадки и грузятся из него при включении звука (@dist-yandex-audio)',
+  snd.st === 2 && snd.rec && snd.files.length > 0 && inZip.length === snd.files.length && errors.length === 0,
+  JSON.stringify({ ...snd, inZip: inZip.length }) + (errors.length ? ' ошибки: ' + errors.join(' | ') : ''));
 
 await browser.close();
 server.close();

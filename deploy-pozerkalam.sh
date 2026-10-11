@@ -276,8 +276,11 @@ sshr "nginx -t >/dev/null 2>&1 && systemctl reload nginx && echo RELOADED"
 csp_header_wait "$PROD_IP" "прод"
 
 echo "==> заливка"
-sshr "mkdir -p $DOCROOT/play/.next"
+sshr "mkdir -p $DOCROOT/play/.next $DOCROOT/play/audio"
 scpr -r landing/dist/* "$HOST:$DOCROOT/"
+# Записи звука — раньше страницы, которая на них ссылается. Имена с хэшем содержимого: новые файлы
+# ложатся рядом, играющие сейчас не перезаписываются, кэш браузера и SW не отдаст старый под новым именем
+scpr audio/*.mp3 "$HOST:$DOCROOT/play/audio/"
 # scp пишет файл на месте: пока 1,5 МБ страницы идут по сети, nginx отдавал бы её обрезанной.
 # В .next рядом, потом mv — переименование в той же файловой системе атомарно
 scpr build/play/index.html build/play/sw.js build/play/manifest.webmanifest build/play/icon-192.png build/play/icon-512.png "$HOST:$DOCROOT/play/.next/"
@@ -346,6 +349,19 @@ grep -q "По зеркалам" /tmp/pz_play.html && echo "    игра на /pl
 curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} "${RES_PROD[@]}" https://pozerkalam.space/ -o /tmp/pz_root.html -D /tmp/pz_root.hdr
 grep -q 'rel="canonical" href="https://pozerkalam.space/"' /tmp/pz_root.html && echo "    лендинг на корне: ДА"
 csp_wait "$PROD_IP" /play/ "прод /play/"
+# каждый файл записей из манифеста страницы отдаётся как audio/mpeg: без них игра звучит синтезом
+audio_smoke(){ # $1 — IP, $2 — подпись
+  local f r n=0
+  for f in $(grep -o 'audio/[a-z]*\.[0-9a-f]\{8\}\.mp3' build/play/index.html | sort -u); do
+    r=$(curl -s -m 20 ${CURL_BIND[@]+"${CURL_BIND[@]}"} --resolve "pozerkalam.space:443:$1" -o /dev/null \
+         -w "%{http_code} %{content_type}" "https://pozerkalam.space/play/$f" || echo 000)
+    [ "$r" = "200 audio/mpeg" ] || { echo "СМОУК ПРОВАЛЕН: $2 /play/$f -> $r"; exit 1; }
+    n=$((n+1))
+  done
+  [ "$n" -gt 0 ] || { echo "СМОУК ПРОВАЛЕН: в странице нет файлов записей"; exit 1; }
+  echo "    записи звука $2: $n файла, audio/mpeg"
+}
+audio_smoke "$PROD_IP" "прод"
 csp_wait "$PROD_IP" / "прод /"
 # Rybbit — стек spark: если он лежит, а аналитика игры выключена, это не повод валить деплой
 rb_smoke(){ # $1 — IP, $2 — подпись
@@ -473,6 +489,7 @@ else
       echo "ЗЕРКАЛО РАСХОДИТСЯ С ПРОДОМ (код ${m_code}) — зарубежные юзеры на другой сборке"; exit 1
     fi
     csp_wait "$MIRROR_IP" /play/ "зеркало /play/"
+    audio_smoke "$MIRROR_IP" "зеркало"
     rb_smoke "$MIRROR_IP" "зеркало"
     acct_smoke "$MIRROR_IP" "зеркало"
     if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
