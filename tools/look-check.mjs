@@ -274,20 +274,22 @@ await shot('chase-l2');
   await pose(() => { loadLevel(0); }, null, 300);
 }
 
-/* --- маркер виден из салона: уровень 24 у фазы «прижмись к жёлтой линии», уровень 31 у стоп-линии --- */
-for (const c of [{ l: 23, u: 2.6, v: -8, th: 0, name: 'L24 «прижмись к жёлтой линии»' }, { l: 30, u: -78, v: -16, th: 0, name: 'L31 «остановись у линии»' }]) {
-  /* габаритные столбики своей машины тоже жёлтые и стоят над капотом — на время проверки refs=0,
-     иначе она зелёная и без маркера */
+/* --- маркер виден из салона: уровень 24 перед линией «левый борт — у осевой», уровень 31 у стоп-линии --- */
+for (const c of [{ l: 23, u: 2.6, v: -18, th: 0, name: 'L24 «левый борт — у осевой»' }, { l: 30, u: -78, v: -16, th: 0, name: 'L31 «остановись у линии»' }]) {
+  /* габаритные столбики своей машины стоят над капотом — на время проверки refs=0, иначе она зелёная и без маркера */
   await pose((c) => { loadLevel(c.l); while (opt.camMode !== CAM_FP) pressKey('KeyC'); while (hudMode !== 2) cycleHud(); opt.mirrors = false; opt.fpYaw = 0; opt.fpPitch = 0; opt.refs = 0;
-    setBody(c.u, c.v, c.th); car.vel = 0; }, c, 500);
+    opt.marks = true; setBody(c.u, c.v, c.th); car.vel = 0; }, c, 500);
   await shot('mark-' + c.l);
-  /* жёлтые пиксели маркера выше линии капота (верхние 60 % кадра): линия на асфальте под капотом
-     их не даёт, столбики на концах — дают */
-  const n = await page.evaluate(() => { const g = canvas.getContext('2d'), k = DPR, d = g.getImageData(0, 0, Math.round(W * k), Math.round(H * 0.6 * k)).data; let n = 0;
-    /* цвет маркера [250,204,21] под ламбертом: b/r < 0,13 и g/r ≈ 0,82; у щита «главная дорога»
-       [236,186,44] b/r 0,19, у габаритных столбиков [255,206,60] 0,24 — не считаются */
-    for (let i = 0; i < d.length; i += 4) { const r = d[i], g = d[i + 1], b = d[i + 2]; if (r > 110 && g > 85 && b / r < 0.13 && g / r > 0.74 && g / r < 0.9) n++; } return n; });
-  check(`жёлтый маркер виден из салона выше капота — ${c.name} (@render-mark-visible)`, n >= 40, `жёлтых пикселей ${n}`);
+  /* маркер — голубой ориентир (язык наложений, 11.10.2026), а сверху голубое небо: по цвету его не отделить.
+     Считаем пиксели выше линии капота (верхние 60 % кадра), которые меняются, когда маркеры выключены:
+     линия на асфальте под капотом их не даёт, столбики на концах — дают */
+  const top = () => page.evaluate(() => { const g = canvas.getContext('2d'), k = DPR; return Array.from(g.getImageData(0, 0, Math.round(W * k), Math.round(H * 0.6 * k)).data); });
+  const on = await top();
+  await pose(() => { opt.marks = false; }, null, 300);
+  const off = await top();
+  let n = 0; for (let i = 0; i < on.length; i += 4) if (Math.abs(on[i] - off[i]) + Math.abs(on[i + 1] - off[i + 1]) + Math.abs(on[i + 2] - off[i + 2]) > 60) n++;
+  await pose(() => { opt.marks = true; }, null, 100);
+  check(`маркер-ориентир виден из салона выше капота — ${c.name} (@render-mark-visible)`, n >= 40, `пикселей маркера ${n}`);
 }
 await pose(() => { opt.refs = 1; loadLevel(0); }, null, 300);
 

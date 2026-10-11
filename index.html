@@ -82,6 +82,11 @@ body.compact .sidebtn,body.hud-off .sidebtn,body.ov .sidebtn{display:none!import
   font-size:.92em;white-space:nowrap;pointer-events:auto;cursor:pointer;
   vertical-align:middle;margin-left:5px}
 #coach .cg.done{border-color:rgba(80,220,130,.6);color:#8df0b0}
+/* чипы карточки экзамена: передача перед командой, метры и баллы после — отдельными плашками, не в фразе */
+#coach .ctag{display:inline-block;padding:1px 8px;border-radius:999px;background:rgba(0,0,0,.25);
+  border:1px solid rgba(255,255,255,.14);font-size:.88em;white-space:nowrap;vertical-align:middle;
+  font-variant-numeric:tabular-nums;margin-left:4px}
+#coach .ctag.cpre{margin:0 4px 0 0;background:rgba(88,160,224,.28);border-color:rgba(125,200,255,.45)}
 #coach .cgb{width:38px;height:4px;border-radius:2px;background:rgba(255,255,255,.15);overflow:hidden}
 #coach .cgb i{display:block;height:100%;width:0;background:#58b0ff;border-radius:2px}
 #coach .cg.done .cgb i{background:#50dc82}
@@ -566,6 +571,10 @@ body.menu #overlay.lay-card{background:rgba(4,7,11,.62);pointer-events:auto}
 #overlay .mok{margin:4px 0 10px;font-size:13.5px;color:#7ee3a4}
 #overlay .mbody > button{margin:14px 0 0}
 .mrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0}
+/* легенда «Что на асфальте»: образец — тот же цвет, которым наложение рисуется в мире */
+ul.ovleg{list-style:none;margin:8px 0 12px;padding:0}
+ul.ovleg li{display:flex;gap:10px;align-items:flex-start;margin:7px 0;font-size:14px;line-height:1.4}
+ul.ovleg i{flex:none;width:30px;height:12px;margin-top:4px;border-radius:3px}
 #overlay .mrow button{margin:0}
 #overlay button.linkbtn.danger{color:#ff9aa2}
 #overlay button:disabled{opacity:.4;cursor:default}
@@ -1012,6 +1021,95 @@ function strokeGroundPath(uvPts, color, lw, dash, y){
     ctx.moveTo(sa.x,sa.y); ctx.lineTo(sb.x,sb.y);
   }
   ctx.stroke(); ctx.restore();
+}
+
+/* ---------- язык наложений ----------
+   Белое и жёлтое на асфальте — только настоящая разметка. Всё, что рисует сам тренажёр, говорит
+   одним из трёх способов и не пунктиром по земле: фиолетовая лента со стрелками — куда ехать
+   (маршрут экзамена, линия показа; задним ходом — розовая), голубые полосы и столбики — ориентир
+   («до этой линии», «отсюда дуга»), зелёная заливка — зона зачёта. Пунктир остался у прогноза своей
+   машины (G) и у её рамки (B): они едут вместе с машиной, с краской их не спутать. До 11.10.2026 пунктир
+   нёс 8 смыслов в 5 цветах: жёлтый круг зоны экзамена читался как разметка 1.10, голубой маршрут — как
+   голубой ориентир уроков, ширина в пикселях экрана не давала глубины (владелец: «вообще не понимаю,
+   как работают эти пунктирные линии») */
+const OVL={route:[167,139,250], routeArrow:[91,33,182], rev:[244,114,182], revArrow:[157,23,77],
+           mark:[125,216,255], goal:[74,222,128]};
+const ovlRGBA=(c,a)=>'rgba('+c[0]+','+c[1]+','+c[2]+','+a+')';
+function OVL_LEGEND(){
+  const sw=(bg)=>'<i style="background:'+bg+'"></i>';
+  return '<ul class="ovleg">'
+    +'<li>'+sw('linear-gradient(90deg,'+ovlRGBA(OVL.route,.75)+' 60%,'+ovlRGBA(OVL.routeArrow,.9)+' 60%)')
+      +'<span><b>Фиолетовая лента со стрелками</b> — куда ехать: маршрут инспектора на тренировочном экзамене и путь показа (G). '
+      +'Задним ходом лента розовая. На настоящем экзамене ленты нет, только команды.</span></li>'
+    +'<li>'+sw(ovlRGBA(OVL.mark,.85))+'<span><b>Голубая полоса или столбик</b> — ориентир урока: до этой линии, отсюда начинай дугу.</span></li>'
+    +'<li>'+sw(ovlRGBA(OVL.goal,.6))+'<span><b>Зелёная заливка</b> — зона, где нужно встать.</span></li>'
+    +'<li>'+sw('linear-gradient(90deg,#e8edf0 50%,#e2c13c 50%)')+'<span><b>Белое и жёлтое</b> — настоящая разметка: читай её, как на дороге.</span></li>'
+    +'<li>'+sw('repeating-linear-gradient(90deg,rgba(251,146,60,.9) 0 6px,transparent 6px 10px)')
+      +'<span><b>Пунктир у своей машины</b> — её прогноз и рамка габаритов (B): едут вместе с машиной.</span></li>'
+    +'</ul>';
+}
+/* маркер уровня цвета разметки (жёлтый, белый) уходит в голубой ориентир — двадцать учебных линий были жёлтыми */
+function ovlMarkCol(c){
+  return (c[0]>200 && c[1]>140 && c[2]<120) || (c[0]>205 && c[1]>205 && c[2]>205) ? OVL.mark : c;
+}
+/* лента в метрах: полоса шириной 2·hw вдоль ломаной, шаг RIB_STEP; стрелки — треугольники через RIB_ARROW.
+   Строится один раз (маршрут — три раза в секунду), в кадре только заливка */
+const RIB_HW=0.45, RIB_STEP=1.5, RIB_ARROW=6;
+/* яркость по расстоянию от машины: ближняя лента читается, дальняя не спорит с разметкой */
+const RIB_FADE=[[25,0.55],[50,0.38],[80,0.2]];
+function polyArea(p){ let a=0; for(let i=0;i<p.length;i++){ const j=(i+1)%p.length; a+=p[i].u*p[j].v-p[j].u*p[i].v; } return a; }
+function ribbonOf(pts, hw, arrows){
+  const out={quads:[], tris:[]};
+  if(!pts || pts.length<2) return out;
+  const R=[{u:pts[0].u, v:pts[0].v}]; let carry=0;
+  for(let i=1;i<pts.length;i++){
+    const a=pts[i-1], b=pts[i], L=Math.hypot(b.u-a.u, b.v-a.v); if(L<1e-6) continue;
+    let s=RIB_STEP-carry;
+    for(; s<=L; s+=RIB_STEP) R.push({u:a.u+(b.u-a.u)*s/L, v:a.v+(b.v-a.v)*s/L});
+    carry=L-(s-RIB_STEP);
+  }
+  const e=pts[pts.length-1], q=R[R.length-1];
+  if(Math.hypot(e.u-q.u, e.v-q.v)>0.2) R.push({u:e.u, v:e.v});
+  if(R.length<2) return out;
+  /* нормаль вершины — по центральной разности: на изгибе полоса не рвётся и не перехлёстывается */
+  const N=R.map((p,i)=>{ const a=R[Math.max(0,i-1)], b=R[Math.min(R.length-1,i+1)];
+    const du=b.u-a.u, dv=b.v-a.v, L=Math.hypot(du,dv)||1; return {u:-dv/L, v:du/L}; });
+  const side=(i,k)=>({u:R[i].u+N[i].u*hw*k, v:R[i].v+N[i].v*hw*k});
+  for(let i=0;i+1<R.length;i++)
+    out.quads.push({p:[side(i,1), side(i+1,1), side(i+1,-1), side(i,-1)],
+                    u:(R[i].u+R[i+1].u)/2, v:(R[i].v+R[i+1].v)/2});
+  /* под правилом nonzero все многоугольники одной заливки обязаны идти в одну сторону, иначе их
+     пересечение вырезается дыркой (та же беда была у стрелок разметки 1.18) */
+  const sg=Math.sign(polyArea(out.quads[0].p))||1;
+  if(arrows){
+    const every=Math.max(2, Math.round(RIB_ARROW/RIB_STEP));
+    for(let i=1;i+1<R.length;i+=every){
+      const p=R[i], du=R[i+1].u-p.u, dv=R[i+1].v-p.v, L=Math.hypot(du,dv)||1, tu=du/L, tv=dv/L;
+      const tri=[{u:p.u+tu*0.75, v:p.v+tv*0.75},
+                 {u:p.u-tu*0.55+N[i].u*hw*0.8, v:p.v-tv*0.55+N[i].v*hw*0.8},
+                 {u:p.u-tu*0.55-N[i].u*hw*0.8, v:p.v-tv*0.55-N[i].v*hw*0.8}];
+      if(Math.sign(polyArea(tri))!==sg) tri.reverse();
+      out.tris.push({p:tri, u:p.u, v:p.v});
+    }
+  }
+  return out;
+}
+const RIB_BAND=[[],[],[]], RIB_TRI=[[],[],[]];
+function ribBand(q, c){
+  const d=Math.hypot(q.u-c.u, q.v-c.v);
+  return d<RIB_FADE[0][0] ? 0 : d<RIB_FADE[1][0] ? 1 : d<RIB_FADE[2][0] ? 2 : -1;
+}
+/* лента гаснет по расстоянию от машины тремя ступенями — три заливки на ленту, а не одна на кусок */
+function drawRibbon(rb, col, arrowCol, y){
+  if(!rb || !rb.quads.length) return;
+  const c=bodyPos();
+  for(let k=0;k<3;k++){ RIB_BAND[k].length=0; RIB_TRI[k].length=0; }
+  for(const q of rb.quads){ const k=ribBand(q,c); if(k>=0) RIB_BAND[k].push(q.p); }
+  for(const t of rb.tris){ const k=ribBand(t,c); if(k>=0) RIB_TRI[k].push(t.p); }
+  for(let k=0;k<3;k++){
+    if(RIB_BAND[k].length) fillGroundPolys(RIB_BAND[k], ovlRGBA(col, RIB_FADE[k][1]), y);
+    if(RIB_TRI[k].length) fillGroundPolys(RIB_TRI[k], ovlRGBA(arrowCol, Math.min(0.9, RIB_FADE[k][1]*1.7)), y+0.002);
+  }
 }
 
 /* ---------- сортируемые грани ---------- */
@@ -5844,7 +5942,7 @@ const LEVELS = [
     'Конус должен уходить под середину бокового стекла — тогда ты проходишь его с запасом.',
     'Сразу после конуса возвращай руль и готовь доворот в другую сторону.',
   ],
-  refs:'Включи линии траекторий (G): жёлтые дуги — путь задних колёс. Целься ими в просвет, а не капотом.',
+  refs:'Включи линии траекторий (G): оранжевые дуги — путь задних колёс. Целься ими в просвет, а не капотом.',
   hacks:[
     'Смотри в просвет, а не на конус: машина едет туда, куда смотришь.',
     'Задние колёса срезают ~0,4 м внутрь поворота — держи запас у препятствий.',
@@ -6962,7 +7060,7 @@ const LEVELS = [
      icon:'↱', act:'Направо по малой дуге', wheel:'right',
      goal:{metric:'ang',target:90,dir:'up'},
      why:'Правый поворот — короткий: крути к апексу у своего края. Вынесло к осевой — начал крутить поздно.',
-     hint:'Поворачивай направо по малой дуге — к жёлтому апексу у края.', marks:['apex1']},
+     hint:'Поворачивай направо по малой дуге — к голубому апексу у края.', marks:['apex1']},
     /* v<4: после левого поворота машина снова оказывается при u<16,6, и без границы фазы подъезда
        ко второму перекрёстку срабатывали заново, уводя её на север */
     {when:s=>s.u<13.6&&s.v<4&&s.blink!=='L',
@@ -7371,11 +7469,11 @@ const LEVELS = [
     /* цель измеримая: «встать в правую полосу» словами ученик доводил рулём до бордюра.
        В правой полосе до бордюра остаётся ~1,1 м — по этому числу и останавливаем доворот */
     {when:s=>s.u<42&&s.v>-3.6&&s.gear>=0,
-     icon:'↱', act:'Смещайся вправо — до жёлтой отметки', wheel:'right', blinker:'R',
+     icon:'↱', act:'Смещайся вправо — до голубой отметки', wheel:'right', blinker:'R',
      /* 1,8 м — столько остаётся справа к жёлтой отметке: фазу закрывает она, а не датчик,
         и цель 1,5 шкала не добирала за весь показ */
      goal:{metric:'right',target:1.8,dir:'down'},
-     why:'За жёлтой отметкой разметка сплошная: там перестроение — 5 баллов, а впереди стоит машина.',
+     why:'За голубой отметкой разметка сплошная: там перестроение — 5 баллов, а впереди стоит машина.',
      hint:'Плавно смещайся вправо, пока справа не станет около 1,8 м.', marks:['lane','solid']},
     {when:s=>s.u<42&&s.right<1.8&&s.gear>=0,
      icon:'⬆', act:'Выровняй руль и держи полосу', wheel:'straight', move:'fwd', blinker:'R',
@@ -7571,7 +7669,7 @@ const LEVELS = [
      hint:'Включи правый поворотник (E): въезд на кольцо — поворот направо.', marks:['yield']},
     {when:s=>s.u<54&&s.gear>=0,
      icon:'⬆', act:'К кольцу по правой полосе', move:'fwd', wheel:'straight', blinker:'R',
-     goal:{text:'до жёлтой линии «уступи»'},
+     goal:{text:'до голубой линии «уступи»'},
      why:'На кольцо въезжают медленно: внутри тормозить негде, а решение принимать надо за секунду.',
      hint:'Подъезжай к кольцу по правой полосе и сбавляй заранее.', marks:['yield']},
     {when:s=>s.u<63&&s.gear>=0&&s.gap<5,
@@ -7656,7 +7754,7 @@ const LEVELS = [
   phases:[
     {when:s=>s.v<-12&&s.gear>=0,
      icon:'⬆', act:'К главной под знаком «уступи»', move:'fwd', wheel:'straight',
-     goal:{text:'до жёлтой линии'},
+     goal:{text:'до голубой линии'},
      why:'Знак «уступи» не требует остановки сам по себе — но требует пропустить. Подъезжай так, чтобы успеть остановиться.',
      hint:'Подъезжай к главной, сбавляя заранее: сейчас надо будет уступать.', marks:['yield']},
     {when:s=>s.v<-7&&s.gear>=0&&s.gap<5,
@@ -7690,7 +7788,7 @@ const LEVELS = [
 
 { name:'32 · Экзамен: маршрут с инспектором', traffic:'city',
   task:'Экзаменационная поездка по городу: команды даёт инспектор. Маршрут выбирается случайно из трёх, каждый — около 450 м с перекрёстками, разворотом, кольцом и эстакадой. Допустимо до 6 штрафных баллов; аварийная ошибка — незачёт сразу.',
-  tip:'Два режима в меню ≡. Тренировочный: команда объявляется заранее, карта маршрута в углу, ошибка разбирается на месте. Настоящий: инспектор молчит, датчиков нет, грубая ошибка валит попытку.',
+  tip:'Режим выбирается в разделе «Экзамен» и в брифинге. Тренировочный: фиолетовая лента ведёт по маршруту, карта в углу, ошибка разбирается на месте. Настоящий: только команды инспектора, без ленты и датчиков, грубая ошибка валит попытку.',
   steps:[
     'Маршрут выбирается случайно — заучить наизусть не получится.',
     'Команда приходит заранее: «через 60 м направо» — успевай перестроиться.',
@@ -7840,12 +7938,9 @@ const LEVELS = [
     b.city.turnZones.push({u:0, v:-35, yaw:0, w:19.6, l:18, uturn:true, blink:'L', dir:0});
     b.city.yieldZones.push({u:61, v:-4.95, yaw:rad(90), w:6.6, l:9, dist:13});
     b.city.yieldZones.push({u:-78, v:-11, yaw:0, w:6.6, l:7, dist:14});
-    /* карманы у тротуара — голубым пунктиром, ровно там, где их засчитывает этап */
-    for(const k in EXAM_POCK) for(const p of EXAM_POCK[k]){
-      const pts=rectPts(p.u,p.v,p.w,p.l,0);
-      b.dec.push({line:true, stroke:'rgba(125,216,255,.55)', lw:2, dash:[7,6], pts:pts.concat([pts[0]])});
-      b.city.pockets.push(p);
-    }
+    /* карманы у тротуара — не декаль мира: все шесть стояли голубым пунктиром в обоих режимах, и те, которых
+       нет в маршруте. Названный командой карман рисует зона манёвра (drawExamZone) — там, где его засчитывает этап */
+    for(const k in EXAM_POCK) for(const p of EXAM_POCK[k]) b.city.pockets.push(p);
     return { obs:b.obs, dec:b.dec, city:b.city, ramps,
              start:{u:8.15,v:-100,th:0}, goal:null }; }
   }
@@ -8847,7 +8942,7 @@ function examRouteSvg(){
      маршрут обязан выглядеть одинаково, иначе карта учит не тому пути */
   const line=mp.pts.length>1
     ? '<polyline points="'+mp.pts.map(p=>px(p.u)+','+py(p.v)).join(' ')
-      +'" fill="none" stroke="#7dd8ff" stroke-width="1.6" stroke-dasharray="4,3" '
+      +'" fill="none" stroke="'+ovlRGBA(OVL.route,.95)+'" stroke-width="1.8" '
       +'stroke-linejoin="round" stroke-linecap="round"/>'
     : '';
   const dots=pts.map((st,i)=>'<circle cx="'+px(st.at.u)+'" cy="'+py(st.at.v)+'" r="2" fill="'
@@ -8868,13 +8963,13 @@ function examBriefHTML(){
     : '<li>'+(i+1)+'. '+st.cmd+'</li>').join('');
   return '<h1>Экзаменационный маршрут</h1>'
     +'<p>'+(examTrain()
-      ? 'Тренировочный режим: подсказки, зазоры и карта маршрута включены, ошибка не обрывает поездку — её разберут на месте.'
-      : 'Настоящий режим: инспектор молчит, датчиков нет, грубая ошибка — незачёт сразу.')+'</p>'
+      ? 'Тренировочный режим: фиолетовая лента на асфальте ведёт по маршруту, зазоры и карта включены, ошибка не обрывает поездку — её разберут на месте.'
+      : 'Настоящий режим: только команды инспектора, без ленты, карты и датчиков; грубая ошибка — незачёт сразу.')+'</p>'
     +examRouteSvg()
     +'<ul class="startlist">'+rows+'</ul>'
     +'<p style="color:#93a7bd">Допустимо до '+(EXAM_FAIL_SUM-1)+' штрафных баллов. '
     +'Порядок манёвров и финишный карман в каждом заезде свои. '
-    +'Линия на асфальте — твоя полоса: правая, перед манёвром переходит в нужную.'
+    +(examTrain()?'Лента идёт по твоей полосе: правой, а перед манёвром переходит в нужную.':'')
     +(started?' Карта в углу открывает этот список в любой момент.':'')+'</p>'
     +'<button data-act="brief">'+(started?'Продолжить':'Поехали')+'</button> '
     + (started?'':examModeBtnHTML())
@@ -9000,9 +9095,19 @@ function examNav(){
      участка, игрок стоит от неё в десятках метров, и «прямо по проспекту» вместо полной
      команды звучало как обрывок уже на старте экзамена */
   if(st.turn==='straight') return {glyph:g, text:st.cmd, dist:d};
-  if(d>28) return {glyph:g, text:'Через '+(Math.round(d/10)*10)+' м — '+examShort(st), dist:d};
+  /* bare — та же команда без «через N м»: на карточке метры стоят в чипе, и две цифры рядом спорили */
+  if(d>28) return {glyph:g, text:'Через '+(Math.round(d/10)*10)+' м — '+examShort(st), bare:examShort(st), dist:d};
   if(d>10) return {glyph:g, text:examShort(st), dist:d};
   return {glyph:g, text:st.cmd, dist:d};
+}
+/* чипы карточки экзамена: метры до манёвра (крупно округлены вдали — карточка не пересобирается каждый
+   метр) и баллы. В настоящем режиме счёт не показывается: инспектор называет его в конце */
+function examTags(nav){
+  const t=[], fl=examFlags();
+  if(nav && fl.dist && nav.dist!==null && nav.dist<75)
+    t.push((nav.dist>30 ? Math.round(nav.dist/5)*5 : Math.round(nav.dist))+' м');
+  if(fl.dist) t.push('баллы '+exam.score);
+  return t.length ? t : null;
 }
 /* короткая форма команды: до манёвра нужен глагол, а не абзац */
 function examShort(st){ return st.short || st.cmd; }
@@ -9012,7 +9117,6 @@ function examShort(st){ return st.short || st.cmd; }
    идёт по графу улиц до точки текущей команды и продолжается до следующей: за поворотом
    должно быть видно, куда дальше. Рисуется в ОБОИХ режимах — в жизни инспектор тоже
    говорит, куда ехать, и повторяет; проверяется вождение, а не память на маршрут. */
-const EXAM_LEG_COL='rgba(125,216,255,.62)';
 const EXAM_LEG_MAX=160;            /* дальше игрок не смотрит, а точки стоят кадров в зеркалах */
 const EXAM_LEG_T=0.35;             /* пересчёт три раза в секунду: две Дейкстры ≈ 0,2 мс */
 /* полоса подъезда — половина урока манёвра: налево перестраиваются влево, разворот
@@ -9123,55 +9227,33 @@ function uturnArc(z, out){
 }
 function drawExamZone(){
   const z=exam.zone; if(!z) return;
-  if(z.kind==='node' || z.kind==='ring'){
-    const p=[];
-    for(let i=0;i<=28;i++){ const a=i/28*TAU; p.push({u:z.u+Math.cos(a)*z.r, v:z.v+Math.sin(a)*z.r}); }
-    /* пятно перекрёстка — бледнее кармана и разворота: там линия уже показала, куда
-       поворачивать, и яркий круг во весь кадр только шумит */
-    strokeGroundPath(p, 'rgba(255,207,77,.42)', 2, [9,8], 0.042);
+  /* перекрёсток и кольцо — без зоны: куда поворачивать, показывает лента, а жёлтый пунктирный круг
+     по кромке асфальта читался как разметка 1.10 */
+  if(z.kind==='node' || z.kind==='ring') return;
+  if(z.kind==='pocket'){
+    fillGroundPoly(rectPts(z.u,z.v,z.w,z.l,z.yaw), ovlRGBA(OVL.goal,.22), ovlRGBA(OVL.goal,.85), 2.5, 0.042);
     return;
   }
-  const rp=rectPts(z.u,z.v,z.w,z.l,z.yaw); rp.push(rp[0]);
-  strokeGroundPath(rp, EXAM_ZONE_COL, 2.5, [9,8], 0.042);
-  if(z.kind!=='uturn') return;
-  const f=fuv(z.yaw), rt=ruv(z.yaw);
-  /* кромки полотна внутри зоны: команда говорит «с трамвайных путей», и путь должен быть виден */
-  for(const x of [-TRAM_HW, TRAM_HW])
-    strokeGroundPath([{u:z.u-f.u*z.l/2+rt.u*x, v:z.v-f.v*z.l/2+rt.v*x},
-                      {u:z.u+f.u*z.l/2+rt.u*x, v:z.v+f.v*z.l/2+rt.v*x}],
-      'rgba(255,207,77,.42)', 2, [5,6], 0.041);
-  const arc=[]; uturnArc(z, p=>arc.push(p));
-  strokeGroundPath(arc, EXAM_ZONE_COL, 3, null, 0.043);
-  const e=arc[arc.length-1], q=arc[arc.length-2];
-  const du=e.u-q.u, dv=e.v-q.v, L=Math.hypot(du,dv)||1, nu=du/L, nv=dv/L;
-  strokeGroundPath([{u:e.u-nu*0.9-nv*0.55, v:e.v-nv*0.9+nu*0.55}, e,
-                    {u:e.u-nu*0.9+nv*0.55, v:e.v-nv*0.9-nu*0.55}], EXAM_ZONE_COL, 3, null, 0.043);
+  const r=ruv(z.yaw);
+  const post=(u,v)=>{ pushBox(u,0.65,v,0.03,0.65,0.03,0,OVL.mark); pushBox(u,1.36,v,0.07,0.07,0.07,0,OVL.mark); };
+  /* стоп-линия на подъёме нарисована в мире белым — ориентир ставит столбики на её концах, а не красит поверх */
+  if(z.kind==='stopline'){
+    for(const k of [-1,1]) post(z.u+r.u*(z.w/2+0.3)*k, z.v+r.v*(z.w/2+0.3)*k);
+    return;
+  }
+  /* разворот: дуга полного вывода руля — та же лента маршрута, столбик там, где дуга начинается */
+  if(!z.rb){ const arc=[]; uturnArc(z, p=>arc.push(p)); z.rb=ribbonOf(arc, RIB_HW, true); z.a0=arc[0]; }
+  drawRibbon(z.rb, OVL.route, OVL.routeArrow, 0.043);
+  post(z.a0.u-r.u*0.8, z.a0.v-r.v*0.8);
 }
 function drawExamNav(){
   if(!examActive()) return;
   const fl=examFlags();
   if(!fl.zone) return;
   if(exam.leg && exam.leg.draw && fl.line){
-    for(const s of exam.leg.draw.segs) strokeGroundPath(s.pts, EXAM_LEG_COL, 3, [10,9], 0.038);
-    for(const ch of exam.leg.draw.chev) strokeGroundPath(ch.pts, EXAM_LEG_COL, 2, null, 0.039);
+    for(const s of exam.leg.draw.segs) drawRibbon(s.rb, OVL.route, OVL.routeArrow, 0.038);
   }
   drawExamZone();
-}
-/* маячок в точке текущей команды. Без него «через 30 м — разворот» не отвечает на вопрос,
-   ГДЕ эти 30 метров кончаются: у экзамена нет ни goal, ни marks, и «угол к цели» пустой.
-   Только тренировочный режим — настоящий инспектор ориентиров не расставляет.
-   Список кэшируется по номеру этапа: drawSceneInto зовёт его каждый кадр и на каждое зеркало */
-function examMarks(){
-  if(!exam || !examFlags().hints) return null;
-  const st=exam.route[exam.stage];
-  if(!st || !st.at) return null;
-  if(exam._markStage!==exam.stage){
-    exam._markStage=exam.stage;
-    /* без подписи: короткую команду над зоной печатает drawMarkLabels своим путём,
-       иначе над одной точкой висели бы две одинаковые пилюли */
-    exam._marks=[mpoint(st.at.u, st.at.v)];
-  }
-  return exam._marks;
 }
 /* два режима: «тренировочный» — полный HUD, навигация с упреждением и разбор ошибки
    на месте; «настоящий» — молчаливый инспектор и провал. Молчание учит только того,
@@ -9183,7 +9265,9 @@ function examTrain(){ return opt.examMode!=='real'; }
 function examFlags(){
   if(exam && exam.kind==='practice') return {line:false, zone:false, hints:false, map:true, dist:true, sensors:true, forgiving:false};
   const t=examTrain();
-  return {line:true, zone:true, hints:t, map:t, dist:t, sensors:t, forgiving:t};
+  /* настоящий экзамен — без ленты: в жизни инспектор говорит, куда ехать, а полосу и знаки читает
+     сам кандидат. Лента в этом режиме учила ехать по линии, а не слушать команду */
+  return {line:t, zone:true, hints:t, map:t, dist:t, sensors:t, forgiving:t};
 }
 let practiceOn=false;           /* следующая загрузка городского урока — в режиме практики */
 function setExamMode(m){
@@ -10432,7 +10516,7 @@ function drawRefs(){
   }
   for(const sg of [-1,1]){
     strokeGroundPath([P(sg*HALF_W,-HALF_L-4.2),P(sg*HALF_W,HALF_L+5.0)],
-      opt.camMode===CAM_FP?'rgba(125,216,255,.85)':'rgba(125,216,255,.45)',2,[14,8],0.045);
+      opt.camMode===CAM_FP?'rgba(251,146,60,.8)':'rgba(251,146,60,.45)',2,[14,8],0.045);
   }
   if(opt.refs<2) return;
   const marks = MOB ? [[0.3,'rgba(248,90,80,.95)'],[1.0,'rgba(250,204,21,.9)']]
@@ -10463,26 +10547,38 @@ function markCol(col){
   const m=/rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(col||'');
   return m ? [+m[1],+m[2],+m[3]] : [250,204,21];
 }
+/* линия-ориентир — полоса 0,18 м в метрах (см. «язык наложений»): на экране она сужается с расстоянием,
+   как настоящая; заливка собирается один раз здесь, в кадре только fillGroundPolys */
+const MARK_HW=0.09;
 function mline(pts,col,o){ o=o||{};
-  const posts = o.posts!==undefined ? o.posts : !!o.label;
-  return {kind:'line',pts,col,dash:o.dash===null?null:(o.dash||[12,7]),lw:o.lw||2.5,
-          label:o.label,la:o.la||pts[pts.length>>1],
-          posts:posts ? [pts[0], pts[pts.length-1]] : null, colArr:markCol(col)}; }
-function mpoint(u,v,label,col){ return {kind:'point',u,v,label,col:col||[255,214,60]}; }
+  const posts = o.posts!==undefined ? o.posts : !!o.label, c=ovlMarkCol(markCol(col));
+  return {kind:'line',pts,col,label:o.label,la:o.la||pts[pts.length>>1],
+          polys:ribbonOf(pts, MARK_HW, false).quads.map(q=>q.p), fill:ovlRGBA(c,.8),
+          posts:posts ? [pts[0], pts[pts.length-1]] : null, colArr:c}; }
+function mpoint(u,v,label,col){ return {kind:'point',u,v,label,col:col?ovlMarkCol(col):OVL.mark}; }
 function mspot(u,v,label){
-  const p=[]; for(let i=0;i<=16;i++){const a=i/16*TAU; p.push({u:u+Math.cos(a)*0.36, v:v+Math.sin(a)*0.36});}
-  return {kind:'line',pts:p,col:'rgba(250,204,21,.9)',dash:null,lw:2.5,label,la:{u,v},
-          posts:[{u,v}], colArr:[250,204,21]}; }
+  const p=[]; for(let i=0;i<16;i++){const a=i/16*TAU; p.push({u:u+Math.cos(a)*0.36, v:v+Math.sin(a)*0.36});}
+  return {kind:'line',pts:p,label,la:{u,v},polys:[p],fill:ovlRGBA(OVL.mark,.6),
+          posts:[{u,v}], colArr:OVL.mark}; }
 function marrow(a,b,label){
   const du=b.u-a.u,dv=b.v-a.v,L=Math.hypot(du,dv)||1,nu=du/L,nv=dv/L;
   const hu=-nv,hv=nu, hb={u:b.u-nu*0.8,v:b.v-nv*0.8};
-  return {kind:'arrow',col:'rgba(125,216,255,.9)',label,la:{u:(a.u+b.u)/2,v:(a.v+b.v)/2},
-    segs:[[a,b],[{u:hb.u+hu*0.45,v:hb.v+hv*0.45},b],[{u:hb.u-hu*0.45,v:hb.v-hv*0.45},b]]}; }
+  const polys=ribbonOf([a,hb], MARK_HW, false).quads.map(q=>q.p);
+  const head=[b, {u:hb.u+hu*0.45,v:hb.v+hv*0.45}, {u:hb.u-hu*0.45,v:hb.v-hv*0.45}];
+  if(polys.length && Math.sign(polyArea(head))!==Math.sign(polyArea(polys[0]))) head.reverse();
+  polys.push(head);
+  return {kind:'line',label,la:{u:(a.u+b.u)/2,v:(a.v+b.v)/2},polys,fill:ovlRGBA(OVL.mark,.85),posts:null,colArr:OVL.mark}; }
+/* «призрак» — след машины заливкой и контуром в метрах, нос — треугольником: пунктирный контур
+   рисовался тем же голубым пунктиром, что маршрут экзамена */
 function mghost(u,v,th,label,tol){
-  const p=rectPts(u,v,CAR.width,CAR.length,th); p.push(p[0]);
-  const f=fuv(th);
-  return {kind:'ghost',u,v,th,label,tolP:(tol&&tol.p)||0.55,tolA:(tol&&tol.a)||rad(9),pts:p,
-          nose:[{u:u+f.u*HALF_L*0.35,v:v+f.v*HALF_L*0.35},{u:u+f.u*(HALF_L+0.55),v:v+f.v*(HALF_L+0.55)}]}; }
+  const p=rectPts(u,v,CAR.width,CAR.length,th);
+  const f=fuv(th), r=ruv(th);
+  const rim=ribbonOf(p.concat([p[0],p[1]]), 0.05, false).quads.map(q=>q.p);
+  const nb={u:u+f.u*HALF_L*0.45, v:v+f.v*HALF_L*0.45}, nose=[{u:u+f.u*(HALF_L+0.55),v:v+f.v*(HALF_L+0.55)},
+    {u:nb.u+r.u*0.42, v:nb.v+r.v*0.42}, {u:nb.u-r.u*0.42, v:nb.v-r.v*0.42}];
+  if(Math.sign(polyArea(nose))!==Math.sign(polyArea(rim[0]))) nose.reverse();
+  return {kind:'ghost',u,v,th,label,tolP:(tol&&tol.p)||0.55,tolA:(tol&&tol.a)||rad(9),
+          body:[p], rim:rim.concat([nose])}; }
 function mcarpin(sf,sr,label){ return {kind:'carpin',sf,sr,label}; }
 function ghostOk(m,s){
   if(Math.abs(angNorm(s.th-m.th))>m.tolA) return false;
@@ -10496,17 +10592,16 @@ function drawMarks(list,s,withLabels,pulse){
   if(pulse) ctx.globalAlpha=0.45+0.4*Math.sin(game.t*7);
   for(const m of list){
     if(m.kind==='line'){
-      strokeGroundPath(m.pts,m.col,m.lw,m.dash,0.055);
+      fillGroundPolys(m.polys, m.fill, 0.055);
       if(m.posts) for(const q of m.posts){
         pushBox(q.u,0.65,q.v,0.03,0.65,0.03,0,m.colArr);
         pushBox(q.u,1.36,q.v,0.07,0.07,0.07,0,m.colArr);
       }
     }
-    else if(m.kind==='arrow'){ for(const sg of m.segs) strokeGroundPath(sg,m.col,3,null,0.055); }
     else if(m.kind==='ghost'){
-      const col=ghostOk(m,s)?'rgba(74,222,128,.95)':'rgba(125,216,255,.8)';
-      strokeGroundPath(m.pts,col,2.5,[10,7],0.05);
-      strokeGroundPath(m.nose,col,2.5,null,0.05);
+      const c=ghostOk(m,s)?OVL.goal:OVL.mark;
+      fillGroundPolys(m.body, ovlRGBA(c,.16), 0.05);
+      fillGroundPolys(m.rim, ovlRGBA(c,.9), 0.051);
     }
     else if(m.kind==='point'){
       pushBox(m.u,0.55,m.v,0.035,0.55,0.035,0,m.col);
@@ -10569,11 +10664,8 @@ function drawMarkLabels(s){
               y:(hot.sf>0?1.20:0.96)},
              hot.d.toFixed(2).replace('.',',')+' м', PILL_HOT);
   }
-  /* короткая команда над зоной манёвра: своим путём, минуя markLabels — drawMarks
-     выключается вместе с opt.marks, а настоящий режим гасит маркеры в памяти */
-  if(examActive() && exam.zone)
-    drawPill({u:exam.zone.u, v:exam.zone.v, y:1.5},
-             examShort(exam.route[exam.stage]||{cmd:''}), PILL_DEF);
+  /* подписи команды над зоной манёвра больше нет: она висела в воздухе у светофора и спорила с ним,
+     а команда уже есть на карточке и в голосе инспектора */
   for(const m of markLabels){
     const ok=m.kind==='ghost'&&ghostOk(m,s);
     const p=m.kind==='point'?{u:m.u,v:m.v,y:1.5}
@@ -10686,14 +10778,15 @@ function drawGoal(){
   const pts=rectPts(g.u,g.v,g.w,g.l,g.th);
   fillGroundPoly(pts, ok?'rgba(74,222,128,.34)':'rgba(74,222,128,.14)',
                  ok?'#4ade80':'rgba(190,255,215,.85)', 2.5, 0.028);
-  const f=fuv(g.th);
-  strokeGroundPath([{u:g.u-f.u*g.l*0.26,v:g.v-f.v*g.l*0.26},{u:g.u+f.u*g.l*0.30,v:g.v+f.v*g.l*0.30}],
-                   'rgba(190,255,215,.7)',2,[6,5],0.03);
-  const r=ruv(g.th);
-  strokeGroundPath([{u:g.u+f.u*g.l*0.30-f.u*0.5+r.u*0.42,v:g.v+f.v*g.l*0.30-f.v*0.5+r.v*0.42},
-                    {u:g.u+f.u*g.l*0.30,v:g.v+f.v*g.l*0.30},
-                    {u:g.u+f.u*g.l*0.30-f.u*0.5-r.u*0.42,v:g.v+f.v*g.l*0.30-f.v*0.5-r.v*0.42}],
-                   'rgba(190,255,215,.9)',2.5,null,0.03);
+  /* направление въезда — стрелкой-заливкой в метрах: пунктирная ось зоны была ещё одним пунктиром на асфальте */
+  if(!g._ar || g._ar.g!==g.u+g.v+g.th){
+    const f=fuv(g.th), r=ruv(g.th), a={u:g.u-f.u*g.l*0.26, v:g.v-f.v*g.l*0.26}, b={u:g.u+f.u*g.l*0.30, v:g.v+f.v*g.l*0.30};
+    const hb={u:b.u-f.u*0.6, v:b.v-f.v*0.6}, polys=ribbonOf([a,hb], 0.07, false).quads.map(q=>q.p);
+    const head=[b, {u:hb.u+r.u*0.42, v:hb.v+r.v*0.42}, {u:hb.u-r.u*0.42, v:hb.v-r.v*0.42}];
+    if(polys.length && Math.sign(polyArea(head))!==Math.sign(polyArea(polys[0]))) head.reverse();
+    polys.push(head); g._ar={g:g.u+g.v+g.th, polys};
+  }
+  fillGroundPolys(g._ar.polys, 'rgba(190,255,215,.85)', 0.03);
 }
 /* след колёс — самый тяжёлый элемент кадра, поэтому:
    отсекаем далёкие сегменты, строим одну непрерывную линию вместо отрезков
@@ -10723,8 +10816,8 @@ function drawTrails(){
   if(!opt.trails||!trails) return;
   strokeTrail(trails.rl,'rgba(251,146,60,.75)',2.4,0.016);
   strokeTrail(trails.rr,'rgba(251,146,60,.75)',2.4,0.016);
-  strokeTrail(trails.fl,'rgba(56,189,248,.62)',2.0,0.018);
-  strokeTrail(trails.fr,'rgba(56,189,248,.62)',2.0,0.018);
+  strokeTrail(trails.fl,'rgba(45,212,191,.62)',2.0,0.018);
+  strokeTrail(trails.fr,'rgba(45,212,191,.62)',2.0,0.018);
 }
 function drawGuides(){
   if(!opt.guides) return;
@@ -10735,10 +10828,10 @@ function drawGuides(){
     strokeGroundPath(pr.paths.c2,'rgba(253,186,116,.85)',2.0,[7,6],0.05);
     strokeGroundPath(pr.paths.c3,'rgba(253,186,116,.85)',2.0,[7,6],0.05);
   }
-  strokeGroundPath(pr.paths.fl,'rgba(125,211,252,.95)',3,null,0.05);
-  strokeGroundPath(pr.paths.fr,'rgba(125,211,252,.95)',3,null,0.05);
-  strokeGroundPath(pr.paths.rl,'rgba(250,204,21,.95)',3,null,0.05);
-  strokeGroundPath(pr.paths.rr,'rgba(250,204,21,.95)',3,null,0.05);
+  strokeGroundPath(pr.paths.fl,'rgba(45,212,191,.95)',3,[10,6],0.05);
+  strokeGroundPath(pr.paths.fr,'rgba(45,212,191,.95)',3,[10,6],0.05);
+  strokeGroundPath(pr.paths.rl,'rgba(251,146,60,.95)',3,[10,6],0.05);
+  strokeGroundPath(pr.paths.rr,'rgba(251,146,60,.95)',3,[10,6],0.05);
   if(pr.icr && !MOB){
     const i=pr.icr;
     strokeGroundPath([{u:i.u-0.6,v:i.v},{u:i.u+0.6,v:i.v}],'rgba(255,255,255,.9)',2,null,0.05);
@@ -11371,8 +11464,9 @@ function drawSceneInto(o){
     try{ emitObstaclesBehind(o.maxD); } finally { edgeOn=false; }
     flushFaces();
   }
+  /* у экзамена маячка в точке команды больше нет: столб посреди перекрёстка читался препятствием,
+     а «где» теперь отвечают лента маршрута и зона (карман, стоп-линия, дуга разворота) */
   if(curPhase) drawMarks(curPhase._marks, curS, !!o.labels, !!(demo&&demo.say>0));
-  else drawMarks(examMarks(), curS, !!o.labels, false);
   edgeOn=true;
   try{ emitObstacles(o.maxD); } finally { edgeOn=false; }
   /* из салона мир и салон — два прохода: внутри кузова ничто снаружи не может быть ближе
@@ -11746,7 +11840,7 @@ function drawRouteMap(x,y,w,h){
   }
   const mp=examMapPath();
   if(mp.pts.length>1){
-    ctx.strokeStyle='rgba(125,216,255,.85)'; ctx.lineWidth=2; ctx.setLineDash([5,4]);
+    ctx.strokeStyle=ovlRGBA(OVL.route,.95); ctx.lineWidth=2.5; ctx.setLineDash([]);
     ctx.beginPath(); mp.pts.forEach((p,i)=> i?ctx.lineTo(X(p.u),Y(p.v)):ctx.moveTo(X(p.u),Y(p.v)));
     ctx.stroke(); ctx.setLineDash([]);
   }
@@ -11964,7 +12058,11 @@ function coachCard(kind, icon, main, goal, ph){
      иначе новичку первые 3 запуска блок не свернуть вовсе */
   const open=!!why && (coachWhyOpen !== (!compact && runsCnt<=3));
   const gsig=goal ? (goal.metric||'')+'|'+(goal.target!==undefined?goal.target:'')+'|'+(goal.text||'') : '';
-  const key=mainKey+'|'+gsig+'|'+(wheel||'')+'|'+(move||'')+'|'+(ph&&ph.blinker||'')+'|'+(open?'W':'w')+(coachLineOpen?'O':'o')+why;
+  /* чипы — то, что не команда: передача, метры до манёвра, баллы. В одной фразе с командой они превращали
+     карточку экзамена в абзац «P · зажми тормоз… налево на Садовую · баллы: 0 · 27 м» */
+  const pre=(ph&&ph.pre)||null, post=(ph&&ph.post)||null;
+  const tsig=(pre?pre.join('/'):'')+'|'+(post?post.join('/'):'');
+  const key=mainKey+'|'+gsig+'|'+(wheel||'')+'|'+(move||'')+'|'+(ph&&ph.blinker||'')+'|'+(open?'W':'w')+(coachLineOpen?'O':'o')+why+'|'+tsig;
   if(key===coachKey) return;
   coachKey=key;
   const el=$('coach');
@@ -11978,7 +12076,9 @@ function coachCard(kind, icon, main, goal, ph){
     +(ph&&ph.blinker?'<span class="cbl" title="включи поворотник (Q/E)">'+(ph.blinker==='L'?'◀':'▶')+'</span>':'')
     +(move==='rev'?'<span class="cgear r">R</span> ':move==='fwd'?'<span class="cgear d">D</span> ':'')
     +(wheel?'<span class="cw '+wheel+'" title="'+WHEEL_TITLE[wheel]+'"></span>':'')
+    +(pre?pre.map(()=>'<span class="ctag cpre"></span> ').join(''):'')
     +'<span class="cm"></span>'
+    +(post?post.map(()=>' <span class="ctag"></span>').join(''):'')
     +(goal?' <span class="cg" title="нажми — подсветится показание на панели">'
       +'<span class="cgt"></span><span class="cgv" aria-live="off"></span>'
       +(m?'<span class="cgb"><i></i></span>':'')+'</span>':'')
@@ -11989,6 +12089,8 @@ function coachCard(kind, icon, main, goal, ph){
     +(ph&&ph.finish?' <button type="button" class="cfin" title="Завершить уровень (Y)">✓ Завершить</button>':'');
   /* main/why — через textContent: сюда попадают имена пользовательских площадок */
   el.querySelector('.cm').textContent=main;
+  if(pre||post){ const tg=el.querySelectorAll('.ctag'), all=(pre||[]).concat(post||[]);
+    for(let i=0;i<tg.length;i++) tg[i].textContent=all[i]; }
   if(open) el.querySelector('.cwhy').textContent=why;
   if(goal){
     el.querySelector('.cgt').textContent = m ? '→ цель '+m.fmt(goal.target) : goal.text;
@@ -12115,17 +12217,16 @@ function updateHUD(){
   /* разбор ошибки в тренировочном режиме идёт ВЫШЕ команды: игрок должен понять, что
      он сделал не так, раньше, чем куда ехать дальше */
   else if(examActive() && examWhyT>0)
-    coachCard('hit','⚠', examWhy+' · баллы: '+exam.score+'. Дальше: '
-      +examNav().text.charAt(0).toLowerCase()+examNav().text.slice(1)+'.');
+    coachCard('hit','⚠', examWhy+'. Дальше: '
+      +examNav().text.charAt(0).toLowerCase()+examNav().text.slice(1)+'.', null, {post:examTags(null)});
   else if(examActive()){ const nav=examNav();
-    /* в тренировочном режиме к команде инспектора приклеиваем гейт селектора: без него
-       первая команда «тронься» приходит игроку, стоящему в P, и трогаться нечем.
-       В настоящем режиме инспектор молчит — там это часть проверки */
-    const gate = !examFlags().dist ? ''
-      : car.sel==='P' ? (MOB ? 'P · держи ТОРМОЗ, тапни D. ' : 'P · зажми тормоз (пробел) и включи передачу (Enter). ')
-      : car.sel==='N' ? 'N · нейтраль, газ не работает. ' : '';
-    coachCard('exam', nav.glyph, gate+nav.text+' · баллы: '+exam.score
-      +(examFlags().dist&&nav.dist!==null&&nav.dist<75 ? ' · '+nav.dist.toFixed(0)+' м' : '')); }
+    /* в тренировочном режиме при команде стоит чип селектора: без него первая команда «тронься» приходит
+       игроку, стоящему в P, и трогаться нечем. В настоящем режиме инспектор молчит — там это часть проверки */
+    const gate = !examFlags().dist ? null
+      : car.sel==='P' ? (MOB ? 'P · тормоз и D' : 'P · тормоз + Enter')
+      : car.sel==='N' ? 'N · включи D' : null;
+    const said=nav.bare||nav.text;
+    coachCard('exam', nav.glyph, said.charAt(0).toUpperCase()+said.slice(1), null, {pre:gate?[gate]:null, post:examTags(nav)}); }
   /* гайд троганья владеет карточкой целиком, пока не пройден: фазовые подсказки подождут */
   else if(tut && TUT[tut.i]){ const st=TUT[tut.i];
     coachCard(st.kind, st.icon, st.act(), null, {why:st.why}); }
@@ -12915,7 +13016,7 @@ function doAct(a){
     return; }
   if(a==='hint-guides'){ hideOv();
     adsRewarded(()=>{ opt.guides=true;
-      toast('Идеальная траектория включена — смотри зелёно-оранжевую линию', 3.5); });
+      toast('Путь показа включён — смотри фиолетовую ленту', 3.5); });
     return; }
   if(a==='exam-abort'){ showOv(examAbortHTML()); return; }
   if(a==='exam-start'){ const ei=examLevelIdx(); if(ei>=0) openLevel(ei,'pick'); return; }
@@ -13105,11 +13206,10 @@ function startHTML(){
 const HELP_TABS=[['ctrl','Управление'],['how','Как устроено']];
 function menuHelpHTML(tab){
   let s=menuHead('Помощь', HELP_TABS, tab)+'<div class="mbody">';
-  if(tab==='how') s+='<h2>Линии на асфальте</h2>'
-    +'<p>'+(MOB?'Включаются в настройках, вкладка «Подсказки»':'Клавиша <span class="kbd">G</span> или настройки, вкладка «Подсказки»')
-    +': жёлтые дуги — куда пойдут <b>задние</b> колёса (они всегда срезают внутрь поворота), красные пунктиры — '
-    +'углы кузова, зелёно-оранжевая линия — путь демонстрации. Белый крестик — центр поворота: он всегда лежит '
-    +'на линии задней оси.</p>'
+  if(tab==='how') s+='<h2>Что на асфальте</h2>'+OVL_LEGEND()
+    +'<p>'+(MOB?'Прогноз включается в настройках, вкладка «Подсказки»':'Прогноз — клавиша <span class="kbd">G</span> или настройки, вкладка «Подсказки»')
+    +': оранжевые дуги — куда пойдут <b>задние</b> колёса (они всегда срезают внутрь поворота), бирюзовые — передние, '
+    +'красный пунктир — углы кузова. Белый крестик — центр поворота: он всегда лежит на линии задней оси.</p>'
     +'<h2>Как устроена физика</h2>'
     +'<p>Честная кинематика: рулевая трапеция Аккермана, машина поворачивает вокруг центра задней оси, '
     +'минимальный радиус 3,8 м, габаритный — 5,9 м. Три зеркала — настоящие: отдельный проход камеры '
@@ -14183,25 +14283,15 @@ function buildIdealDraw(pts){
   }
   /* стыкуем сегменты, чтобы линия не рвалась на смене направления */
   for(let i=1;i<segs.length;i++) segs[i].pts.unshift(segs[i-1].pts[segs[i-1].pts.length-1]);
-  const chev=[];
-  for(const s of segs){
-    for(let i=2;i+1<s.pts.length;i+=6){
-      const a=s.pts[i], b=s.pts[i+1];
-      const du=b.u-a.u, dv=b.v-a.v, L=Math.hypot(du,dv)||1, nu=du/L, nv=dv/L;
-      chev.push({rev:s.rev, pts:[{u:a.u-nu*0.34+ -nv*0.30, v:a.v-nv*0.34+ nu*0.30},
-                                 {u:a.u+nu*0.14, v:a.v+nv*0.14},
-                                 {u:a.u-nu*0.34+ nv*0.30, v:a.v-nv*0.34- nu*0.30}]});
-    }
-  }
-  return {segs, chev};
+  /* лента со стрелками (см. «язык наложений»): вперёд — фиолетовая, задним ходом — розовая */
+  for(const s of segs) s.rb=ribbonOf(s.pts, RIB_HW, true);
+  return {segs};
 }
-const IDEAL_FWD='rgba(130,245,170,.55)', IDEAL_REV='rgba(255,196,64,.65)';
 function drawIdealPath(){
   /* идеальная линия — под тумблером траекторий (G), а не маркеров: маркеры — обязательный
-     обучающий слой, а зелёно-оранжевая полилиния — опциональная «подсмотреть, как едет демо» */
+     обучающий слой, а лента показа — опциональная «подсмотреть, как едет демо» */
   const ip=level.idealDraw; if(!opt.guides||!ip) return;
-  for(const s of ip.segs) strokeGroundPath(s.pts, s.rev?IDEAL_REV:IDEAL_FWD, 3, [10,9], 0.035);
-  for(const ch of ip.chev) strokeGroundPath(ch.pts, ch.rev?IDEAL_REV:IDEAL_FWD, 2, null, 0.036);
+  for(const s of ip.segs) drawRibbon(s.rb, s.rev?OVL.rev:OVL.route, s.rev?OVL.revArrow:OVL.routeArrow, 0.035);
 }
 
 /* ---------- свои площадки: модель, хранилище, редактор ---------- */
