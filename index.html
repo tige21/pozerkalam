@@ -9004,6 +9004,7 @@ function examFailHTML(){
   return '<h1>Экзамен не сдан</h1>'
     +'<p><b>'+(exam.failWhy||'Набрано '+exam.score+' штрафных баллов')+'</b></p>'
     +'<p>Штрафные баллы: <b>'+exam.score+'</b> (допускается до '+(EXAM_FAIL_SUM-1)+')</p>'
+    +(exam.failNote ? '<p class="sd">'+exam.failNote+'</p>' : '')
     +examSvg()
     +'<ul class="startlist">'+examLogRows()+'</ul>'
     +'<p>На настоящем экзамене после трёх неудач пересдача — через полгода. Здесь — сразу.</p>'
@@ -9654,10 +9655,33 @@ function examTeardown(){
     opt.trails=examSavedOpts.trails; examSavedOpts=null; }
   exam=null;
 }
+/* строка протокола, на которой настоящий экзамен кончился бы: аварийная ошибка или сумма от EXAM_FAIL_SUM.
+   Тренировочный прогон ошибкой не обрывается (examFail только разбирает её на карточке), и финиш с 9 баллами
+   из допустимых 6 назывался «Экзамен сдан» и писался в прогресс как сдача (владелец, 11.10.2026) */
+function examStopAt(){
+  let sum=0;
+  for(const l of exam.log){ sum+=l.pts; const p=PENALTIES[l.code];
+    if((p && p.fatal) || sum>=EXAM_FAIL_SUM) return {l, sum}; }
+  return null;
+}
 function examPass(){
   if(!examActive()) return;
   exam.done=true; exam.failed=false;
   if(exam.kind==='practice'){ practiceEnd(true); return; }
+  const stop=examStopAt();
+  if(stop){
+    exam.failed=true;
+    exam.failWhy=PENALTIES[stop.l.code].fatal ? stop.l.txt : null;
+    exam.failNote='В настоящем режиме экзамен закончился бы на '+stop.l.t.toFixed(0)+'-й секунде. '
+      +'Тренировочный дал доехать до конца, чтобы разобрать все ошибки.';
+    track('exam_fail', { route:exam.routeId+1, mode:'train', score:exam.score, stage:exam.stage+1, n:exam.route.length, code:stop.l.code });
+    game.done=true;
+    if(demo) stopDemo();
+    progExam(false);
+    tone(220,0.4,0.1,'sawtooth');
+    showOv(examFailHTML());
+    return;
+  }
   track('exam_pass', { route:exam.routeId+1, mode:examTrain()?'train':'real', score:exam.score });
   game.done=true;
   if(demo) stopDemo();

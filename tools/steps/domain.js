@@ -352,6 +352,12 @@
       if (!exam) throw new Error('экзамен не идёт');
       if (exam.score !== +n) throw new Error('баллов ' + exam.score + ', ожидали ' + n);
     }],
+    /* финиш маршрута — тот же вызов, что делает последний этап в examTick */
+    [/^маршрут доехан до финиша$/, () => { if (!exam) throw new Error('экзамен не идёт'); examPass(); }],
+    [new RegExp('^итог заезда ' + S + '$'), (want) => {
+      const h = document.querySelector('#overlay h1'), got = h ? h.textContent : '';
+      if (got !== want) throw new Error('заголовок итога «' + got + '», ожидали «' + want + '»');
+    }],
     [/^экзамен (не )?провален$/, (not) => {
       if (!exam) throw new Error('экзамен не идёт');
       if (!!exam.failed === !!not) throw new Error('failed=' + !!exam.failed);
