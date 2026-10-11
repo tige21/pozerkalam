@@ -342,20 +342,30 @@ await guard('app-menu-play-target', async () => {
   const r = await p.evaluate(() => {
     const prog = (names) => localStorage.setItem('trainer_progress', JSON.stringify(Object.fromEntries(names.map(n => [n, { n: 1, clean: 1, best: 10 }]))));
     const out = {};
+    const P = noviceIdx();
     localStorage.removeItem('trainer_last'); localStorage.removeItem('trainer_progress'); out.fresh = playTarget().i;
+    out.tab = (menuGo('levels'), document.querySelector('#overlay .pathlist:not([hidden])') ? 'start' : 'другая');
     localStorage.setItem('trainer_last', LEVELS[4].name); out.unpassed = playTarget().i;
     prog([LEVELS[4].name]); out.passed = playTarget().i;
-    prog([LEVELS[4].name, LEVELS[5].name, LEVELS[6].name]); out.skip = playTarget().i;
+    prog([LEVELS[4].name, LEVELS[5].name, LEVELS[7].name]); out.skip = playTarget().i;
     localStorage.setItem('trainer_last', 'нет такого уровня'); out.gone = playTarget().i;
+    /* путь новичка: пройден первый шаг — «Играть» и «Следующий» ведут на второй; путь пройден — дальше по номерам */
+    localStorage.setItem('trainer_last', LEVELS[P[0]].name); prog([LEVELS[P[0]].name]);
+    out.path2 = playTarget().i; out.next2 = nextLevel(P[0]);
+    prog(P.map((i) => LEVELS[i].name)); out.after = nextLevel(P[P.length - 1]);
+    out.tabDone = (menuGo('levels'), document.querySelector('#overlay .pathlist:not([hidden])') ? 'start' : 'другая');
     localStorage.setItem('trainer_last', LEVELS[4].name); prog([LEVELS[4].name]);
     menuGo('main'); out.label = document.querySelector('#overlay .mm-play span').textContent;
     doAct('play'); out.opened = game.li; out.saved = localStorage.getItem('trainer_last');
-    out.names = { l5: LEVELS[5].name };
+    out.names = { l5: LEVELS[5].name }; out.P = P;
+    out.firstFree = LEVELS.findIndex((l, i) => !P.includes(i) && !l.custom);
     return out;
   });
-  const ok = r.fresh === 0 && r.unpassed === 4 && r.passed === 5 && r.skip === 7 && r.gone === 0
+  const P = r.P || [];
+  const ok = P.length === 5 && r.fresh === P[0] && r.tab === 'start' && r.unpassed === 4 && r.passed === 5 && r.skip === 6 && r.gone === P[0]
+    && r.path2 === P[1] && r.next2 === P[1] && r.after === r.firstFree && r.tabDone === 'другая'
     && r.label === r.names.l5 && r.opened === 5 && r.saved === r.names.l5;
-  check('«Играть»: новичок — уровень 1, непройденный — снова он, после пройденного — первый непройденный (@app-menu-play-target)', ok, JSON.stringify(r));
+  check('«Играть»: новичок — путь новичка (первый шаг, вкладка «С чего начать», «Следующий» по пути), непройденный — снова он, после пройденного — первый непройденный (@app-menu-play-target)', ok, JSON.stringify(r));
   await p.close();
 });
 

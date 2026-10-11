@@ -201,6 +201,16 @@ body.needbrake .tdrive [data-hold="back"]{background:rgba(190,52,52,.8);border-c
 #overlay button.lvcard.locked{border-style:dashed}
 .lvcard.locked .t{color:#93a7bd}
 .lvcard .t{font-size:13.5px;color:#fff;margin:2px 0 3px;line-height:1.25;overflow-wrap:anywhere}
+/* путь новичка — шаги по порядку, не карточки уровней: .lvcard[data-lvl] остаётся одна на уровень */
+#overlay .pathlist{display:grid;gap:8px;max-width:560px}
+#overlay button.pathcard{display:flex;align-items:center;gap:12px;width:100%;margin:0;text-align:left;font-family:inherit;
+  font-weight:400;color:#fff;background:rgba(20,28,38,.9);border:1px solid rgba(255,255,255,.13);border-radius:12px;padding:10px 12px;cursor:pointer}
+#overlay button.pathcard.next{border-color:rgba(159,208,255,.7);background:rgba(24,40,58,.95)}
+.pathcard .k{flex:none;display:grid;place-items:center;width:30px;height:30px;border-radius:50%;
+  background:rgba(159,208,255,.14);color:#9fd0ff;font-weight:800;font-size:14px}
+.pathcard.pass .k{background:rgba(127,224,164,.18);color:#7fe0a4}
+.pathcard .t{display:block;font-size:14px;line-height:1.25}
+.pathcard .d{display:block;font-size:12px;color:#93a7bd;margin-top:2px}
 /* три строки через line-clamp: slice(0,90) резал 20 описаний из 32 посреди слова без многоточия */
 .lvcard .d{font-size:11.5px;color:#93a7bd;line-height:1.4;text-wrap:pretty;
   display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden}
@@ -6341,7 +6351,9 @@ const LEVELS = [
      goal:{text:'линия кармана у лобовой стойки'},
      hint:'Держись дальнего края проезда и подъезжай к своему карману.',
      marks:['ghost','stop','nearline']},
-    {when:s=>s.gear<0,
+    /* только вне зоны: машина, уже стоящая в кармане на R, слышала одновременно «остановись — зачёт по
+       остановке» и «назад к проезду, зайди снова» — и выезжала обратно */
+    {when:s=>s.gear<0 && !goalPoseOk(),
      icon:'⬇', act:'Назад к проезду, зайди снова', move:'rev',
      goal:{text:'линия кармана у лобовой стойки'},
      hint:'Сдай назад к проезду и зайди снова: ближняя линия кармана должна дойти до лобовой стойки.',
@@ -6357,9 +6369,11 @@ const LEVELS = [
      hint:'Так держать: доводи «угол к цели» примерно до 10°.',
      marks:['nearline']},
     {when:s=>deg(angNorm(s.th))>30,
-     icon:'⬆', act:'Выравнивай руль, въезжай в глубину', move:'fwd', wheel:'straight',
-     goal:{text:'до конца разметки'},
-     hint:'Выравнивай руль и въезжай в глубину до упора разметки.'},
+     /* крипом и до числа: «въезжай в глубину до конца разметки» не говорил ни скорости, ни где стоп — ученик
+        въезжал на 12 км/ч и бил стену кармана. Показ здесь едет медленно и встаёт в зоне с зазором спереди 0,36 м */
+     icon:'⬆', act:'Руль прямо — крипом вглубь до 0,4 м', move:'fwd', wheel:'straight',
+     goal:{metric:'front',target:0.4,dir:'down'},
+     hint:'Выпрями руль и крипом въезжай вглубь кармана — пока «зазор спереди» не дойдёт до 0,4 м.'},
     {icon:'↕', act:'Доверни до оси и остановись',
      goal:{metric:'ang',target:0,dir:'down'},
      hint:'Доверни до оси кармана и остановись.'}
@@ -14121,6 +14135,7 @@ function showOv(html, lay){ ovCard.innerHTML=html; ovEl.style.display='flex'; pa
   for(const k in input) input[k]=false;
   ovCard.querySelectorAll('button').forEach(b=> b.onclick=()=>doAct(b.dataset.act));
   ovCard.querySelectorAll('.lvcard').forEach(c=> c.onclick=()=> openLevel(+c.dataset.lvl,'pick'));
+  ovCard.querySelectorAll('.pathcard').forEach(c=> c.onclick=()=> openLevel(+c.dataset.path,'path'));
   menuSync(); }
 function showLevelPick(){ menuGo('levels'); }
 /* Вход игрока в уровень. loadLevel остаётся сырым: его зовут старт страницы, редактор, смена
@@ -14223,7 +14238,7 @@ function doAct(a){
     firstRunChain();
   }
   else if(a==='next'){ adsInterstitial('next');
-    const ni=(game.li+1)%LEVELS.length;
+    const ni=nextLevel(game.li);
     openLevel(ni,'next', level.practice && LEVELS[ni].practice ? 'practice' : 'learn'); }
   else if(a==='again'){ adsInterstitial('again');
     if(level.practice){ loadLevel(game.li); anLevelStart('again'); return; }
@@ -14264,8 +14279,9 @@ function ctrlHTML(){ return ''
 /* уровни по жанрам: в одной сетке из 32 карточек дриллы на габариты и город терялись среди дворовых
    манёвров. Карточки всех вкладок лежат в разметке, видна одна — гейты и вход по .lvcard[data-lvl]
    находят любую */
-const LEVEL_TABS=[['yard','Двор'],['drill','Габариты'],['pad','Площадка'],['city','Город и экзамен'],['own','Свои ★']];
+const LEVEL_TABS=[['start','С чего начать'],['yard','Двор'],['drill','Габариты'],['pad','Площадка'],['city','Город и экзамен'],['own','Свои ★']];
 const LEVEL_TAB_NOTE={
+  start:'Пять уровней от простого к трудному: сначала передом в карман, потом задний ход, параллельная — последней.',
   yard:'Параллельная парковка, карманы, развороты и выезды во дворе.',
   drill:'Показание нужной стороны скрыто: остановись, где считаешь нужным, — и увидишь ошибку в сантиметрах. Попытка одна, повтор — R.',
   pad:'Упражнения площадки: эстакада, задний ход по коридору, остановка у тротуара.',
@@ -14281,7 +14297,7 @@ function levelTab(i){
   return 'yard';
 }
 function levelPickHTML(tab){
-  tab = tab || levelTab(game.li);
+  tab = tab || menuTabDefault('levels');
   /* «слабое место» подсвечивается только когда есть с чем сравнивать (при 0 % горели 12 карточек из 32)
      и только у трёх уровней, которые названы в разделе «Экзамен»: весь хвост слабых — это 13–15 карточек,
      и выделение переставало выделять */
@@ -14298,7 +14314,12 @@ function levelPickHTML(tab){
       +(locked?'в курсе подготовки к экзамену':pg?progLine(l.name):esc(l.task||''))+'</span></button>';
   });
   let s=menuHead('Уровни', LEVEL_TABS, tab)+'<div class="mbody"><p class="mnote">'+LEVEL_TAB_NOTE[tab]+'</p>';
-  for(const [k] of LEVEL_TABS) s+='<div class="lvgrid" data-tab="'+k+'"'+(k===tab?'':' hidden')+'>'+(groups[k]||'')+'</div>';
+  for(const [k] of LEVEL_TABS) if(k!=='start') s+='<div class="lvgrid" data-tab="'+k+'"'+(k===tab?'':' hidden')+'>'+(groups[k]||'')+'</div>';
+  { const P=noviceIdx(), nx=P.find(i=>!progPassed(LEVELS[i].name));
+    s+='<div class="pathlist" data-tab="start"'+(tab==='start'?'':' hidden')+'>'+P.map((i,k)=>{ const l=LEVELS[i], done=progPassed(l.name);
+      return '<button type="button" class="pathcard'+(done?' pass':'')+(i===nx?' next':'')+'" data-path="'+i+'">'
+        +'<span class="k">'+(done?'✓':(k+1))+'</span><span><span class="t">'+esc(l.name.split('· ')[1]||l.name)+'</span>'
+        +'<span class="d">'+(done ? progLine(l.name) : i===nx ? 'следующий' : esc(NOVICE_WHY[k]||''))+'</span></span></button>'; }).join('')+'</div>'; }
   /* практика — отдельные кнопки, не карточки уровней: карточка открывает учёбу, а гейт меню считает
      карточки вкладки по числу её уровней */
   if(tab==='city'){
@@ -14332,12 +14353,40 @@ const ICON_GEAR='<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke=
 /* «Играть» ведёт туда, где игрок остановился: последний открытый уровень, пока он не пройден, иначе
    первый непройденный после него. Хранится имя, а не номер — номера съезжают, когда вставляют уровни */
 function lastSave(){ try{ localStorage.setItem('trainer_last', LEVELS[game.li].name); }catch(e){} }
+/* путь новичка (#334, владелец 11.10.2026: «сначала более лёгкие, чтобы втянулся»). Первым шёл уровень 1 —
+   параллельная парковка с двумя сменами направления и самой узкой зоной: начали 52 игрока, прошли 18, на
+   телефоне 6 из 26. Порядок — по замеру показов (секунды, смены направления, метры задним ходом), доле зачётов
+   в аналитике и прогону learner.js по тексту карточки: карман передом (ученик — 15–19 с без касаний), задний ход
+   по прямой, задним в карман, тесный карман, параллельная. Дриллы «стоп по линии» и «у тротуара» в путь не
+   входят: показание там скрыто до остановки, случайная остановка проходит их в ~1 % — первым успехом им не
+   быть. Номера уровней не меняются: прогресс и инструменты держатся за имена и номера */
+const NOVICE_PATH=['7 · Заезд в карман под 45°','10 · Выезд из тупика задним ходом',
+  '2 · Задним ходом в перпендикулярный карман','11 · Карман вплотную между двумя','1 · Параллельная парковка справа'];
+const NOVICE_WHY=['передом, без заднего хода','задний ход по прямой','первый карман задним ходом',
+  'зона на 40 см шире машины','две дуги задним ходом'];
+function noviceIdx(){ return NOVICE_PATH.map(n=>LEVELS.findIndex(l=>l.name===n)).filter(i=>i>=0); }
+function noviceLeft(){ return noviceIdx().some(i=>!progPassed(LEVELS[i].name)); }
+/* следующий непройденный уровень пути после li; -1 — li не на пути или дальше по пути всё пройдено */
+function noviceNext(li){
+  const P=noviceIdx(), k=P.indexOf(li);
+  if(k<0) return -1;
+  for(let j=k+1;j<P.length;j++) if(!progPassed(LEVELS[P[j]].name)) return P[j];
+  return -1;
+}
+/* «Следующий уровень» на итогах и клавиша N: по пути новичка, пока он не пройден, дальше — по номерам */
+function nextLevel(li){
+  const n=noviceNext(li); if(n>=0) return n;
+  if(noviceIdx().includes(li)){ const f=LEVELS.findIndex((l,i)=>!l.custom && !progPassed(l.name) && !levelLocked(i)); if(f>=0) return f; }
+  return (li+1)%LEVELS.length;
+}
 function playTarget(){
   let last=null;
   try{ last=localStorage.getItem('trainer_last'); }catch(e){}
   const li = last ? LEVELS.findIndex(l=>l.name===last) : -1;
-  if(li<0) return {i:0, why:last?'прошлого уровня больше нет':'первый запуск'};
+  if(li<0){ const p=noviceIdx().find(i=>!progPassed(LEVELS[i].name));
+    return {i:p!==undefined ? p : 0, why:last?'прошлого уровня больше нет':'первый запуск — путь новичка'}; }
   if(!progPassed(LEVELS[li].name)) return {i:li, why:'прошлый уровень не пройден'};
+  { const n=noviceNext(li); if(n>=0) return {i:n, why:'следующий на пути новичка'}; }
   for(let k=1;k<LEVELS.length;k++){
     const j=(li+k)%LEVELS.length, l=LEVELS[j];
     if(!l.custom && !progPassed(l.name) && !levelLocked(j)) return {i:j, why:'первый непройденный после прошлого'};
@@ -14465,7 +14514,7 @@ function cityWinHTML(p){
     + winActsHTML();
 }
 function winActsHTML(){
-  const nx=LEVELS[(game.li+1)%LEVELS.length];
+  const nx=LEVELS[nextLevel(game.li)];
   return '<div class="winacts">'
     +'<button data-act="pick" class="ghost">Выбрать уровень</button>'
     +'<button data-act="again" class="ghost">Заново'+(MOB?'':' (R)')+'</button>'
@@ -14484,7 +14533,7 @@ function menuSync(){
   document.body.classList.toggle('menu', menu.root==='main' && ovEl.style.display!=='none');
 }
 function menuTabDefault(scr){
-  return scr==='levels' ? levelTab(game.li) : scr==='settings' ? 'screen' : scr==='help' ? 'ctrl' : null;
+  return scr==='levels' ? (noviceLeft() ? 'start' : levelTab(game.li)) : scr==='settings' ? 'screen' : scr==='help' ? 'ctrl' : null;
 }
 function menuGo(scr, tab, from){
   /* строка о политике гаснет, когда игрок уходит из профиля, где её прочёл: погашенная при отрисовке, она
@@ -14830,7 +14879,7 @@ function pressKey(code){
     case 'Escape': escAct(); break;
     case 'KeyH': helpKey(); break;
     case 'Slash': coachWhyToggle(); break;
-    case 'KeyN': if(game.done){ const ni=game.li+1;
+    case 'KeyN': if(game.done){ const ni=nextLevel(game.li);
       openLevel(ni,'next', level.practice && LEVELS[ni] && LEVELS[ni].practice ? 'practice' : 'learn'); } break;
     case 'KeyY': finishLevel(); break;
     case 'Backquote': voiceRepeat(); break;
