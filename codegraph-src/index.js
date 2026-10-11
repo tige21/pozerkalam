@@ -800,6 +800,10 @@
 
 
 
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -7987,7 +7991,7 @@ function adsRewarded(onReward){
 /* площадка требует ставить игру и звук на паузу на время полноэкранной рекламы (требования
    Яндекс Игр, п. 4.7); звук гаснет сам — engineSound читает paused. Снимая паузу, не будим игру
    под открытым оверлеем: реклама с «Повторить» приходит уже после hideOv */
-window.adsPause=function(on){ paused = !!on || document.body.classList.contains('ov'); };
+window.adsPause=function(on){ paused = !!on || document.body.classList.contains('ov'); if(on) voiceHalt(); };
 /* ВКонтакте: мини-приложение обязано послать VKWebAppInit — без него мобильный клиент держит
    экран загрузки, а площадка не считает приложение готовым. Библиотека vk-bridge не подключается
    (zero-dependency, CSP script-src 'self'): шлём событие тем же протоколом, и только когда запущены
@@ -8062,11 +8066,12 @@ const REFS_NAMES = ['выкл','рамка','с метками'];
    колёс и идеальная линия сливались в кашу поверх обучающих маркеров. G включает всё разом */
 const opt  = { guides:false, trails:false, sound:false, refs:2, marks:true, camMode:CAM_CHASE, camYaw:0, pitch:rad(22),
                dist:9.0, fpYaw:0, fpPitch:rad(-2), fpFov:62, mirrors:true, mirScale:1, prev3rd:CAM_CHASE, gfx:'auto',
-               examMode:'train', traffic:'normal',
+               examMode:'train', traffic:'normal', voice:true,
                mirAdj:{left:{yaw:0,pitch:0}, right:{yaw:0,pitch:0}, center:{yaw:0,pitch:0}} };
 /* переключатели, которые помнят выбор игрока: и клавиша, и строка настроек пишут через setOpt.
    Ключ показа зеркал — trainer_mirvis: trainer_mirrors уже занят их поворотом */
-const OPT_SAVED={ marks:'trainer_marks', guides:'trainer_guides', trails:'trainer_trails', mirrors:'trainer_mirvis', sound:'trainer_sound' };
+const OPT_SAVED={ marks:'trainer_marks', guides:'trainer_guides', trails:'trainer_trails', mirrors:'trainer_mirvis', sound:'trainer_sound',
+  voice:'trainer_voice' };
 function setOpt(k, v){
   opt[k]=!!v;
   /* иначе examTeardown вернёт прежнее значение поверх только что выбранного */
@@ -8173,6 +8178,7 @@ function buildRenderList(obs){
 }
 function loadLevel(i){
   examTeardown();
+  voiceReset();
   game.li = ((i%LEVELS.length)+LEVELS.length)%LEVELS.length;
   /* практика — тот же урок на общем городе: случайный вариант маршрута, полная расстановка правил,
      без фаз, маркеров и показа. practiceOn ставит вход игрока (openLevel), перезагрузки его сохраняют */
@@ -8249,6 +8255,7 @@ function loadLevel(i){
 function restart(){
   missFwd=null;
   if(demo) stopDemo();
+  voiceReset();
   if(tut) tut.i=0;
   curPhase=null; phaseCand=null; phaseHold=0;
   setBody(level.start.u, level.start.v, level.start.th);
@@ -8997,6 +9004,7 @@ function examTick(dt){
     tone(880,0.08,0.06,'sine');
     if(exam.stage>=exam.route.length) examPass();
   }
+  examVoiceTick();
 }
 /* последний код с баллами — что сорвало заезд (для событий аналитики) */
 function examLastCode(){ for(let i=exam.log.length-1;i>=0;i--) if(exam.log[i].pts) return exam.log[i].code; return ''; }
@@ -9033,6 +9041,7 @@ function examPlanTick(){
   if(X1[0]!=='@') examNodeExit(g.V[X1], nodeArms(X1).find(a=>a.e===M));
   if(X2[0]!=='@') examNodeExit(g.V[X2], nodeArms(X2).find(a=>a.e===sn.e));
 }
+const EXAM_REROUTE_WHY='Команду пропустил — маршрут меняется';
 function examMissed(st){
   const c=bodyPos();
   exam.log.push({code:'missed', pts:0, t:game.t, txt:'Не выполнена команда: «'+st.short+'»', u:c.u, v:c.v});
@@ -9071,9 +9080,9 @@ function examNodeExit(n, out){
   const next=done.concat(rt);
   next.id=exam.route.id; next.seed=rt.seed;
   next.plan=rt.plan.map(p=>({id:p.id, out:p.out, si:p.si>=0 ? p.si+off : -1, pre:p.pre+off}));
-  exam.route=next; exam.planI=0; exam.stage=done.length;
+  exam.route=next; exam.planI=0; exam.stage=done.length; exam.rerouted=true;
   exam.zoneStage=-1; examLegBuild();
-  if(examFlags().forgiving){ examWhy='Команду пропустил — маршрут меняется'; examWhyT=4; }
+  if(examFlags().forgiving){ examWhy=EXAM_REROUTE_WHY; examWhyT=4; }
 }
 /* Команду инспектор даёт ЗАРАНЕЕ, как в жизни: «через 60 метров направо». Без этого
    игрок узнавал о манёвре, уже проехав поворот, — и это была главная жалоба на экзамен.
@@ -10444,6 +10453,7 @@ function predict(){
 let AC=null, engOsc=null, engGain=null, beepT=0;
 function initAudio(){
   /* вкладка в фоне усыпляет контекст — без resume звук после возврата пропадает */
+  voiceUnlock();
   if(AC){ if(AC.state==='suspended') AC.resume().catch(()=>{}); return; }
   try{ AC=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return; }
   engGain=AC.createGain(); engGain.gain.value=0; engGain.connect(AC.destination);
@@ -10472,6 +10482,173 @@ function thud(k){ if(!AC||!opt.sound) return;
   o.frequency.exponentialRampToValueAtTime(45,t+0.16);
   g.gain.setValueAtTime(0.28*k,t); g.gain.exponentialRampToValueAtTime(0.0001,t+0.24);
   o.connect(g); g.connect(AC.destination); o.start(t); o.stop(t+0.27); }
+
+/* ---------- голос инструктора ----------
+   Голос идёт поверх текста, а не вместо: русского голоса нет на части Android и Windows, на iOS речь
+   открывается только жестом. Говорит то же, что карточка, — и только при включённом звуке, без паузы
+   (оверлей и реклама ставят paused) и в видимой вкладке. Очередь короткая: команда экзамена важнее
+   разбора ошибки, разбор важнее подсказки; новая подсказка заменяет ещё не сказанную, а не встаёт
+   за ней — иначе голос отставал бы от карточки на несколько фраз */
+const VOICE_HOLD=0.5, VOICE_HOLD_HOT=0.15, VOICE_REPEAT_GAP=8;
+const VOICE_KINDS=new Set(['act','stop','hit','almost','gear','ok']);
+const voice={v:null, none:false, cur:null, curT:0, q:[], cand:'', candK:'', candT:0, candDone:true,
+  last:'', lastT:-99, unlocked:false, exR:null, exS:-1, exRem:false, exD0:0};
+const SPEECH_GEAR={P:'паркинг', R:'задний ход', N:'нейтраль', D:'драйв'};
+const SPEECH_UNIT={'м':['метр','метра','метров'], 'см':['сантиметр','сантиметра','сантиметров'],
+  '°':['градус','градуса','градусов'], 'км/ч':['километр в час','километра в час','километров в час']};
+/* названий улиц города нет в словаре синтезатора, и ударение он ставит наугад: «Заво́дскую» вместо
+   «Заводску́ю». Знак U+0301 голоса Chrome, macOS и Windows читают как ударение, а не как символ */
+const SPEECH_STRESS={'Заводскую':'Заводску́ю','Заводской':'Заводско́й','Западную':'За́падную',
+  'Западной':'За́падной','Парковую':'Парко́вую','Парковой':'Парко́вой'};
+function speechPlural(n, f){
+  if(n.indexOf(',')>=0) return f[1];
+  const k=(+n)%100, d=k%10;
+  return k>10&&k<20 ? f[2] : d===1 ? f[0] : d>=2&&d<=4 ? f[1] : f[2];
+}
+/* текст карточки — для глаз: клавиши в скобках, кавычки названий, «0,3 м», заглавные для акцента,
+   буквы селектора. Вслух «скобка J» и «эм» сбивают, а «ЛЕВЫЙ» часть голосов читает по буквам */
+function speechText(s){
+  if(!s) return '';
+  return String(s)
+    .replace(/\s*\([^)]*\)/g, '')
+    .replace(/[«»"]/g, '')
+    .replace(/(\d+(?:,\d+)?)\s*(км\/ч|см|м|°)(?![а-яёa-z])/gi, (m, n, u)=>n+' '+speechPlural(n, SPEECH_UNIT[u.toLowerCase()]))
+    .replace(/(^|[^A-Za-z])([PRND])(?![A-Za-z])/g, (m, a, g)=>a+SPEECH_GEAR[g])
+    .replace(/(^|[^A-Za-z])Enter(?![A-Za-z])/g, '$1Энтер')
+    .replace(/[А-ЯЁ]{4,}/g, w=>w.toLowerCase())
+    .replace(/[А-Яа-яЁё]+/g, w=>SPEECH_STRESS[w]||w)
+    .replace(/\s*[·—–]\s*/g, ', ')
+    .replace(/[^\p{L}\p{N}\p{M}\s.,:;!?-]/gu, ' ')
+    .replace(/\s+([.,:;!?])/g, '$1').replace(/([.,:;!?]),+/g, '$1').replace(/\s+/g, ' ')
+    .replace(/^[\s.,:;!?-]+/, '').trim();
+}
+function voicePick(){
+  const ss=window.speechSynthesis; if(!ss) return null;
+  let list=[]; try{ list=ss.getVoices()||[]; }catch(e){}
+  if(!list.length) return null;
+  const ru=list.filter(v=>/^ru/i.test(v.lang||'')), by=re=>ru.find(v=>re.test(v.name||''));
+  const v=by(/Google/)||by(/Milena|Yuri|Katya|Svetlana|Irina|Dariya|Pavel|Dmitry/)||ru[0]||null;
+  /* голоса есть, русского среди них нет: английский голос читает кириллицу как набор звуков — лучше молчать */
+  if(!v && !voice.none){ voice.none=true; console.warn('[voice] русского голоса нет — команды только текстом'); }
+  return v;
+}
+if(window.speechSynthesis) try{ window.speechSynthesis.addEventListener('voiceschanged', ()=>{ voice.v=voicePick(); }); }catch(e){}
+function voiceOn(){ return opt.sound && opt.voice && !paused && document.visibilityState!=='hidden'; }
+/* iOS открывает речь только из обработчика жеста: пустая фраза в первом касании снимает запрет */
+function voiceUnlock(){
+  const ss=window.speechSynthesis;
+  if(voice.unlocked || !ss || !window.SpeechSynthesisUtterance) return;
+  voice.unlocked=true;
+  try{ const u=new SpeechSynthesisUtterance(' '); u.volume=0; ss.speak(u); }catch(e){}
+}
+function say(text, o){
+  o=o||{};
+  const t=speechText(text); if(!t) return;
+  const it={t, tag:o.tag||'card', prio:o.prio||0, keep:!!o.keep, valid:o.valid||null};
+  voice.q=voice.q.filter(x=>x.tag!==it.tag);
+  if(o.interrupt && voice.cur && it.prio>=voice.cur.prio) voiceCut();
+  voice.q.push(it); voice.q.sort((a,b)=>b.prio-a.prio);
+  if(voice.q.length>3) voice.q.length=3;
+  voicePump();
+}
+function voicePump(){
+  while(!voice.cur && voiceOn() && voice.q.length){
+    const it=voice.q.shift();
+    if(!it.valid || it.valid()) voiceSpeak(it);
+  }
+}
+function voiceSpeak(it){
+  const ss=window.speechSynthesis;
+  if(!ss || !window.SpeechSynthesisUtterance) return;
+  if(!voice.v) voice.v=voicePick();
+  if(!voice.v) return;
+  const u=new SpeechSynthesisUtterance(it.t);
+  u.voice=voice.v; u.lang=voice.v.lang||'ru-RU'; u.rate=1.05; u.volume=1;
+  const end=()=>{ if(voice.cur===it){ voice.cur=null; voicePump(); } };
+  u.onend=end; u.onerror=end;
+  voice.cur=it; voice.curT=performance.now();
+  try{ if(ss.paused) ss.resume(); ss.speak(u); }catch(e){ voice.cur=null; }
+}
+function voiceCut(){
+  const was=voice.cur; voice.cur=null;
+  if(was) try{ window.speechSynthesis.cancel(); }catch(e){}
+}
+/* пауза, фон, реклама: голос замолкает сразу. Команда экзамена прозвучит заново, когда игра вернётся, —
+   оборванная на полуслове, она хуже несказанной; подсказки карточки к тому времени устарели */
+function voiceHalt(){
+  const was=voice.cur;
+  voice.q=voice.q.filter(x=>x.keep);
+  if(was && was.keep) voice.q.unshift(was);
+  voiceCut();
+}
+function voiceReset(){ voice.q=[]; voiceCut(); voice.cand=''; voice.candDone=true; voice.exR=null; voice.exS=-1; }
+/* подсказку карточки голос говорит, когда она продержалась VOICE_HOLD: фазы и разборы меняются за доли
+   секунды на границах, и без выдержки голос начинал фразу, которую карточка уже сменила */
+function voiceCue(kind, text){
+  if(text===voice.cand) return;
+  voice.cand=text; voice.candK=kind; voice.candT=0; voice.candDone=!text;
+}
+function voiceTick(dt){
+  if(!voiceOn()){ if(voice.cur || voice.q.length) voiceHalt(); }
+  /* Safari иногда не присылает onend — очередь не должна вставать навсегда */
+  if(voice.cur && performance.now()-voice.curT > 3000+voice.cur.t.length*110){ voice.cur=null; }
+  if(!voice.candDone){
+    voice.candT+=dt||0;
+    const hot=voice.candK==='stop'||voice.candK==='hit';
+    if(voice.candT>=(hot?VOICE_HOLD_HOT:VOICE_HOLD)){
+      voice.candDone=true;
+      const now=performance.now()/1000;
+      if(voice.cand!==voice.last || now-voice.lastT>VOICE_REPEAT_GAP){
+        voice.last=voice.cand; voice.lastT=now;
+        if(voiceOn()) say(voice.cand, {tag:'card', prio:hot?1:0, interrupt:hot});
+      }
+    }
+  }
+  voicePump();
+}
+/* команда инспектора: целиком — когда этап начался (с расстоянием, если до узла больше 40 м), коротко —
+   у манёвра, на дистанции «фраза + реакция» max(25 м, 5 с хода): до неё перестраиваются под поворот */
+function examSpeech(st){
+  if(!st) return '';
+  const d=examNav().dist;
+  if(st.node && st.turn!=='straight' && d!==null && d>40) return 'Через '+(Math.round(d/10)*10)+' метров. '+st.cmd;
+  return st.cmd;
+}
+function examVoiceTick(){
+  const st=exam.route[exam.stage];
+  if(exam.route!==voice.exR || exam.stage!==voice.exS){
+    voice.exR=exam.route; voice.exS=exam.stage; voice.exRem=false;
+    const pre=exam.rerouted ? 'Маршрут меняется. ' : ''; exam.rerouted=false;
+    if(!st) return;
+    const d=examNav().dist, R=exam.route, S=exam.stage;
+    voice.exD0 = d===null ? 0 : d;
+    say(pre+examSpeech(st), {tag:'exam', prio:2, keep:true, interrupt:true, valid:()=>exam.route===R && exam.stage===S});
+    return;
+  }
+  if(!st || voice.exRem || !st.at || 'LRU'.indexOf(st.turn||'-')<0) return;
+  const d=examNav().dist; if(d===null) return;
+  const lim=Math.max(25, Math.abs(car.vel)*5);
+  if(d>lim || d<4) return;
+  voice.exRem=true;
+  if(voice.exD0<lim+20) return;
+  const R=exam.route, S=exam.stage, s=examShort(st);
+  say(s.charAt(0).toUpperCase()+s.slice(1), {tag:'exam', prio:2, keep:true, interrupt:true, valid:()=>exam.route===R && exam.stage===S});
+}
+/* «повтори» — клавиша Ё (Backquote) и кнопка на карточке; без звука или голоса — объяснение тостом,
+   иначе нажатие выглядело бы сломанным */
+function voiceRepeat(){
+  if(!opt.sound){ toast('Голос звучит при включённом звуке (M)', 3); return; }
+  if(!opt.voice){ toast('Голос выключен: Настройки → Звук и поток', 3); return; }
+  if(!window.speechSynthesis || voice.none){ toast('В этом браузере нет русского голоса — команда на карточке', 3); return; }
+  if(examActive()){ const R=exam.route, S=exam.stage;
+    say(examSpeech(exam.route[exam.stage]), {tag:'exam', prio:2, keep:true, interrupt:true, valid:()=>exam.route===R && exam.stage===S}); }
+  else if(voice.last) say(voice.last, {tag:'card', prio:1, interrupt:true});
+}
+function voiceDesc(){
+  if(!window.speechSynthesis) return 'Браузер не читает вслух — команды только на карточке';
+  if(voice.none) return 'В браузере нет русского голоса — команды только на карточке';
+  return 'Читает команды экзамена и подсказки карточки, когда включён звук';
+}
 
 /* ---------- камера ---------- */
 let camSm=null;
@@ -12257,6 +12434,9 @@ function coachCard(kind, icon, main, goal, ph){
   const wheel=ph&&ph.wheel, move=ph&&ph.move, why=(ph&&ph.why)||'';
   /* смена карточки сворачивает ручное «почему»: раскрытие живёт на одной подсказке */
   const mainKey=kind+'|'+icon+'|'+main;
+  /* голос говорит то, что на карточке: say в ph — своя фраза (показ, разбор), иначе текст — для подсказок,
+     а не для живых чисел genericCoach и не для команды экзамена, у которой свой тайминг */
+  voiceCue(kind, ph && ph.say!==undefined ? ph.say : (VOICE_KINDS.has(kind) && (kind!=='act'||ph) ? main : ''));
   /* раскрытая строка телефона живёт свои 4 с: в тексте бывают живые числа («через 60 м»), и сброс по смене
      текста сворачивал её на следующем метре */
   if(mainKey!==coachMainKey){ coachMainKey=mainKey; if(!coachLineOpen) coachWhyOpen=false; }
@@ -12269,7 +12449,7 @@ function coachCard(kind, icon, main, goal, ph){
      карточку экзамена в абзац «P · зажми тормоз… налево на Садовую · баллы: 0 · 27 м» */
   const pre=(ph&&ph.pre)||null, post=(ph&&ph.post)||null;
   const tsig=(pre?pre.join('/'):'')+'|'+(post?post.join('/'):'');
-  const key=mainKey+'|'+gsig+'|'+(wheel||'')+'|'+(move||'')+'|'+(ph&&ph.blinker||'')+'|'+(open?'W':'w')+(coachLineOpen?'O':'o')+why+'|'+tsig;
+  const key=mainKey+'|'+gsig+'|'+(wheel||'')+'|'+(move||'')+'|'+(ph&&ph.blinker||'')+'|'+(open?'W':'w')+(coachLineOpen?'O':'o')+why+'|'+tsig+(ph&&ph.rep?'|rep':'');
   if(key===coachKey) return;
   coachKey=key;
   const el=$('coach');
@@ -12293,7 +12473,8 @@ function coachCard(kind, icon, main, goal, ph){
     /* пробел перед блоком обязателен: textContent карточки читают ученик и скринридер,
        без него текст чипа слипался со следующей фразой — «замигаетЛюбой манёвр…» */
     +(open?' <div class="cwhy"></div>':'')
-    +(ph&&ph.finish?' <button type="button" class="cfin" title="Завершить уровень (Y)">✓ Завершить</button>':'');
+    +(ph&&ph.finish?' <button type="button" class="cfin" title="Завершить уровень (Y)">✓ Завершить</button>':'')
+    +(ph&&ph.rep?'<button type="button" class="crep" title="Повторить команду голосом (Ё)" aria-label="Повторить команду голосом"></button>':'');
   /* main/why — через textContent: сюда попадают имена пользовательских площадок */
   el.querySelector('.cm').textContent=main;
   if(pre||post){ const tg=el.querySelectorAll('.ctag'), all=(pre||[]).concat(post||[]);
@@ -12413,7 +12594,7 @@ function updateHUD(){
   const nextStep = step ? 'Дальше: '+step.charAt(0).toLowerCase()+step.slice(1)+'.' : '';
   if(demo){ const dd=DEMOS[game.li], n=dd.segs.length, sg=dd.segs[Math.min(demo.i,n-1)];
     coachCard('demo','▶','Демо '+Math.min(demo.i+1,n)+'/'+n
-      +(sg&&sg.say ? ' — '+sg.say : '')+' · любая кнопка прерывает'); }
+      +(sg&&sg.say ? ' — '+sg.say : '')+' · любая кнопка прерывает', null, {say:sg&&sg.say||''}); }
   else if(game.done) coachCard('ok','✓','Готово!');
   else if(selWarnT>0) coachCard('stop','⚠',selWarn);
   /* выше разбора касания: игрок должен узнать про вторую ошибку раньше, чем про угол удара */
@@ -12425,7 +12606,9 @@ function updateHUD(){
      он сделал не так, раньше, чем куда ехать дальше */
   else if(examActive() && examWhyT>0)
     coachCard('hit','⚠', examWhy+'. Дальше: '
-      +examNav().text.charAt(0).toLowerCase()+examNav().text.slice(1)+'.', null, {post:examTags(null)});
+      +examNav().text.charAt(0).toLowerCase()+examNav().text.slice(1)+'.', null,
+      /* вслух — только разбор: команду голос скажет сам, а «маршрут меняется» он и так произносит */
+      {post:examTags(null), say:examWhy===EXAM_REROUTE_WHY ? '' : examWhy});
   else if(examActive()){ const nav=examNav();
     /* в тренировочном режиме при команде стоит чип селектора: без него первая команда «тронься» приходит
        игроку, стоящему в P, и трогаться нечем. В настоящем режиме инспектор молчит — там это часть проверки */
@@ -12433,7 +12616,8 @@ function updateHUD(){
       : car.sel==='P' ? (MOB ? 'P · тормоз и D' : 'P · тормоз + Enter')
       : car.sel==='N' ? 'N · включи D' : null;
     const said=nav.bare||nav.text;
-    coachCard('exam', nav.glyph, said.charAt(0).toUpperCase()+said.slice(1), null, {pre:gate?[gate]:null, post:examTags(nav)}); }
+    coachCard('exam', nav.glyph, said.charAt(0).toUpperCase()+said.slice(1), null,
+      {pre:gate?[gate]:null, post:examTags(nav), rep:opt.sound&&opt.voice&&!MOB}); }
   /* гайд троганья владеет карточкой целиком, пока не пройден: фазовые подсказки подождут */
   else if(tut && TUT[tut.i]){ const st=TUT[tut.i];
     coachCard(st.kind, st.icon, st.act(), null, {why:st.why}); }
@@ -12505,8 +12689,11 @@ function tutTick(){
 $('coach').addEventListener('click', e=>{
   const fin=e.target.closest('.cfin');
   if(fin){ fin.blur(); initAudio(); finishLevel(); return; }
-  /* на телефоне плашек нет — подсвечивать нечего, и тап по чипу (пол-строки) раскрывает подсказку */
-  if(document.body.classList.contains('touch')){ coachLineToggle(); return; }
+  const rp=e.target.closest('.crep');
+  if(rp){ rp.blur(); initAudio(); voiceRepeat(); return; }
+  /* на телефоне плашек нет — подсвечивать нечего, и тап по чипу (пол-строки) раскрывает подсказку;
+     на экзамене тап ещё и повторяет команду голосом — кнопки на одной строке не уместить */
+  if(document.body.classList.contains('touch')){ coachLineToggle(); if(examActive()&&opt.sound&&opt.voice){ initAudio(); voiceRepeat(); } return; }
   if(e.target.closest('.cg') && coachGoal && coachGoal.m.cell){
     const cell=$(coachGoal.m.cell).closest('.cell');
     if(cell){ cell.classList.remove('pulse'); void cell.offsetWidth; cell.classList.add('pulse'); }
@@ -12697,6 +12884,8 @@ function authWaitEnd(){
 }
 /* игрок вернулся из вкладки входа — спросить сразу, не дожидаясь двух секунд таймера */
 document.addEventListener('visibilitychange', ()=>{
+  /* в фоне rAF стоит и voiceTick не зовётся — голос глушится здесь, иначе договорил бы в свёрнутой вкладке */
+  if(document.visibilityState==='hidden') voiceHalt();
   if(document.visibilityState==='visible' && authWait) authPollTick();
   if(document.visibilityState==='hidden' && syncDirty) syncNow('hide', true);
 });
@@ -13299,6 +13488,7 @@ function ctrlHTML(){ return ''
   +'<li><span class="kbd">K</span> редактор своей площадки</li>'
   +'<li><span class="kbd">Y</span> завершить уровень, когда стоишь в зоне</li>'
   +'<li><span class="kbd">R</span> заново · <span class="kbd">M</span> звук · <span class="kbd">H</span> помощь</li>'
+  +'<li><span class="kbd">Ё</span> повторить команду голосом (при включённом звуке)</li>'
   +'<li><span class="kbd">Esc</span> пауза и меню</li>'
   +'</ul></div>'; }
 /* уровни по жанрам: в одной сетке из 32 карточек дриллы на габариты и город терялись среди дворовых
@@ -13365,6 +13555,7 @@ function touchCtrlHTML(){ return ''
   +'<li>Руль на месте идёт до упора ~'+LOCK_STILL_S+' с, в качении ~'+LOCK_ROLL_S+' с — крути его на ходу</li>'
   +'<li><b>❚❚</b> справа вверху — пауза: задание, настройки, уровни</li>'
   +'<li>Провести пальцем по экрану — осмотреться, щипок двумя пальцами — приблизить</li>'
+  +'<li>На экзамене тап по строке команды повторяет её голосом (при включённом звуке)</li>'
   +'</ul>'; }
 const LOGO_SVG='<svg viewBox="0 0 256 128" aria-hidden="true"><g fill="none"><rect x="10.5" y="24.5" width="235" height="79" rx="30" stroke="#fff" stroke-width="13"/><path d="M42 97H72L118 50H110Z" fill="#fff"/><path d="M214 97H184L138 50H146Z" fill="#fff"/><path d="M128 56 151 92 128 80 105 92Z" fill="#ffd63c"/></g></svg>';
 const ICON_GEAR='<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
@@ -13704,6 +13895,7 @@ const SETTINGS=[
    desc:()=>{ const i=mirPresetNow(); return i<0 ? 'Твоя настройка: зеркала повёрнуты тягой' : MIR_PRESETS[i].tip; },
    get:mirPresetNow, set:v=>applyMirPreset(v)},
   {id:'sound', tab:'sound', label:'Звук', kind:'switch', get:()=>opt.sound, set:v=>setOpt('sound', v)},
+  {id:'voice', tab:'sound', label:'Голос инструктора', kind:'switch', desc:voiceDesc, get:()=>opt.voice, set:v=>setOpt('voice', v)},
   {id:'traffic', tab:'sound', label:'Машины в городе', kind:'step', vals:TRAF_ORDER.map(k=>[k, TRAF_NAMES[k]]),
    desc:()=>'На экзамене поток всегда плотный. Смена перезапускает городской уровень',
    get:()=>opt.traffic, set:setTraffic}
@@ -13870,6 +14062,7 @@ function pressKey(code){
     case 'KeyN': if(game.done){ const ni=game.li+1;
       openLevel(ni,'next', level.practice && LEVELS[ni] && LEVELS[ni].practice ? 'practice' : 'learn'); } break;
     case 'KeyY': finishLevel(); break;
+    case 'Backquote': voiceRepeat(); break;
     /* Q/E отданы поворотникам (ядро экзаменационного ритуала — прайм-клавиши у WASD);
        подворот камеры переехал на [ ] — до этого они были недокументированными дублями селектора */
     case 'KeyQ': if(!paused) setBlink('L'); break;
@@ -15294,6 +15487,7 @@ function simTick(dt){
   if(attWarnT>0) attWarnT-=dt;
   if(examWhyT>0) examWhyT-=dt;
   if(noteT>0) noteT-=dt;
+  voiceTick(dt);
   if(mirNoteT>0) mirNoteT-=dt;
   { const lk=atLock(); if(lk && !lockWas && !demo) tone(150,0.07,0.035); lockWas=lk; }
   if(selBlockT>0) selBlockT-=dt;
