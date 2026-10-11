@@ -34,7 +34,7 @@ const EQUIV = path.join(REPO, 'tools', 'mutation-equivalent.json');
    пешеходов, жёлтого), затем 541 из 1381 после экзамена из графа (сценарии остановки по времени и
    пропуска команды). Порог чуть ниже факта — иначе округление печатает «34.0 %» при 33,99
    и гейт валит собственную базу */
-const DEFAULT_MIN_SCORE = 39.1;
+const DEFAULT_MIN_SCORE = 40.0;
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i >= 0 ? process.argv[i + 1] : d; };
 const ONLY = arg('--only', null);
