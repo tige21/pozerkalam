@@ -27,6 +27,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import account  # noqa: E402
 
 
+class Everyone(set):
+    """Список тестовых плательщиков, в котором есть любой аккаунт: большинству тестов оплаты он не мешает."""
+
+    def __contains__(self, x):
+        return True
+
+
 def b64u(raw):
     return base64.urlsafe_b64encode(raw).rstrip(b'=').decode()
 
@@ -153,6 +160,7 @@ class AccountTest(unittest.TestCase):
         self.rk.state, self.rk.result = 100, 0
         self.rk.calls.clear()
         self.app = account.App(account.Config(env))
+        self.app.cfg.pay_test_accounts = Everyone()
         self.srv = account.make_server(self.app, port=0)
         self.base = 'http://127.0.0.1:%d' % self.srv.server_address[1]
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
@@ -606,6 +614,8 @@ class AccountTest(unittest.TestCase):
     def test_pay_create_retries_taken_inv_id(self):
         tok = self.login()['access']
         first = self.create(tok)['inv']
+        # старый счёт не переиспользуется — новый номер обязан обойти занятый
+        self.app.store.conn().execute('UPDATE payments SET created_at=created_at-3600')
         picks = iter([first, first, first + 1 if first < 2 ** 31 - 1 else 1])
         orig = account.secrets.randbelow
         account.secrets.randbelow = lambda n: next(picks) - 1
@@ -694,7 +704,8 @@ class AccountTest(unittest.TestCase):
         self.app.cfg.rk_service_url = self.rk.base
         inv = self.create(tok)['inv']
         self.rk.state = 50
-        self.assertEqual(self.notify(inv, secret='lp2-secret')[:2], (200, 'OK%d' % inv))
+        self.assertEqual(self.notify(inv, secret='lp2-secret')[:2], (503, 'retry later'),
+                         'не финальное — не OK, иначе Robokassa перестанет слать уведомления')
         self.assertEqual(self.premium(tok), [], 'состояние не финальное — не выдаём')
         self.rk.state = 100
         self.assertEqual(self.notify(inv, secret='lp2-secret')[:2], (200, 'OK%d' % inv))
@@ -726,6 +737,33 @@ class AccountTest(unittest.TestCase):
         self.go_live()
         self.assertEqual(self.notify(inv, secret='lp2-secret')[0], 400)
         self.assertEqual(self.premium(tok), [])
+
+    def test_live_mode_is_default(self):
+        env = dict(self.env)
+        env.pop('ROBOKASSA_IS_TEST')
+        cfg = account.Config(env)
+        self.assertFalse(cfg.pay_test)
+        self.assertEqual((cfg.rk_pass1, cfg.rk_pass2), ('lp1-secret', 'lp2-secret'))
+
+    def test_test_mode_pays_only_for_listed_accounts(self):
+        s = self.login()
+        tok, acc = s['access'], s['account']['id']
+        self.app.cfg.pay_test_accounts = set()
+        self.assertEqual(self.call('POST', '/pay/create', {'product': 'premium'}, tok)[:2], (503, {'error': 'pay-test-only'}))
+        self.app.cfg.pay_test_accounts = {acc}
+        self.assertEqual(self.call('POST', '/pay/create', {'product': 'premium'}, tok)[0], 200)
+        self.go_live()
+        self.app.cfg.pay_test_accounts = set()
+        self.assertEqual(self.call('POST', '/pay/create', {'product': 'premium'}, tok)[0], 200, 'в бою список не нужен')
+
+    def test_pending_invoice_is_reused(self):
+        tok = self.login()['access']
+        first = self.create(tok)
+        again = self.create(tok)
+        self.assertEqual(again['inv'], first['inv'], 'свежий неоплаченный счёт отдаётся снова')
+        self.assertEqual(self.app.store.conn().execute('SELECT COUNT(*) FROM payments').fetchone()[0], 1)
+        self.app.store.conn().execute('UPDATE payments SET created_at=created_at-3600')
+        self.assertNotEqual(self.create(tok)['inv'], first['inv'], 'старый счёт не переиспользуется')
 
     def test_test_mode_premium_is_void_in_live_mode(self):
         tok = self.login()['access']

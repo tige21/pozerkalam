@@ -684,15 +684,18 @@ let offerViewA = [], offerClickA = [];
       buy: !!ov.querySelector('[data-act="pay-buy"]'), promo: !!ov.querySelector('[data-act="promo-open"]'), li: game.li };
     menuGo('settings'); out.tab = [...document.querySelectorAll('#overlay [data-act^="tab:"]')].some((b) => b.dataset.act === 'tab:premium');
     menuGo('exam'); out.ceiling = /в Премиуме/.test(document.getElementById('overlay').textContent);
-    const pl = window.anPlatform, fr = window.anFramed;
-    window.anPlatform = () => 'ya'; out.ya = levelLocked(10); window.anPlatform = () => 'vk'; out.vk = levelLocked(10); window.anPlatform = pl;
+    const fr = window.anFramed, b0 = window.BUILD;
+    window.BUILD = 'ya-0123456789abcdef'; out.ya = levelLocked(10); window.BUILD = b0;
     window.anFramed = () => true; out.frame = levelLocked(10); window.anFramed = fr;
+    /* метка VK в адресе — не площадка: её дописывает кто угодно (ревью 12.10.2026) */
+    history.replaceState(null, '', location.pathname + '?vk_platform=desktop_web'); out.vkParam = levelLocked(10); history.replaceState(null, '', location.pathname);
     return out;
   }, FAULT);
   check('Премиум: уровни 1–10 открыты, 11–32 закрыты с ценой, путь новичка свободен; пейволл гостю — цена и вход, без «Купить»; вкладка и потолок готовности (@acct-premium-lock)',
     !r.l10.lock && r.l11.lock && /Премиум · 149 ₽/.test(r.l11.d) && r.l32.lock && r.path && r.pay.shown && r.pay.price && r.pay.login === 2 && !r.pay.buy && r.pay.promo
       && r.pay.li !== 10 && r.tab && r.ceiling, JSON.stringify(r));
-  check('Премиум только на сайте: в Яндекс Играх, VK и во фрейме замка нет (@acct-premium-site-only)', !r.ya && !r.vk && !r.frame, JSON.stringify({ ya: r.ya, vk: r.vk, frame: r.frame }));
+  check('Премиум только на сайте: в сборке Яндекс Игр и во фрейме замка нет, метка VK в адресе его не снимает (@acct-premium-site-only)',
+    !r.ya && !r.frame && r.vkParam, JSON.stringify({ ya: r.ya, frame: r.frame, vkParam: r.vkParam }));
   check('консоль чиста на Премиуме', realErrors(errors).length === 0, realErrors(errors).slice(0, 2).join(' | '));
   await ctx.close();
 }

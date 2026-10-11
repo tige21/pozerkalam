@@ -13857,14 +13857,23 @@ let paywallLi=-1;
 let payTest=false;
 try{ payTest=/[?&]paytest=1(&|$)/.test(location.search) || sessionStorage.getItem('pz_paytest')==='1';
   if(payTest) sessionStorage.setItem('pz_paytest','1'); }catch(e){}
-function paySite(){ const pl=anPlatform(); return (pl==='web' || pl==='pwa') && !anFramed() && location.protocol==='https:'; }
+/* метки VK и Telegram лежат в адресе, и их может дописать кто угодно: ?vk_platform=1 снимал замок, а пройденный так
+   уровень 11+ давал доступ навсегда (ревью 12.10.2026). Мини-приложения ещё не запущены (#29, #30) — при запуске
+   площадку надо узнавать по подписи параметров запуска, а не по их наличию. Сборка ЯИ замка не видит: в ней нет входа */
+function paySite(){ return String(window.BUILD||'').indexOf('ya-')!==0 && !anFramed() && location.protocol==='https:'; }
 function premiumOn(){ return AUTH_ON && paySite() && (PAY_ON || payTest || !!window.PREMIUM_FORCE); }
-/* кто прошёл уровень после 10-го до замка, сохраняет доступ (совет ECC): без премиума такой уровень не пройти,
-   значит запись о проходе и есть отметка «играл до замка» */
+/* кто прошёл уровень после 10-го до замка, сохраняет доступ (совет ECC). Решение принимается один раз на устройство —
+   при первом взгляде на замок — и запоминается: иначе любой путь в обход замка (старая ссылка, ручная правка
+   прогресса) после одного прохода превращался бы в доступ навсегда */
+const GRAND_KEY='pz_grand';
 function premiumGrand(){
+  let g=null; try{ g=localStorage.getItem(GRAND_KEY); }catch(e){}
+  if(g==='1' || g==='0') return g==='1';
   const a=progAll();
-  for(let i=PAYWALL.from;i<LEVELS.length;i++){ const l=LEVELS[i], p=l && !l.custom && a[l.name]; if(p && p.n>0) return true; }
-  return false;
+  let has=false;
+  for(let i=PAYWALL.from;i<LEVELS.length && !has;i++){ const l=LEVELS[i], p=l && !l.custom && a[l.name]; if(p && p.n>0) has=true; }
+  if(premiumOn()) try{ localStorage.setItem(GRAND_KEY, has?'1':'0'); }catch(e){}
+  return has;
 }
 function premiumHas(){ return entitled(PAYWALL.product) || premiumGrand(); }
 function entitled(product){
@@ -13907,7 +13916,7 @@ async function payStart(product){
   try{ r=await apiFetch('/pay/create','POST',{product:product}); }catch(e){ r={status:0, json:{}}; }
   if(r.status===409){ await authMe(); if(paywallLi>=0 && !levelLocked(paywallLi)) openLevel(paywallLi,'restore'); return; }
   if(r.status!==200 || !r.json.url){
-    console.warn('[pay] платёж не создан: '+r.status);
+    console.warn('[pay] платёж не создан: '+r.status+' '+((r.json&&r.json.error)||''));
     acctNote = r.status===503 ? 'Оплата сейчас недоступна — попробуй позже.' : 'Не получилось начать оплату: нет связи с сервером.';
     showOv(acctNoteHTML()+paywallHTML(paywallLi)); return; }
   console.info('[pay] платёж '+r.json.inv+(r.json.test?' (тест)':'')+' — на форму оплаты');
@@ -13916,9 +13925,11 @@ async function payStart(product){
 }
 /* возврат с формы оплаты: Robokassa ведёт на /play/ и дописывает InvId (и на успех, и на отказ — адрес один).
    Доступ выдаёт вебхук сервиса, а не этот возврат: ждём, пока платёж станет оплаченным, и берём /me */
+let payBooting=false;
 async function payBoot(){
   const m=/[?&]InvId=(\d+)/i.exec(location.search);
   if(!m) return;
+  payBooting=true;
   let ret=null;
   try{ ret=JSON.parse(sessionStorage.getItem('pz_pay')||'null'); sessionStorage.removeItem('pz_pay'); }catch(e){}
   try{ history.replaceState(null, '', location.pathname); }catch(e){}
@@ -16523,7 +16534,7 @@ if(acct) anIdentify(acct.id);
 authBoot().then(()=>{
   payBoot();
   /* ссылка из поста с ?promo=КОД: сразу вкладка «Премиум» с подставленным кодом */
-  if(promoCode && premiumOn() && !/[?&]InvId=/i.test(location.search)) menuGo('settings','premium','main');
+  if(promoCode && premiumOn() && !payBooting) menuGo('settings','premium','main');
 });
 document.addEventListener('keydown', e=>{ if(e.key==='Enter' && e.target && e.target.id==='promoInput'){ e.preventDefault(); promoRedeem(e.target.value); } });
 /* PWA: офлайн и мгновенный повторный вход; с file:// и без https молча пропускается */

@@ -216,35 +216,35 @@
 - **Когда** игрок открывает уровень 20 и отвечает «Пока бесплатно»
 - **Тогда** открыт уровень 20
 
-### Покупка курса открывает закрытый уровень
+### Премиум открывает закрытый уровень
 
-`acct-paywall-entitled` · авто · `specs/features/acct/paywall.feature:20`
+`acct-paywall-entitled` · авто · `specs/features/acct/paywall.feature:18`
 
-Ссылка: доска #230, #31 (M7 · B2C-freemium); docs/monetization-m7.md; план
+Ссылка: доска #230, #31 (M7 · B2C-freemium), #335 (Премиум 149 ₽); план .ai-factory/plans/premium-149.md
 
 - **Дано** уровень "1 · Параллельная парковка справа"
 - **И** в курс входит уровень 20
-- **И** у игрока покупка "course"
+- **И** у игрока покупка "premium"
 - **Когда** игрок открывает уровень 20
 - **Тогда** загружен уровень 20
 
 ### Истёкшая покупка уровень не открывает
 
-`acct-paywall-expired` · авто · `specs/features/acct/paywall.feature:28`
+`acct-paywall-expired` · авто · `specs/features/acct/paywall.feature:26`
 
-Ссылка: доска #230, #31 (M7 · B2C-freemium); docs/monetization-m7.md; план
+Ссылка: доска #230, #31 (M7 · B2C-freemium), #335 (Премиум 149 ₽); план .ai-factory/plans/premium-149.md
 
 - **Дано** уровень "1 · Параллельная парковка справа"
 - **И** в курс входит уровень 20
-- **И** у игрока покупка "course", истёкшая вчера
+- **И** у игрока покупка "premium", истёкшая вчера
 - **Когда** игрок открывает уровень 20
 - **Тогда** открыт пейволл, уровень не сменился
 
 ### Первый уровень не закрывается никогда
 
-`acct-paywall-first-free` · авто · `specs/features/acct/paywall.feature:44`
+`acct-paywall-first-free` · авто · `specs/features/acct/paywall.feature:42`
 
-Ссылка: доска #230, #31 (M7 · B2C-freemium); docs/monetization-m7.md; план
+Ссылка: доска #230, #31 (M7 · B2C-freemium), #335 (Премиум 149 ₽); план .ai-factory/plans/premium-149.md
 
 - **Дано** уровень "2 · Задним ходом в перпендикулярный карман"
 - **И** в курс входят уровни 1 и 20
@@ -254,9 +254,9 @@
 
 ### Уровень вне курса открывается без покупки
 
-`acct-paywall-free-open` · авто · `specs/features/acct/paywall.feature:52`
+`acct-paywall-free-open` · авто · `specs/features/acct/paywall.feature:50`
 
-Ссылка: доска #230, #31 (M7 · B2C-freemium); docs/monetization-m7.md; план
+Ссылка: доска #230, #31 (M7 · B2C-freemium), #335 (Премиум 149 ₽); план .ai-factory/plans/premium-149.md
 
 - **Дано** уровень "1 · Параллельная парковка справа"
 - **И** в курс входит уровень 20
@@ -266,9 +266,9 @@
 
 ### Закрытый уровень без покупки открывает пейволл
 
-`acct-paywall-locks` · авто · `specs/features/acct/paywall.feature:12`
+`acct-paywall-locks` · авто · `specs/features/acct/paywall.feature:10`
 
-Ссылка: доска #230, #31 (M7 · B2C-freemium); docs/monetization-m7.md; план
+Ссылка: доска #230, #31 (M7 · B2C-freemium), #335 (Премиум 149 ₽); план .ai-factory/plans/premium-149.md
 
 - **Дано** уровень "1 · Параллельная парковка справа"
 - **И** в курс входит уровень 20
@@ -276,11 +276,11 @@
 - **Когда** игрок открывает уровень 20
 - **Тогда** открыт пейволл, уровень не сменился
 
-### Другая покупка курс не открывает
+### Другая покупка закрытый уровень не открывает
 
-`acct-paywall-other-product` · авто · `specs/features/acct/paywall.feature:36`
+`acct-paywall-other-product` · авто · `specs/features/acct/paywall.feature:34`
 
-Ссылка: доска #230, #31 (M7 · B2C-freemium); docs/monetization-m7.md; план
+Ссылка: доска #230, #31 (M7 · B2C-freemium), #335 (Премиум 149 ₽); план .ai-factory/plans/premium-149.md
 
 - **Дано** уровень "1 · Параллельная парковка справа"
 - **И** в курс входит уровень 20
@@ -338,7 +338,7 @@
 
 ### Покупка ведёт на форму оплаты и открывает уровень после возврата
 
-`acct-premium-buy` · руками · `specs/features/acct/vhod.feature:191`
+`acct-premium-buy` · руками · `specs/features/acct/vhod.feature:193`
 
 Ссылка: доска #229; план .ai-factory/plans/account-auth-analytics-paywall.md; флоу входа —
 
@@ -361,7 +361,7 @@
 
 ### Без аккаунта купить нельзя
 
-`acct-premium-login-first` · руками · `specs/features/acct/vhod.feature:185`
+`acct-premium-login-first` · руками · `specs/features/acct/vhod.feature:187`
 
 Ссылка: доска #229; план .ai-factory/plans/account-auth-analytics-paywall.md; флоу входа —
 
@@ -375,12 +375,14 @@
 
 Ссылка: доска #229; план .ai-factory/plans/account-auth-analytics-paywall.md; флоу входа —
 
-- **Дано** игра открыта в Яндекс Играх, в VK или во фрейме
+- **Дано** игра открыта в сборке Яндекс Игр или во фрейме площадки
 - **Тогда** ни один уровень не закрыт — своя оплата там запрещена
+- **Когда** в адрес сайта дописана метка VK
+- **Тогда** замок остаётся: метку может дописать кто угодно
 
 ### Промокод из поста открывает Премиум
 
-`acct-promo-redeem` · руками · `specs/features/acct/vhod.feature:199`
+`acct-promo-redeem` · руками · `specs/features/acct/vhod.feature:201`
 
 Ссылка: доска #229; план .ai-factory/plans/account-auth-analytics-paywall.md; флоу входа —
 

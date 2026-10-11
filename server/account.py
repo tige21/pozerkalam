@@ -48,6 +48,7 @@ RK_STATE_DONE = 100
 RK_STATE_CANCELED = (10, 60)
 RK_INV_MAX = 2 ** 31 - 1
 RK_INV_TRIES = 5
+PAY_REUSE_S = 30 * 60
 # Повтор старого refresh в течение этой минуты — гонка двух вкладок, которые обновляют сессию
 # одновременно, а не кража: семью не отзываем, клиент перечитывает свежий refresh из хранилища.
 REUSE_GRACE = 60
@@ -74,7 +75,10 @@ class Config:
         self.http_timeout = float(e.get('PROVIDER_TIMEOUT', '10'))
         self.trust_xff = e.get('TRUST_X_REAL_IP', '1') == '1'
         self.rk_login = e.get('ROBOKASSA_MERCHANT_LOGIN', '').strip()
-        self.pay_test = e.get('ROBOKASSA_IS_TEST', 'true').strip().lower() in ('1', 'true', 'yes')
+        # по умолчанию бой: забытый в env тестовый режим продавал бы премиум за тестовую карту
+        self.pay_test = e.get('ROBOKASSA_IS_TEST', 'false').strip().lower() in ('1', 'true', 'yes')
+        # в тестовом режиме платить могут только эти аккаунты (владелец): форма принимает тестовые карты
+        self.pay_test_accounts = {x.strip() for x in e.get('ROBOKASSA_TEST_ACCOUNTS', '').split(',') if x.strip()}
         keys = ('ROBOKASSA_TEST_PASSWORD_1', 'ROBOKASSA_TEST_PASSWORD_2') if self.pay_test \
             else ('ROBOKASSA_PASSWORD_1', 'ROBOKASSA_PASSWORD_2')
         self.rk_pass1, self.rk_pass2 = e.get(keys[0], '').strip(), e.get(keys[1], '').strip()
@@ -757,6 +761,21 @@ class App:
             return 400, {'error': 'product'}
         if not cfg.pay_on:
             return 503, {'error': 'pay-off'}
+        if cfg.pay_test and acc_id not in cfg.pay_test_accounts:
+            log.warning('pay create: тестовый режим, acct=%s не в списке', mask(acc_id))
+            return 503, {'error': 'pay-test-only'}
+        # свежий неоплаченный счёт отдаётся снова: второй счёт поверх первого — путь к двойному списанию
+        fresh = self.store.conn().execute(
+            "SELECT inv_id FROM payments WHERE account_id=? AND product=? AND status='pending' AND test=? "
+            "AND created_at>? ORDER BY created_at DESC LIMIT 1",
+            (acc_id, product, int(cfg.pay_test), now() - PAY_REUSE_S)).fetchone()
+        if fresh:
+            if any(e['product'] == PREMIUM for e in self.entitlements(self.store.conn(), acc_id)):
+                return 409, {'error': 'owned'}
+            inv = fresh['inv_id']
+            log.info('pay create: acct=%s тот же счёт inv=%d', mask(acc_id), inv)
+            return 200, {'url': robokassa_pay_url(cfg, inv, cfg.premium_price, cfg.premium_title, product),
+                         'inv': inv, 'test': cfg.pay_test}
         inv = None
         for _ in range(RK_INV_TRIES):
             cand = secrets.randbelow(RK_INV_MAX) + 1
@@ -840,8 +859,9 @@ class App:
                 log.info('robokassa result: inv=%d отменён (state %d)', inv, state)
                 return ok
             if state != RK_STATE_DONE:
-                log.warning('robokassa result: inv=%d состояние %d не финальное — не выдаём', inv, state)
-                return ok
+                # не OK: на OK Robokassa перестаёт слать уведомления, и списанный платёж остался бы без премиума
+                log.warning('robokassa result: inv=%d состояние %d не финальное — пусть повторит', inv, state)
+                return 503, 'retry later'
         with self.store.tx() as c:
             n = c.execute("UPDATE payments SET status='paid', paid_at=?, out_sum=? WHERE inv_id=? AND status!='paid'",
                           (now(), out_sum, inv)).rowcount

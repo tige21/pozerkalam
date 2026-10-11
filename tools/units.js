@@ -376,7 +376,8 @@ function unitCheck() {
   {
     /* состояние игрока подменяется на время группы и возвращается: набор гоняется в живой странице */
     const acct0 = acct, pf0 = window.PAYWALL_FORCE, po0 = window.premiumOn, t = Math.floor(Date.now() / 1000);
-    let prog0 = null; try { prog0 = localStorage.getItem(PROG_KEY); } catch (e) {}
+    let prog0 = null, grand0 = null; try { prog0 = localStorage.getItem(PROG_KEY); grand0 = localStorage.getItem(GRAND_KEY); } catch (e) {}
+    const ungrand = () => { try { localStorage.removeItem(GRAND_KEY); } catch (e) {} };
     try {
       window.PAYWALL_FORCE = [19];
       acct = null;
@@ -404,19 +405,25 @@ function unitCheck() {
       ok('без включённой оплаты закрытых уровней нет', LEVELS.every((l, i) => levelLocked(i) === false));
       window.premiumOn = () => true;
       try { localStorage.setItem(PROG_KEY, '{}'); } catch (e) {}
+      ungrand();
       ok('уровни 1–10 бесплатны', [0, 1, 6, 9].every((i) => levelLocked(i) === false));
       ok('уровни 11–32 закрыты без премиума', [10, 13, 19, 26, LEVELS.length - 1].every((i) => levelLocked(i) === true));
       acct = { id: 'u', name: 'u', provider: 'vk', ent: [{ product: 'premium', expires_at: null }] };
       ok('с премиумом открыты все', LEVELS.every((l, i) => levelLocked(i) === false));
       acct = null;
+      ok('решение «играл до замка» принято при первом взгляде на замок и запомнено', localStorage.getItem(GRAND_KEY) === '0');
       try { localStorage.setItem(PROG_KEY, JSON.stringify({ [LEVELS[10].name]: { n: 1, clean: 1, best: 30 } })); } catch (e) {}
+      ok('проход уровня 11+ после решения доступа не даёт', premiumGrand() === false && levelLocked(25) === true);
+      ungrand();
       ok('прошедший уровень после 10-го до замка сохраняет доступ', premiumGrand() === true && levelLocked(25) === false);
+      ungrand();
       try { localStorage.setItem(PROG_KEY, JSON.stringify({ [LEVELS[9].name]: { n: 3, clean: 1, best: 30 } })); } catch (e) {}
       ok('прогресс только по бесплатным уровням доступ не даёт', premiumGrand() === false && levelLocked(10) === true);
       ok('путь новичка — только бесплатные уровни', noviceIdx().length === 5 && noviceIdx().every((i) => i < PAYWALL.from));
     } finally {
       acct = acct0; window.PAYWALL_FORCE = pf0; window.premiumOn = po0;
-      try { if (prog0 === null) localStorage.removeItem(PROG_KEY); else localStorage.setItem(PROG_KEY, prog0); } catch (e) {}
+      try { if (prog0 === null) localStorage.removeItem(PROG_KEY); else localStorage.setItem(PROG_KEY, prog0);
+        if (grand0 === null) localStorage.removeItem(GRAND_KEY); else localStorage.setItem(GRAND_KEY, grand0); } catch (e) {}
       if (LEVELS.length && LEVELS[LEVELS.length - 1].name === '★ проверка') LEVELS.pop();
     }
   }
