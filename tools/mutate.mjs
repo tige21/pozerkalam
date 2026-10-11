@@ -61,6 +61,14 @@ export function zoneRanges(code) {
 }
 
 /** позиции, которые нельзя трогать: строки, комментарии, регулярки */
+function regexStart(code, i) {
+  let k = i - 1;
+  while (k >= 0 && (code[k] === ' ' || code[k] === '\t' || code[k] === '\n')) k--;
+  if (k < 0) return true;
+  if ('(,=:[!&|?{};+-*%<>~^'.includes(code[k])) return true;
+  return /(?:^|[^\w$])(?:return|typeof|case|in|of|void|delete)$/.test(code.slice(Math.max(0, k - 8), k + 1));
+}
+
 function maskCode(code) {
   const mask = new Uint8Array(code.length);   /* 1 — не код */
   let i = 0;
@@ -68,6 +76,18 @@ function maskCode(code) {
     const c = code[i], d = code[i + 1];
     if (c === '/' && d === '*') { const e = code.indexOf('*/', i + 2); const end = e < 0 ? code.length : e + 2; mask.fill(1, i, end); i = end; continue; }
     if (c === '/' && d === '/') { const e = code.indexOf('\n', i); const end = e < 0 ? code.length : e; mask.fill(1, i, end); i = end; continue; }
+    /* литерал регулярного выражения — тоже не код: кавычка внутри /[«»"]/ открывала здесь ложную строку, и
+       маска съезжала на 2000 строк до конца файла — entitled и levelLocked выпали из прогона без единого мутанта.
+       Регулярка начинается там, где не может стоять деление: после ( , = : [ ! & | ? { } ; или return */
+    if (c === '/' && regexStart(code, i)) {
+      let j = i + 1, cls = false;
+      while (j < code.length && code[j] !== '\n') {
+        if (code[j] === '\\') { j += 2; continue; }
+        if (code[j] === '[') cls = true; else if (code[j] === ']') cls = false; else if (code[j] === '/' && !cls) break;
+        j++;
+      }
+      if (code[j] === '/') { j++; while (/[a-z]/.test(code[j] || '')) j++; mask.fill(1, i, j); i = j; continue; }
+    }
     if (c === '"' || c === "'" || c === '`') {
       let j = i + 1;
       while (j < code.length && code[j] !== c) { if (code[j] === '\\') j++; j++; }
