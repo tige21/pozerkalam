@@ -804,6 +804,10 @@
 
 
 
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -2691,6 +2695,45 @@ function signPic(pic){
       g.beginPath(); g.moveTo(86,112); g.lineTo(86,58); g.arc(64,58,22,0,Math.PI,true); g.lineTo(42,80); g.stroke();
       g.beginPath(); g.moveTo(24,78); g.lineTo(60,78); g.lineTo(42,108); g.closePath(); g.fill();
     }
+    else if(/^(lim|end)\d+$/.test(pic)){
+      /* 3.24 — чёрное число на белом; 3.25 — серое число под чёрными косыми полосами снизу слева вверх
+         направо, в пределах круга: квадрат картинки лежит на белом поле знака */
+      const end=pic.startsWith('end');
+      g.fillStyle=end ? '#8e939a' : '#15171a'; g.textAlign='center'; g.textBaseline='middle';
+      g.font='800 66px -apple-system, "Segoe UI", Roboto, sans-serif';
+      g.fillText(pic.replace(/\D/g,''), cx, cy+4);
+      if(end){
+        g.save(); g.beginPath(); g.arc(cx, cy, 62, 0, TAU); g.clip();
+        g.strokeStyle='#15171a'; g.lineWidth=3.2;
+        for(let k=-3;k<=3;k++){ g.beginPath(); g.moveTo(cx-70+k*11, cy+70+k*11); g.lineTo(cx+70+k*11, cy-70+k*11); g.stroke(); }
+        g.restore();
+      }
+    }
+    else if(pic==='kids'){
+      /* 1.23 «Дети»: взрослый ребёнок впереди, младший за руку сзади — силуэты на белом поле треугольника */
+      g.fillStyle='#15171a'; g.strokeStyle='#15171a'; g.lineCap='round'; g.lineJoin='round';
+      const kid=(x, y, k)=>{
+        g.beginPath(); g.arc(x, y-46*k, 9*k, 0, TAU); g.fill();
+        g.lineWidth=11*k; g.beginPath(); g.moveTo(x, y-33*k); g.lineTo(x-2*k, y-6*k); g.stroke();
+        g.lineWidth=8*k; g.beginPath(); g.moveTo(x-2*k, y-6*k); g.lineTo(x-14*k, y+22*k); g.moveTo(x-2*k, y-6*k); g.lineTo(x+12*k, y+22*k); g.stroke();
+        g.lineWidth=6*k; g.beginPath(); g.moveTo(x, y-28*k); g.lineTo(x+16*k, y-12*k); g.moveTo(x, y-28*k); g.lineTo(x-15*k, y-14*k); g.stroke();
+      };
+      kid(76, 82, 1.05); kid(46, 92, 0.78);
+    }
+    else if(pic==='zone' || pic==='zoneEnd'){
+      /* 5.21 «Жилая зона»: белые дом, взрослый и ребёнок с мячом на синем; 5.22 — то же под красной полосой */
+      const blue='#1c4ea4'; g.fillStyle=blue; g.fillRect(0, 0, w, h);
+      g.fillStyle='#f4f6f8'; g.strokeStyle='#f4f6f8'; g.lineCap='round';
+      g.beginPath(); g.moveTo(14, 58); g.lineTo(44, 30); g.lineTo(74, 58); g.lineTo(68, 58); g.lineTo(68, 96); g.lineTo(20, 96); g.lineTo(20, 58); g.closePath(); g.fill();
+      g.fillStyle=blue; g.fillRect(36, 70, 16, 26);
+      g.fillStyle='#f4f6f8';
+      const man=(x, y, k)=>{ g.beginPath(); g.arc(x, y-44*k, 7*k, 0, TAU); g.fill();
+        g.lineWidth=9*k; g.beginPath(); g.moveTo(x, y-32*k); g.lineTo(x, y-6*k); g.stroke();
+        g.lineWidth=6*k; g.beginPath(); g.moveTo(x, y-6*k); g.lineTo(x-9*k, y+18*k); g.moveTo(x, y-6*k); g.lineTo(x+9*k, y+18*k); g.stroke(); };
+      man(94, 92, 1.0); man(112, 102, 0.62);
+      g.beginPath(); g.arc(104, 112, 5, 0, TAU); g.fill();
+      if(pic==='zoneEnd'){ g.strokeStyle='#d0262c'; g.lineWidth=10; g.beginPath(); g.moveTo(6, 122); g.lineTo(122, 6); g.stroke(); }
+    }
     else if(pic==='bus' || pic==='tram'){
       /* 5.16 и 5.17: белый силуэт сбоку, окна и колёса — цветом поля знака */
       const blue='#1c4ea4';
@@ -3812,6 +3855,56 @@ function kerbsFromAsphalt(dec, opts){
 /* сборка: узлы → лучи, рёбра → полотно + бордюры + мета полос.
    Ребро подрезается радиусом узла с каждого конца, иначе разметка и бордюр
    лезут в перекрёсток и перегораживают проезд */
+/* ---------- ограничения скорости ----------
+   План speed-limits-ribbon, Ф4; владелец 11.10.2026: «добавить скоростное ограничение и разные знаки».
+   По умолчанию в городе 60 (ПДД 10.2), во дворе — 20. Знак 3.24 действует до ближайшего перекрёстка за ним,
+   поэтому «40» на Ленина стоит после каждого перекрёстка и конца не имеет: за перекрёстком снова 60 — это
+   правило и есть урок. Школа на Садовой — «Дети» (1.23), «20» (3.24) и конец ограничения (3.25); Парковая —
+   жилая зона: 5.21 на въезде с перекрёстка, 5.22 на выезде к нему, 20. Знак ставится справа по ходу, за
+   поребриком, лицом к водителю; в кадре он — на той же улице, где действует.
+   Зона в city.speed: ребро графа, направление (+1 — от a к b), отрезок [lo, hi] в метрах ребра, ограничение */
+const SPEED_SIGN_OFF=1.2, SPEED_CITY=60, SPEED_YARD=20, SPEED_TOL=2, SPEED_HOLD=1.0;
+function citySpeed(spec, V, E, obs, city){
+  city.speed=[];
+  const put=(e, dir, d, pic)=>{
+    const A=V[e.a], f=fuv(e.yaw), yT=dir>0 ? e.yaw : e.yaw+PI, rt=ruv(yT), s=dir>0 ? d : e.len-d, o=e.hw+SPEED_SIGN_OFF;
+    obs.push(sign(pic, A.u+f.u*s+rt.u*o, A.v+f.v*s+rt.v*o, yT+PI));
+  };
+  const zone=(e, dir, d0, d1, lim)=>{ const a=dir>0 ? d0 : e.len-d1, b=dir>0 ? d1 : e.len-d0;
+    city.speed.push({e, dir, lo:Math.min(a,b), hi:Math.max(a,b), lim}); };
+  spec.roads.forEach((r, i)=>{ const e=E[i];
+    for(const z of (r.speed||[])) for(const dir of [1,-1]){
+      const from=V[dir>0 ? e.a : e.b], to=V[dir>0 ? e.b : e.a];
+      const r0=from.round||from.r||0, r1=to.round||to.r||0;
+      if(z.zone){
+        /* со стороны тупика знаков нет: въезд в зону — с перекрёстка, выезд — к нему */
+        if(r0){ const d=r0+4; put(e, dir, d, 'zone'); zone(e, dir, d, e.len, SPEED_YARD); }
+        else { const d=e.len-r1-4; put(e, dir, d, 'zoneEnd'); zone(e, dir, 0, d, SPEED_YARD); }
+        continue;
+      }
+      if(z.kids){
+        const dk=r0+4, d1=dk+15, d2=d1+35;
+        put(e, dir, dk, 'kids'); put(e, dir, d1, 'lim'+z.lim); put(e, dir, d2, 'end'+z.lim);
+        zone(e, dir, d1, d2, z.lim); continue;
+      }
+      /* у свободного конца улицы знак стоит в 9 м от края карты — перед стартом экзамена на Ленина */
+      const d0=r0 ? r0+6 : 9;
+      put(e, dir, d0, 'lim'+z.lim); zone(e, dir, d0, e.len-r1, z.lim);
+    }
+  });
+}
+/* ограничение в точке для машины с курсом th: зона своей улицы и своего направления; на перекрёстке и вне
+   зон — 60, вне города — 20 */
+function limitAt(u, v, th){
+  const c=level.city;
+  if(!c) return SPEED_YARD;
+  const Z=c.speed; if(!Z || !Z.length) return SPEED_CITY;
+  const p={u, v}; if(inNodeArea(p)) return SPEED_CITY;
+  const sn=citySnap(p); if(!sn || !sn.e || sn.ring) return SPEED_CITY;
+  const dir=Math.cos(angNorm(th-sn.e.yaw))>=0 ? 1 : -1;
+  for(const z of Z) if(z.e===sn.e && z.dir===dir && sn.s>=z.lo && sn.s<=z.hi) return z.lim;
+  return SPEED_CITY;
+}
 function cityWorld(spec){
   const obs=[], dec=[],
         city={stoplines:[],zebras:[],oncoming:[],turnZones:[],yieldZones:[],
@@ -3994,6 +4087,7 @@ function cityWorld(spec){
   const kb=kerbsFromAsphalt(dec, {grp0:grpN});
   for(const k of kb.list) obs.push(k);
   city.kerbs=kb.stats;
+  citySpeed(spec, V, E, obs, city);
   const bl=cityBuildings(spec, pt, radius, arms, obs);
   const pr=cityProps(spec, pt, radius, arms, obs, bl.list, bl.hull);
   for(const b of bl.list) obs.push({...b});
@@ -4903,18 +4997,18 @@ const CITY_SPEC={
     N7 :{u:-78, v:-70}                          /* обычный крест */
   },
   roads:[
-    {a:[0,-105], b:'N1', lanes:2, tram:true,  name:'Ленина'},
-    {a:'N1',     b:'N2', lanes:2, tram:true,  name:'Ленина'},
-    {a:'N2',     b:'N3', lanes:2, tram:true,  name:'Ленина'},
+    {a:[0,-105], b:'N1', lanes:2, tram:true,  name:'Ленина', speed:[{lim:40}]},
+    {a:'N1',     b:'N2', lanes:2, tram:true,  name:'Ленина', speed:[{lim:40}]},
+    {a:'N2',     b:'N3', lanes:2, tram:true,  name:'Ленина', speed:[{lim:40}]},
     {a:'N6',     b:'N2', lanes:2,             name:'Заводская'},
     {a:'N2',     b:[42,0], lanes:2,               name:'Заводская'},
     {a:[42,0],   b:'N4', lanes:2, solid:'all',    name:'Заводская · подъезд к кольцу'},
-    {a:'N7',     b:'N1', lanes:1,             name:'Садовая'},
+    {a:'N7',     b:'N1', lanes:1,             name:'Садовая', speed:[{lim:20, kids:true}]},
     {a:'N1',     b:'N5b',lanes:1,             name:'Садовая'},
     {a:'N5b',    b:'N5', lanes:1,             name:'Садовая'},
     {a:'N5',     b:[93,-70], lanes:1,         name:'Садовая'},
-    {a:[-24,70], b:'N3', lanes:1,             name:'Парковая'},
-    {a:'N3',     b:[24,70], lanes:1,          name:'Парковая'},
+    {a:[-24,70], b:'N3', lanes:1,             name:'Парковая', speed:[{zone:true}]},
+    {a:'N3',     b:[24,70], lanes:1,          name:'Парковая', speed:[{zone:true}]},
     {a:'N5',     b:'N4', lanes:1,             name:'Восточная'},
     {a:'N4',     b:[78,38], lanes:1,          name:'Восточная'},
     {a:'N5b',    b:[64,-100], lanes:1,        name:'Южная'},
@@ -5028,11 +5122,15 @@ function trafficGap(u, v, d, at){
     /* точка опасности у него за спиной — он к ней не приедет: попутный впереди, уходящий от
        неё, закрывал бы окно на первой же полусекунде */
     { const af=fuv(a.yaw); if((cu-a.u)*af.u+(cv-a.v)*af.v<0) continue; }
-    const sp=Math.max(0.5, Math.abs(s.v));
+    /* машина потока, которая сейчас медленнее крейсера (вышла из поворота, тронулась), разгоняется: путь
+       за t — с разгоном TRAF.acc до своей скорости. По текущей скорости поток в 30 км/ч приезжал к точке
+       раньше прогноза, и показ разворота на L29 въезжал во встречную машину */
+    const v0=Math.max(0.5, Math.abs(s.v)), vm=s.rt ? Math.max(v0, s.sp||0) : v0, ta=(vm-v0)/TRAF.acc;
     for(let t=0.5;t<=GAP_MAX;t+=0.5){
+      const dist = t<ta ? v0*t+0.5*TRAF.acc*t*t : v0*ta+0.5*TRAF.acc*ta*ta+vm*(t-ta);
       let pu, pv;
-      if(s.rt){ const p=trafPose(s.rt, s.s+sp*t, _tp); pu=p.u; pv=p.v; }
-      else { const f=fuv(a.yaw); pu=a.u+f.u*sp*t; pv=a.v+f.v*sp*t; }
+      if(s.rt){ const p=trafPose(s.rt, s.s+dist, _tp); pu=p.u; pv=p.v; }
+      else { const f=fuv(a.yaw); pu=a.u+f.u*dist; pv=a.v+f.v*dist; }
       if(Math.hypot(pu-cu, pv-cv)<=R){ if(t<best) best=t; break; }
     }
   }
@@ -5282,7 +5380,7 @@ function emitTram(o){
 /* cap 30: две городские петли ≈ 650 м, на «час пик» это ~22 машины плюс запас под trafMul;
    третьей петли в графе нет — Ленина-север, Парковая, Южная и Косой съезд кончаются тупиками,
    а разворот в петле потока запрещён, так что больше машин = гуще на тех же двух */
-const TRAF={ sp:6.2, acc:1.3, dec:2.9, gap:6.2, see:28, lat:1.8, lon:2.6, cap:30, step:2.4 };
+const TRAF={ sp:8.3, acc:1.3, dec:2.9, gap:6.2, see:28, lat:1.8, lon:2.6, cap:30, step:2.4 };
 /* метров дороги на одну машину: чем меньше, тем гуще поток */
 const TRAF_SPACING={off:Infinity, calm:115, normal:74, dense:48, heavy:30};
 const TRAF_NAMES={off:'без машин', calm:'спокойный', normal:'обычный', dense:'плотный', heavy:'час пик'};
@@ -5630,14 +5728,35 @@ function trafSpeed(d){
   return clamp(Math.sqrt(2*TRAF.dec*Math.max(0, d-TRAF.gap)), 0, TRAF.sp);
 }
 /* скорость по кривизне пути впереди: угловая скорость машины не выше TRAF_YAW_RATE. Кривизна
-   берётся по курсу пути на окнах по 1 м от 0 до 10 м вперёд (тормозной путь с 6,2 м/с при
-   2,9 м/с² — 5,4 м), берётся худшее; окно шире метра размазывает пик кривизны в тесном углу
+   берётся по курсу пути на окнах по 1 м от 0 до 14 м вперёд (тормозной путь с 8,3 м/с при
+   2,9 м/с² — 11,9 м), берётся худшее; окно шире метра размазывает пик кривизны в тесном углу
    (полуокружность R 1,65 на дворовой петле). Правый поворот в тесном узле идёт радиусом ≈2,7 м —
    на полном ходу машина крутилась там на 170°/с, как на карусели; кольцо R 11,5 не режет */
 const TRAF_YAW_RATE=1.0, TRAF_V_MIN=1.4;
+/* ПДД 13.8: на зелёный уступают тем, кто заканчивает проезд перекрёстка. Машина потока, у которой узел в 14 м
+   впереди по пути, ждёт, пока в нём едет игрок: общего красного у светофоров нет, и поток в 30 км/ч, тронувшись
+   на зелёный, въезжал в борт машине, доезжающей перекрёсток на жёлтом (бот экзамена, зерно 3007) */
+function trafNodeBusy(a, s){
+  const g=cityGraph(); if(!g || Math.abs(car.vel)<=0.3) return false;
+  const c=bodyPos();
+  for(const id in g.V){ const N=g.V[id], R=N.r; if(!R || N.round) continue;
+    if(Math.hypot(c.u-N.u, c.v-N.v)>R+1 || Math.hypot(a.u-N.u, a.v-N.v)<=R) continue;
+    /* узел впереди — любая точка пути на ближайших 14 м внутри него: тесный правый поворот выходит из узла
+       раньше, и одна точка в 14 м лежала уже за ним */
+    for(let d=2; d<=14; d+=2){ const q=trafPose(s.rt, s.s+d, _tq); if(Math.hypot(q.u-N.u, q.v-N.v)<=R) return true; }
+  }
+  return false;
+}
+/* поток соблюдает ограничения: на 2 км/ч ниже знака там, где машина стоит, и в 12 м впереди по её пути —
+   иначе в «20» она въезжала бы на 30 и тормозила уже в зоне. До 11.10.2026 поток шёл 22 км/ч везде, а
+   машина игрока ездила до 19: обгоняли все, и знаку «20» было нечего ограничивать */
+function trafLimitSpeed(a, s){
+  const q=trafPose(s.rt, s.s+12, _tq);
+  return (Math.min(limitAt(a.u, a.v, a.yaw), limitAt(q.u, q.v, q.yaw))-2)/3.6;
+}
 function trafCurveSpeed(rt, s0){
   let vmax=TRAF.sp, a=trafPose(rt, s0, _tq).yaw;
-  for(let d=1;d<=10;d++){
+  for(let d=1;d<=14;d++){
     const b=trafPose(rt, s0+d, _tq).yaw, k=Math.abs(angNorm(b-a));
     if(k>1e-3) vmax=Math.min(vmax, TRAF_YAW_RATE/k);
     a=b;
@@ -5653,7 +5772,8 @@ function actorsTick(dt){
     const blk=trafBlock(a,i), byPlayer=trafBlockBy==='player';
     const block=Math.min(blk, trafConflict(a,i), s.rt && s.flow ? trafLight(a) : TRAF.see, ruleBlock(a));
     let want=Math.min(s.sp, trafSpeed(block));
-    if(s.rt) want=Math.min(want, trafCurveSpeed(s.rt, s.s));
+    if(s.rt) want=Math.min(want, trafCurveSpeed(s.rt, s.s), trafLimitSpeed(a, s));
+    if(s.flow && s.rt && trafNodeBusy(a, s)) want=0;
     s.v = want>s.v ? Math.min(want, s.v+TRAF.acc*dt) : Math.max(want, s.v-TRAF.dec*dt);
     if(s.v<0.01) s.v=0;
     /* гудок: машина стоит за игроком, игрок стоит — через HONK_WAIT с двойной сигнал, повтор не
@@ -7349,9 +7469,11 @@ const LEVELS = [
      goal:{text:'остановка до голубой линии'},
      why:'Знак «уступи»: главная — чужая. Останавливаются там, откуда видно налево, но капот ещё не мешает потоку.',
      hint:'Остановись у края главной дороги, не высовывая нос.', marks:['edge','look']},
-    {when:s=>s.v<-4.6&&Math.abs(s.vel)<0.3&&s.gap<5,
+    /* окно — 7 с, как у показа (сегмент gap:7): с порогом 5 при окне 5–7 с карточка говорила «выезжай», а
+       показ стоял; поток 30 км/ч проходит 7 с за 58 м */
+    {when:s=>s.v<-4.6&&Math.abs(s.vel)<0.3&&s.gap<7,
      icon:'⏹', act:'Стой: поток идёт — пропусти', blinker:'R',
-     goal:{metric:'gap',target:5,dir:'up'},
+     goal:{metric:'gap',target:7,dir:'up'},
      why:'Уступить — значит не заставить её даже притормозить. Сомневаешься, успеешь ли, — значит не успеешь: стой.',
      hint:'Стой и пропускай машину слева; выезжай только в чистое окно.', marks:['look'], mirror:'left'},
     {when:s=>s.v<-4.6&&Math.abs(s.vel)<0.3,
@@ -8211,7 +8333,7 @@ function loadLevel(i){
   if(P){ try{ b=practiceBuild(def); }
     catch(e){ console.warn('[practice] вариант не собрался, урок с подсказками: '+e.message); practiceOn=false; P=false; } }
   if(!b) b=def.build();
-  kerbHeld=[];
+  kerbHeld=[]; speedOverT=0; speedFired=false;
   for(const o of b.obs){ o.hw=o.w/2; o.hl=o.l/2; o.knocked=false; o._touch=false;
                          o._shadow=shadowPoly(o.u,o.v,o.w,o.l,o.yaw,o.h); o._sr=undefined; }
   /* границы считаем от старта и цели, а не от одних препятствий: площадка без
@@ -8292,7 +8414,7 @@ function restart(){
   for(const o of level.obs){ o.knocked=false; o._touch=false; o._hitByPlayer=false; }
   for(const p of (level.props||[])){ if(p._col) p._col._touch=false; if(p._cols) for(const c of p._cols) c._touch=false; }
   PROP_HELD.length=0;
-  kerbHeld=[];
+  kerbHeld=[]; speedOverT=0; speedFired=false;
   for(const a of level.actors){ a.u=a.act.u0; a.v=a.act.v0; a.yaw=a.act.yaw0;
     a.act.i=0; a.act.started=!a.act.trig; a.act.done=false; a._vioFired=false;
     a.act.v=a.act.rt ? Math.min(a.act.sp, trafCurveSpeed(a.act.rt, a.act.s0)) : a.act.sp;
@@ -8426,6 +8548,7 @@ function polyMTV(P,np,Q,nq){
 /* цепочка поребрика (kerbsFromAsphalt, grp): сколько её коробок сейчас под кузовом. Скольжение
    вдоль бордюра через стык двух коробок — один наезд, а не два (и не два штрафа по 3 балла) */
 let kerbHeld=[];
+let speedOverT=0, speedFired=false;   /* превышение: сколько секунд выше ограничения и записано ли уже */
 function untouch(o){
   if(o._touch && o.grp!==undefined && kerbHeld[o.grp]>0) kerbHeld[o.grp]--;
   o._touch=false;
@@ -8803,6 +8926,10 @@ const PENALTIES={
   'ped':             {pts:5, fatal:true,  txt:'Не уступил дорогу пешеходу'},
   'turn-pos':        {pts:3, fatal:false, txt:'Не занял крайнее положение перед поворотом'},
   'stop-place':      {pts:3, fatal:false, txt:'Остановка в запрещённом месте'},
+  /* п. 2.13 экзаменационного листа — грубая ошибка, экзамен прекращается сразу; на уроке города — грубое
+     нарушение (первое — предупреждение, второе отменяет попытку): урок учит другому, и отменять его за
+     разгон на прямой значило бы выгонять новичка */
+  'speed':           {pts:5, fatal:true, lesson:'hard', txt:'Превышение разрешённой скорости'},
   /* без баллов (решение 11.10.2026): пропуск команды — строка протокола, инспектор перестраивает маршрут */
   'missed':          {pts:0, fatal:false, txt:'Не выполнена команда инспектора'}
 };
@@ -8818,7 +8945,7 @@ function examPenalty(code){
   if(p.fatal || exam.score>=EXAM_FAIL_SUM) examFail(p.txt);
 }
 /* каждой ошибке — уровень, где её отрабатывают: протокол даёт ссылку «отработать» */
-const EXAM_TRAIN={rollback:19, 'handbrake-drive':19, collision:21, kerb:21,
+const EXAM_TRAIN={rollback:19, 'handbrake-drive':19, collision:21, kerb:21, speed:27,
   'no-blinker':22, oncoming:23, stopline:19, zebra:24, yield:25, 'collision-actor':25,
   redlight:26, 'stop-sign':26, 'solid-line':27, 'lane-blinker':27, 'tram-turn':28, ped:24, 'turn-pos':22, 'stop-place':21};
 /* первый проигрышный конец в игре: физика замирает на game.done, как при победе,
@@ -8957,8 +9084,9 @@ function attemptVio(code, msg){
   const p=PENALTIES[code];
   if(!p){ toast('⚠ '+msg, 3.2); return; }
   attempt.log.push({code, txt:p.txt, t:game.t});
-  if(p.fatal){ failAttempt(code, p.txt); return; }
-  if(!p.hard){ toast('⚠ '+p.txt, 3.2); return; }
+  const hard=p.hard || p.lesson==='hard';
+  if(p.fatal && !hard){ failAttempt(code, p.txt); return; }
+  if(!hard){ toast('⚠ '+p.txt, 3.2); return; }
   attempt.strikes++;
   console.warn('[fail] '+code+' — грубое нарушение '+attempt.strikes+' из 2');
   if(attempt.strikes>=2){ failAttempt(code, p.txt); return; }
@@ -9002,6 +9130,7 @@ const FAIL_RULE={
   'handbrake-drive': 'Перед троганием ручник отпускают: езда с затянутым — ошибка и лишний износ.',
   'turn-pos':        'Направо поворачивают из крайней правой полосы, налево и в разворот — из крайней левой (п. 8.5). Перестраиваются заранее, до перекрёстка.',
   'stop-place':      'Не останавливаются ближе 5 м к перекрёстку и к переходу, ближе 15 м к остановке и на самом переходе (п. 12.4).',
+  'speed':           'В городе — не больше 60 км/ч, в жилой зоне и во дворе — 20. Знак 3.24 действует до ближайшего перекрёстка за ним, если раньше не стоит знак конца ограничения (п. 10.1, 10.2). На экзамене превышение прекращает экзамен сразу.',
   'ped':             'Пешеход на переходе главнее: идёт по твоей половине или к ней — стой перед зеброй, пока не пройдёт (п. 14.1). На повороте — то же для перехода на улице, куда поворачиваешь (п. 13.1).'
 };
 function levelFailHTML(){
@@ -10024,6 +10153,13 @@ const STOP_614=4.0;
 function violationsTick(dt){
   const c=level.city, b=bodyPos(), f=fuv(car.th);
   const nu=b.u+f.u*HALF_L, nv=b.v+f.v*HALF_L;
+  /* скорость: выше ограничения больше чем на SPEED_TOL дольше SPEED_HOLD — погрешность спидометра и миг
+     на сброс газа. Снова судится, когда машина сбросила скорость до ограничения */
+  const lim=limitAt(b.u, b.v, car.th), kmh=Math.abs(car.vel)*3.6;
+  game.lim=lim;
+  if(kmh>lim+SPEED_TOL){ speedOverT+=dt;
+    if(speedOverT>=SPEED_HOLD && !speedFired){ speedFired=true; vio('speed', 'Превышение: здесь '+lim+' км/ч'); } }
+  else if(kmh<=lim){ speedOverT=0; speedFired=false; }
   for(const sl of (c.stoplines||[])){
     /* у регулируемой линии остановка обязательна только на запрещающий сигнал:
        без этого пропуска проезд на зелёный без остановки шёл как нарушение */
@@ -12194,9 +12330,9 @@ function emitSign(o){
   };
   /* картинка пиктограммы: +lat уходит ВЛЕВО от смотрящего, поэтому ширина изображения
      идёт от +hw к −hw, иначе знак печатается зеркально */
-  const picq=(hw,hh,off,img,col)=>{
+  const picq=(hw,hh,off,img,col,cy)=>{
     if(!img) return;
-    const at=(lat,dy)=>({x:cx+R.x*lat+f.x*off, y:y+dy, z:cz+R.z*lat+f.z*off});
+    const at=(lat,dy)=>({x:cx+R.x*lat+f.x*off, y:y+dy+(cy||0), z:cz+R.z*lat+f.z*off});
     pushFace([at(hw,hh), at(-hw,hh), at(-hw,-hh), at(hw,-hh)], nrm, col, 0, {img});
   };
   const disc=(r,n,a0)=>{ const p=[]; for(let i=0;i<n;i++){ const a=(a0||0)+i/n*TAU;
@@ -12236,6 +12372,35 @@ function emitSign(o){
       mk([[-0.36,0.36],[0.36,0.36],[0.36,-0.36],[-0.36,-0.36]],[240,242,246],0.020,true);
       mk([[-0.32,0.32],[0.32,0.32],[0.32,-0.32],[-0.32,-0.32]],[28,78,164],0.036);
       picq(0.29,0.29,0.052,signPic(o.pic),[28,78,164]);
+      break;
+    /* 3.24 «ограничение максимальной скорости»: белый круг в красном кольце, число картинкой */
+    case 'lim20': case 'lim40':
+      mk(disc(0.375,20),[240,242,246],0.020,true);
+      mk(disc(0.35,20),[206,40,44],0.036);
+      mk(disc(0.27,20),[244,246,248],0.044);
+      picq(0.19,0.19,0.056,signPic(o.pic),[244,246,248]);
+      break;
+    /* 3.25 «конец ограничения»: белый круг в тонкой чёрной кайме, серое число под косыми полосами */
+    case 'end20': case 'end40':
+      mk(disc(0.375,20),[240,242,246],0.020,true);
+      mk(disc(0.355,20),[30,32,36],0.036);
+      mk(disc(0.335,20),[244,246,248],0.044);
+      picq(0.235,0.235,0.056,signPic(o.pic),[244,246,248]);
+      break;
+    /* 1.23 «Дети»: треугольник вершиной вверх в красной кайме; квадрат картинки целиком внутри белого поля */
+    case 'kids': {
+      const tri=(R)=>[[0,R],[R*0.866,-R/2],[-R*0.866,-R/2]];
+      mk(tri(0.43),[240,242,246],0.020,true);
+      mk(tri(0.39),[206,40,44],0.036);
+      mk(tri(0.27),[244,246,248],0.044);
+      picq(0.085,0.085,0.056,signPic('kids'),[244,246,248],-0.025);
+      break;
+    }
+    /* 5.21 и 5.22 «жилая зона»: синий квадрат в белой кайме, картинка во всё поле */
+    case 'zone': case 'zoneEnd':
+      mk([[-0.36,0.36],[0.36,0.36],[0.36,-0.36],[-0.36,-0.36]],[240,242,246],0.020,true);
+      mk([[-0.32,0.32],[0.32,0.32],[0.32,-0.32],[-0.32,-0.32]],[28,78,164],0.036);
+      picq(0.30,0.30,0.052,signPic(o.pic),[28,78,164]);
       break;
     case 'ped':
       mk([[-0.31,0.31],[0.31,0.31],[0.31,-0.31],[-0.31,-0.31]],[38,88,196],0.020,true);
@@ -13110,6 +13275,11 @@ function updateHUD(){
       +(g===car.sel?' class="on '+g.toLowerCase()+'"':'')+'>'+g+'</span>').join('');
   }
   setText($('spdVal'), (Math.abs(car.vel)*3.6).toFixed(0)+' км/ч');
+  /* значок ограничения — на уроках города и в тренировочном экзамене; в настоящем экзамене и в практике его нет:
+     ограничение читают по знакам */
+  { const lb=$('limBadge'), show=!!(level.city && game.lim && (!examActive() || examFlags().hints));
+    if(lb.hidden===show) lb.hidden=!show;
+    if(show){ setText(lb, String(game.lim)); lb.classList.toggle('over', Math.abs(car.vel)*3.6>game.lim+SPEED_TOL); } }
   const turns=car.steer*CAR.steerRatio/TAU;
   setText($('steerVal'), Math.abs(turns)<0.03 ? 'прямо'
     : Math.abs(turns).toFixed(2)+' об. '+(car.steer>0?'вправо':'влево'));
@@ -16054,6 +16224,8 @@ function simTick(dt){
   /* при демо детекторы молчат — иначе показ сам себе начислял бы нарушения;
      headless-прогоны frame не зовут, там детекторов нет по построению */
   if(level.city && !paused && !game.done && !demo) violationsTick(dt);
+  /* значку ограничения число нужно и во время показа, когда детекторы молчат: иначе он держит число прошлого уровня */
+  else if(level.city){ const b=bodyPos(); game.lim=limitAt(b.u, b.v, car.th); }
   if(!paused && !game.done && !demo) examTick(dt);
   phaseTick(dt);
   tutTick();

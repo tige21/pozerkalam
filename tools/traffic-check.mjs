@@ -64,24 +64,25 @@ let bad = 0;
     + r.lowF + ' против ' + r.fullF + (r.called ? '' : ' · emitCarLow не вызван'));
 }
 
-/* гудок: игрок стоит в полосе перед машиной потока — через 3 с тишина, через 7 с ровно один
-   сигнал (машина 2,5 с тормозит, ожидание идёт со стоянки), к 10 с повтора ещё нет */
+/* гудок: игрок стоит в полосе перед машиной потока — через 3 с тишина, через 8 с ровно один
+   сигнал (машина ≈3,3 с тормозит, ожидание идёт со стоянки), к 11 с повтора ещё нет. Игрок — в 20 м:
+   поток идёт 30 км/ч, и с 9 м машина (тормозной путь 11,9 м плюс зазор 6,2) встать не успевала */
 {
   const r = await page.evaluate(() => {
     loadLevel(LEVELS.findIndex(d => d.traffic)); hideOv(); paused = true;
     const a = level.actors.find(x => x.act && x.act.flow && x.act.rt); if (!a) return null;
-    const p = trafPose(a.act.rt, a.act.s + 9, { u: 0, v: 0, yaw: 0 });
+    const p = trafPose(a.act.rt, a.act.s + 20, { u: 0, v: 0, yaw: 0 });
     setBody(p.u, p.v, p.yaw); car.vel = 0; car.sel = 'D';
     let n = 0; const H = honk; honk = () => { n++; };
     const step = (secs) => { const dt = 1 / 30; for (let k = 0; k < Math.round(secs / dt); k++) { game.t += dt; actorsTick(dt); } };
-    /* машина сначала тормозит с 6 м/с (≈2,5 с), ожидание считается со стоянки: гудок в 6–7 с */
-    try { step(3); const at3 = n; step(4); const at6 = n; step(3); const at9 = n; return { at3, at6, at9, v: +a.act.v.toFixed(2), waitT: +(a.act.waitT || 0).toFixed(1) }; }
+    /* машина сначала тормозит с 8,3 м/с (≈3,3 с), ожидание считается со стоянки: гудок в 7–8 с */
+    try { step(3); const at3 = n; step(5); const at6 = n; step(3); const at9 = n; return { at3, at6, at9, v: +a.act.v.toFixed(2), waitT: +(a.act.waitT || 0).toFixed(1) }; }
     finally { honk = H; }
   });
   const ok = r && r.at3 === 0 && r.at6 === 1 && r.at9 === 1;
   if (!ok) bad++;
   console.log((ok ? 'OK   ' : 'FAIL ') + 'машина потока гудит игроку, стоящему в её полосе (@traffic-honk-wait)'
-    + (r ? ' · гудков через 3/7/10 с: ' + r.at3 + '/' + r.at6 + '/' + r.at9 + ' · скорость ' + r.v + ' · ожидание ' + r.waitT + ' с' : ' · машина потока не найдена'));
+    + (r ? ' · гудков через 3/8/11 с: ' + r.at3 + '/' + r.at6 + '/' + r.at9 + ' · скорость ' + r.v + ' · ожидание ' + r.waitT + ' с' : ' · машина потока не найдена'));
   if (pageErr) { console.log('     PAGEERR ' + pageErr); pageErr = null; }
 }
 for (const li of levels) {
