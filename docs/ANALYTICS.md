@@ -73,7 +73,9 @@ ch "SELECT querystring, country, detected_client_signals, detected_header_heuris
 | `level_win` | зачёт | `li`, `kind`, `t`, `hits`, `vios` (нарушения на городском уроке), `clean` (без касаний и нарушений), `err_cm` (дриллы), `demo` | `win` |
 | `practice_pass` / `practice_fail` | конец практики городского урока | `li`, `kind`, `variant`, `score`, `code` (последнее нарушение) | `practice_pass` / `practice_fail` |
 | `level_fail` | провал попытки на строгих уровнях | `li`, `kind`, `code` | `level-fail` |
-| `exam_pass` / `exam_fail` | конец экзамена | `route`, `mode`, `score` | `exam-pass` / `exam-fail` |
+| `exam_pass` / `exam_fail` | конец экзамена | `route` (−1 — маршрут из графа), `mode`, `score`; у `exam_fail` ещё `stage`, `n`, `code` (последнее нарушение с баллами) | `exam-pass` / `exam-fail` |
+| `exam_stage` | этап экзамена закрыт | `stage`, `n`, `mode`, `t` — где бросают экзамен (до 11.10.2026 было видно только «начал» и «не сдал») | — |
+| `exam_quit` | экзамен брошен на середине: другой уровень, меню, закрытая вкладка | `stage`, `n`, `mode`, `score`, `code` | — |
 | `demo_start` | демонстрация | `li`, `kind` | `demo-start` |
 | `feedback_open` / `feedback_sent` | форма отзыва | `src` / `kind` | `feedback-open:<src>` / `feedback-sent` |
 | `perf` | раз за сессию после 20 с езды | `q`, `fps`, `js`, `dpr`, `cores`, `mem`, `gfx`, `cam`, `mob` | — |

@@ -121,41 +121,37 @@ function detectorCheck(){
   return out;
 }
 
-/* Проходимость экзаменационных маршрутов: машину ведём телепортом по ломаной через точки
-   at этапов и на каждом шаге зовём examTick. Проверка отвечает на два вопроса, которые
-   стоили правок: не срабатывает ли этап МГНОВЕННО (условие истинно уже на входе) и
-   доходит ли маршрут до конца вообще. В консоли страницы:  routeCheck()  */
+/* Проходимость экзаменационных маршрутов. Маршрут с 11.10.2026 генерируется из графа (examGenRoute), и
+   проверка идёт по фиксированным зёрнам: машину ведём телепортом по плановой линии маршрута (examMapPath —
+   та же, что на карте), у остановки ставим её на место у бордюра и держим секунду игрового времени, на
+   каждом шаге зовём examTick. Ответ на два вопроса, которые стоили правок: не закрывается ли этап МГНОВЕННО
+   (условие истинно уже на входе) и доходит ли маршрут до конца. В консоли страницы:  routeCheck()  */
 function routeCheck(runs){
-  const N=runs||6, out=[];
+  const N=runs||6, out=[], li=LEVELS.findIndex(l=>l.examRoute);
+  const step=(vel)=>{ car.vel=vel; car.gear=1; game.t+=1/60; lastClear=clearances(); phaseTick(1/60); examTick(1/60); };
   for(let r=0;r<N;r++){
-    loadLevel(31); hideOv();
-    const route=exam.route, pts=[];
-    const c0=bodyPos(); pts.push({u:c0.u, v:c0.v});
-    for(const st of route) if(st.at) pts.push({u:st.at.u, v:st.at.v});
-    /* после последней точки ещё немного вперёд: финишный этап требует стоянки В кармане */
-    let stuck=null, instant=[], prev=0, dist=0;
-    for(let i=1;i<pts.length && exam.stage<route.length;i++){
-      const a=pts[i-1], b=pts[i];
-      const d=Math.hypot(b.u-a.u, b.v-a.v), n=Math.max(2,Math.ceil(d/0.5));
+    window.EXAM_SEED=7000+r*131; loadLevel(li); hideOv(); delete window.EXAM_SEED;
+    const route=exam.route, path=examMapPath().pts;
+    let stuck=null, instant=[], prev=0, dist=0, came=0;
+    for(let i=1;i<path.length && exam.stage<route.length;i++){
+      const a=path[i-1], b=path[i], d=Math.hypot(b.u-a.u, b.v-a.v), n=Math.max(1,Math.ceil(d/0.5)), th=Math.atan2(b.u-a.u, b.v-a.v);
       dist+=d;
-      const th=Math.atan2(b.u-a.u, b.v-a.v);
       for(let k=1;k<=n && exam.stage<route.length;k++){
-        setBody(a.u+(b.u-a.u)*k/n, a.v+(b.v-a.v)*k/n, th);
-        car.vel=2; car.blink=null; car.gear=1; phaseTick(1/60); examTick();
-        if(exam.stage!==prev){ if(k<=2 && i>1) instant.push(prev); prev=exam.stage; }
+        setBody(a.u+(b.u-a.u)*k/n, a.v+(b.v-a.v)*k/n, th); step(2);
+        if(exam.stage!==prev){ if(came<=2 && route[prev] && route[prev].turn!=='straight') instant.push(prev); prev=exam.stage; came=0; }
+        came++;
+        /* остановка: у своего места у бордюра (или у стоп-линии эстакады) — встать, постоять, тронуться */
+        const st=route[exam.stage];
+        if(st && st.turn!=='park' && st.turn!=='stop') continue;
+        const at=st.spot || st.at, c=bodyPos();
+        if(Math.hypot(at.u-c.u, at.v-c.v)>1.2) continue;
+        if(st.spot) setBody(st.spot.u, st.spot.v, st.spot.th);
+        for(let h=0;h<90 && exam.stage<route.length && route[exam.stage]===st;h++) step(0);
+        for(let h=0;h<8 && exam.stage<route.length && route[exam.stage]===st;h++) step(2);
       }
-      /* в каждой точке дважды повторяем «постоял — тронулся»: этап остановки по требованию
-         засчитывается только парой (полная остановка, затем движение), и одного цикла мало,
-         когда предыдущий этап закрылся уже внутри этой же точки */
-      for(let rep=0; rep<2 && exam.stage<route.length; rep++){
-        for(let k=0;k<140;k++){ car.vel=0; phaseTick(1/60); examTick(); }
-        for(let k=0;k<8;k++){ car.vel=2; phaseTick(1/60); examTick(); }
-      }
-      prev=exam.stage;
     }
     if(exam.stage<route.length) stuck=exam.stage;
-    out.push({run:r, n:route.length, done:exam.stage, dist:Math.round(dist),
-              stuck, instant, cmd: stuck!==null ? route[stuck].cmd : ''});
+    out.push({run:r, n:route.length, done:exam.stage, dist:Math.round(dist), stuck, instant, cmd: stuck!==null ? route[stuck].cmd : ''});
     console.log((stuck===null?'PASS':'FAIL')+' · маршрут '+r+': этапов '+route.length
       +', пройдено '+exam.stage+', длина '+Math.round(dist)+' м'
       +(stuck!==null?' · застрял на «'+route[stuck].cmd+'»':'')
@@ -206,13 +202,13 @@ function navCheck(runs){
   const stems={};
   for(const e of g.E) if(e.name) stems[e.name.toLowerCase().slice(0,5)]=e.name;
 
-  const seen=new Set();
+  const seen=new Set(), li=LEVELS.findIndex(l=>l.examRoute);
   for(let r=0; r<N*6 && seen.size<N; r++){
-    loadLevel(31); hideOv();
+    window.EXAM_SEED=5000+r*97; loadLevel(li); hideOv(); delete window.EXAM_SEED;
     const sig=exam.route.map(s=>s.short+s.at.u+','+s.at.v).join('|');
     if(seen.has(sig)) continue; seen.add(sig);
     const onc=level.city.oncoming, ring=g.V.N4;
-    let prev={u:level.start.u, v:level.start.v};
+    let prev={u:level.start.u, v:level.start.v, th:level.start.th};
     for(let i=0;i<exam.route.length;i++){
       exam.stage=i;
       const st=exam.route[i], tag='этап '+(i+1)+' «'+st.short+'»';
@@ -230,16 +226,18 @@ function navCheck(runs){
         if(z) say(Math.hypot(z.u-st.at.u, z.v-st.at.v)<3.2,
                   tag+': точка команды в '+Math.hypot(z.u-st.at.u,z.v-st.at.v).toFixed(1)+' м от зоны');
       }
-      if(z && (st.turn==='stop'||st.turn==='park')){
-        /* встать в центр НАРИСОВАННОГО кармана — этап обязан засчитаться */
-        const S=(vel)=>({u:z.u, v:z.v, vel, th:0, gear:0, steer:0, front:9, rear:9, left:9, right:9});
-        let ok=false;
-        for(let k=0;k<140 && !ok;k++) ok=st.done(S(0));
+      if(z && z.kind==='pocket' && (st.turn==='stop'||st.turn==='park')){
+        /* встать в центр НАРИСОВАННОГО места у бордюра — этап обязан засчитаться (держится по игровому времени) */
+        const S=(vel)=>({u:z.u, v:z.v, vel, th:z.yaw||0, gear:0, steer:0, front:9, rear:9, left:9, right:0.3});
+        const t0=game.t; let ok=false;
+        for(let k=0;k<140 && !ok;k++){ game.t+=1/60; ok=st.done(S(0)); }
         if(!ok) ok=st.done(S(1.0));
-        say(ok, tag+': центр нарисованного кармана не засчитывается');
+        game.t=t0;
+        say(ok, tag+': центр нарисованного места остановки не засчитывается');
       }
 
-      car.ru=prev.u; car.rv=prev.v; car.th=0; examLegBuild(); prev=st.at;
+      setBody(prev.u, prev.v, prev.th!==undefined ? prev.th : 0); examLegBuild();
+      const x=stageExit(st); prev=(x.th!==undefined) ? x : {u:st.at.u, v:st.at.v, th:0};
       say(!!exam.leg, tag+': маршрут не строится');
       if(!exam.leg) continue;
       const pts=exam.leg.pts;

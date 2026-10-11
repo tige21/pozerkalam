@@ -1,4 +1,4 @@
-/* Бот практики городского урока: проезжает вариант так, как его проехал бы аккуратный водитель, —
+/* Бот практики городского урока и экзамена: проезжает маршрут так, как его проехал бы аккуратный водитель, —
    по линии маршрута в нужной полосе (exam.leg, её строит сама игра), с поворотником заранее, со стопом на
    запрещающий и под STOP, пропуская пешеходов, и встаёт у тротуара. Нужен гейту practice-check: вариант,
    который такой водитель не проезжает чисто, — дефект варианта или детектора, а не урок.
@@ -55,9 +55,12 @@
       const lf = fuv(sl.yaw), lr = ruv(sl.yaw);
       if (f.u * lf.u + f.v * lf.v < 0.5) continue;
       const s = (nu - sl.u) * lf.u + (nv - sl.v) * lf.v, x = (nu - sl.u) * lr.u + (nv - sl.v) * lr.v;
+      /* проехал линию — следующий подъезд к ней снова со стопом (маршрут из графа проходит эстакаду дважды) */
+      if (s > 5) sl._botStopped = false;
       if (s > -0.2 || s < -40 || Math.abs(x) > sl.w / 2 + 0.6) continue;
       if (sl.light && lightLets(sl)) continue;
-      if (sl.stop && sl._botStopped) continue;
+      /* STOP и стоп-линия эстакады: постоял — дальше */
+      if (!sl.light && sl._botStopped) continue;
       best = Math.min(best, -s - 0.6);
     }
     const st = pedAhead(), zb = zebraAhead();
@@ -72,15 +75,27 @@
     if (dn < R - 0.3) { entered = true; return null; }
     if (dn > R + 10) return null;
     const rule = level.city.rules && level.city.rules[n.id]; if (!rule || rule.kind === 'bend') return null;
+    /* у кольца — по геометрии: едущая по кольцу машина, которой до нашего въезда против часовой меньше
+       RULE_ETA + 1,5 с. Проход по графу терял машину, давно въехавшую на кольцо (её проход «почти кончен») */
+    if (n.round) {
+      const aY = (st.armIn || armOf(st.node, angNorm(car.th + Math.PI))).yaw;
+      for (const a of level.actors) { const s = a.act; if (s.ped || !s.started || s.done || Math.abs(s.v) < 0.3) continue;
+        if (Math.hypot(a.u - n.u, a.v - n.v) > n.round + 1) continue;
+        const dx = ((Math.atan2(a.u - n.u, a.v - n.v) - aY) % TAU + TAU) % TAU;
+        /* стоп не у самого кольца, а до зоны «уступи» (её край в 4,5 м перед кромкой): катиться по зоне к линии,
+           пока по кольцу идёт машина, — уже непропуск */
+        if (dx * (n.round - 3.5) / Math.abs(s.v) < RULE_ETA + 1.5) return dn - R - 5; }
+    }
     const me = playerMove(n);
     for (const a of level.actors) {
       const s = a.act; if (s.ped || !s.started || s.done || !s.rt) continue;
       const pa = actorPassage(a, n.id); if (!pa) continue;
       const om = actorMove(a, pa);
-      if (n.round) { if (!om.onRing) continue;
+      if (n.round) { if (!om.onRing || Math.abs(s.v) < 0.3) continue;
         const dx = ((om.bearing - me.aIn.yaw) % TAU + TAU) % TAU;
         if (dx * (n.round - 3.5) / Math.max(1, Math.abs(s.v)) > RULE_ETA + 1.5) continue; }
-      else if (pa.inside ? pa.done > 0.75 : (Math.abs(s.v) < 0.3 || pa.toIn / Math.max(1, Math.abs(s.v)) > RULE_ETA + 1.5)) continue;
+      /* стоящая машина не помеха и внутри узла: поток уступает игроку, и ждать её — запереть узел вдвоём */
+      else if (Math.abs(s.v) < 0.3 || (pa.inside ? pa.done > 0.75 : pa.toIn / Math.max(1, Math.abs(s.v)) > RULE_ETA + 1.5)) continue;
       if (mustYield(rule, me, om)) return dn - R - 0.6;
     }
     return null;
@@ -95,7 +110,8 @@
   }
   function blinkFor(st, distToAt) {
     if (!st) return null;
-    if (st.turn === 'park') return distToAt < 45 ? 'R' : null;
+    if (st.turn === 'park' || (st.turn === 'stop' && st.spot)) return distToAt < 45 ? 'R' : null;
+    if (st.turn === 'stop' || (st.turn === 'straight' && !st.node)) return null;
     const n = st.node && cityGraph().V[st.node];
     if (n && n.round) {
       const c = bodyPos(), d = Math.hypot(c.u - n.u, c.v - n.v);
@@ -112,18 +128,44 @@
      узла» с маршрутом «от центра» и на правом повороте у N2 делала петлю через центр */
   function stagePath(st) {
     const c = bodyPos();
-    if (st.turn === 'park') { const r = cityRoute(c, st.at, { side: 'right' }); return r ? r.pts : null; }
+    if (st.turn === 'park') { const r = cityRoute(c, st.at, { side: 'right', th: car.th }); return r ? r.pts : null; }
+    /* остановка с троганием, эстакада, старт «прямо»: к точке этапа и дальше по улице — после остановки
+       этап закрывается только троганием, и ехать надо по той же улице */
+    if (!st.node) {
+      const r = cityRoute(c, st.at, { side: 'right', th: car.th }); if (!r) return null;
+      /* продолжение — по курсу улицы этапа, а не по последнему отрезку: тот бывает диагональю к точке */
+      const pts = r.pts.slice(), B = pts[pts.length - 1], fo = fuv(st._outYaw !== undefined ? st._outYaw : car.th);
+      for (let k = 2; k <= 30; k += 2) pts.push({ u: B.u + fo.u * k, v: B.v + fo.v * k });
+      return pts;
+    }
     const n = cityGraph().V[st.node], R = n.round || n.r;
-    if (st.turn === 'U' && !n.round) return uPath(st, n, R);
-    if (st.turn === 'L' && botMode !== 'rightlane') return lPath(st, n, R);
+    /* дуга налево и разворот строятся с улицы подъезда. Если машина ещё до неё (изгиб N7 между узлами) —
+       сначала по графу к улице подъезда, дугу достроит runDrive, когда машина на неё выйдет */
+    if ((st.turn === 'U' && !n.round) || (st.turn === 'L' && botMode !== 'rightlane')) {
+      if (st.armIn && onInArm(st) === false) {
+        const A = laneStart(st.node, st.armIn.yaw * 180 / Math.PI, R + 30), r = cityRoute(c, A, { side: 'right', th: car.th });
+        if (r) { st._viaInArm = true; return r.pts; }
+      }
+      st._viaInArm = false;
+      return st.turn === 'U' ? uPath(st, n, R) : lPath(st, n, R);
+    }
     const B = laneOut(st.node, st.armOut.yaw * 180 / Math.PI, R + 18);
-    const r = cityRoute(c, B, { side: 'right' });
+    const r = cityRoute(c, B, { side: 'right', th: car.th });
     return r ? r.pts : null;
   }
   /* налево: из крайней левой полосы дугой игры (cornerArc: опорная точка на пересечении линий полос) в правую
      полосу выезда. Смещённый влево путь правого ряда давал дугу круче, чем позволяет руль */
+  /* машина на улице подъезда к узлу этапа (или уже у самого узла — N5b и N5 стоят вплотную, и этап N5
+     начинается внутри N5b): только тогда дуга строится с подъезда, иначе — сначала по графу до этой улицы */
+  function onInArm(st) {
+    const n = cityGraph().V[st.node], R = n.round || n.r, c = bodyPos();
+    if (Math.hypot(c.u - n.u, c.v - n.v) < R + 8) return true;
+    const sn = citySnap(c); return !!(sn && sn.e && sn.e === st.armIn.e);
+  }
+  /* курс подъезда — по лучу въезда, а не по машине: этап начинается, пока машина ещё доворачивает после
+     прошлого узла, и 3° перекоса за 60 м уводили путь на бордюр */
   function lPath(st, n, R) {
-    const h = car.th, f = fuv(h), r = ruv(h), aIn = armOf(st.node, angNorm(h + Math.PI)), e = aIn.e;
+    const aIn = st.armIn || armOf(st.node, angNorm(car.th + Math.PI)), h = angNorm(aIn.yaw + Math.PI), f = fuv(h), r = ruv(h), e = aIn.e;
     const latIn = (e.tram ? TRAM_HW : 0) + LANE_W * 0.5, eo = st.armOut.e, fo = fuv(st.armOut.yaw), ro = ruv(st.armOut.yaw);
     const latOut = (eo.tram ? TRAM_HW : 0) + LANE_W * ((eo.lanes || 1) - 0.5);
     const P = (al, lt) => ({ u: n.u + f.u * al + r.u * lt, v: n.v + f.v * al + r.v * lt });
@@ -138,7 +180,7 @@
   /* разворот на перекрёстке: из крайней левой полосы полукругом не уже 4,3 м в правую полосу обратного
      направления; где полукруг шире улицы — довести в полосу после дуги */
   function uPath(st, n, R) {
-    const h = car.th, f = fuv(h), r = ruv(h), aIn = armOf(st.node, angNorm(h + Math.PI)), e = aIn.e;
+    const aIn = st.armIn || armOf(st.node, angNorm(car.th + Math.PI)), h = angNorm(aIn.yaw + Math.PI), f = fuv(h), r = ruv(h), e = aIn.e;
     const b0 = e.tram ? TRAM_HW : 0, latIn = b0 + LANE_W * 0.5, latOut = b0 + LANE_W * ((e.lanes || 1) - 0.5);
     const rr = Math.max(4.3, (latIn + latOut) / 2), P = (al, lt) => ({ u: n.u + f.u * al + r.u * lt, v: n.v + f.v * al + r.v * lt });
     const c = bodyPos(), al0 = (c.u - n.u) * f.u + (c.v - n.v) * f.v, pts = [];
@@ -155,6 +197,21 @@
     opt.traffic = opts.traffic ? (opts.traffic === true ? 'normal' : opts.traffic) : 'off';
     openLevel(li, 'practice', 'practice');
     delete window.PRACTICE_VARIANT; delete window.PRACTICE_SEED;
+    return runDrive(opts);
+  };
+  /* экзамен из графа: маршрут по зерну, настоящий режим — ошибка не прощается. Поток у экзамена всегда
+     плотный; без opts.traffic поток убирается — проверяется маршрут, а не уступание */
+  window.examDrive = function (seed, opts) {
+    opts = opts || {};
+    const li = LEVELS.findIndex((l) => l.examRoute);
+    window.EXAM_SEED = seed; opt.examMode = opts.mode || 'real';
+    openLevel(li, 'pick');
+    delete window.EXAM_SEED;
+    /* машины потока — ещё и препятствия уровня: без потока убираются и оттуда, иначе стоят замороженными */
+    if (!opts.traffic) { const A = new Set(level.actors); level.obs = level.obs.filter((o) => !A.has(o)); level.actors = []; }
+    return runDrive(opts);
+  };
+  function runDrive(opts) {
     hideOv(); paused = false;
     botMode = opts.misbehave || null;
     if (!opts.actors) level.actors = level.actors.filter((a) => a.act.flow);
@@ -162,7 +219,7 @@
     if (opts.allGreen) level.lightShift = 0;
     car.sel = 'D'; car.gear = 1;
     let lastN = 1; entered = false;
-    const log = []; let t = 0, stopT = 0, path = null, pathStage = -1, dodge = 0, parkAt = null, parkOff = 0.45, parkT = 0, thEntry = null;
+    const log = []; let t = 0, stopT = 0, path = null, pathStage = null, dodge = 0, parkAt = null, parkOff = 0.45, parkT = 0, thEntry = null, goOn = false;
     /* разворот посреди квартала: по своему пути до места, дуга полного вылета (uturnArc игры), дальше —
        правая полоса обратного направления. Линия экзамена такой дуги не строит */
     const tramPath = (st) => {
@@ -183,12 +240,15 @@
          можно только кружить. Захваченная на подъезде линия уже несёт дугу поворота */
       /* линия этапа строится один раз — в начале этапа, издалека. Перестроенная от машины, стоящей
          у края узла (красный, пешеход), она уходила в центр перекрёстка */
-      if (pathStage !== exam.stage) {
+      /* этап сравнивается объектом, а не номером: перестроенный инспектором маршрут кладёт новый этап
+         под тем же номером */
+      if (pathStage !== st) {
         if (st && st.turn === 'U' && !st.node) path = tramPath(st);
         else path = st ? stagePath(st) : null;
-        pathStage = exam.stage; dodge = 0; thEntry = null; entered = false;
-        if (st && st.turn === 'park') { parkAt = { u: st.at.u, v: st.at.v }; parkOff = 0.45; parkT = 0; }
+        pathStage = st; dodge = 0; thEntry = null; entered = false;
+        if (st && (st.turn === 'park' || (st.turn === 'stop' && st.spot))) { parkAt = { u: st.at.u, v: st.at.v }; parkOff = 0.45; parkT = 0; goOn = false; }
       }
+      if (st && st._viaInArm && onInArm(st)) path = stagePath(st);
       const pts = path;
       const dAt = exam.leg ? exam.leg.dist : (st && st.at ? near(st.at, c) : 99);
       let want = 6.0, aim = null;
@@ -210,7 +270,16 @@
 
         if (st && st.turn === 'U' && dAt < 14) want = Math.min(want, 2.6);
       }
-      if (st && st.turn === 'park' && pts && pts.length > 1) {
+      /* пропуск команды для гейта: бот едет прямо через узел, где велено повернуть */
+      if (botMode === 'skipturn' && st && st.node && (st.turn === 'L' || st.turn === 'R') && !st._skipPath) {
+        const n = cityGraph().V[st.node], aIn = armOf(st.node, angNorm(car.th + Math.PI));
+        const aS = nodeArms(st.node).find((a) => a !== aIn && moveKind(aIn, a) === 'S');
+        /* прямо в тупик бот не едет: оттуда маршрут продолжается разворотом, которого бот не умеет */
+        if (aS && vertDeg(cityGraph(), edgeOther(aS.e, st.node)) >= 2) { const B = laneOut(st.node, aS.yaw * 180 / Math.PI, (n.round || n.r) + 18), r = cityRoute(c, B, { side: 'right' });
+          if (r) { path = r.pts; st._skipPath = true; botMode = null; } }
+      }
+      const parking = st && (st.turn === 'park' || (st.turn === 'stop' && st.spot)) && !goOn;
+      if (parking && pts && pts.length > 1) {
         /* к тротуару — по направлению улицы (последний отрезок линии), а не по курсу машины: правее середины
            полосы на parkOff; встали, а до бордюра дальше 0,6 м — ещё правее и чуть вперёд */
         const A = pts[pts.length - 2], B = pts[pts.length - 1], sy = Math.atan2(B.u - A.u, B.v - A.v), f2 = fuv(sy);
@@ -218,7 +287,9 @@
         if (lon < 30) bias += parkOff * clamp(1 - (lon - 4) / 22, 0, 1);
         want = Math.min(want, lon > 0.3 ? Math.max(0.8, Math.sqrt(2 * 1.6 * lon)) : 0);
         if (lon <= 0.3 && v < 0.05) { parkT += 1 / 60;
-          if (parkT > 1.6 && parkOff < 1.05) { parkOff += 0.2; parkAt = { u: parkAt.u + f2.u * 4, v: parkAt.v + f2.v * 4 }; parkT = 0; } }
+          /* остановка с троганием: постояли дольше удержания этапа — трогаемся по той же улице */
+          if (st.turn === 'stop' && parkT > EXAM_HOLD + 0.4 && car.blink === 'R') { goOn = true; car.blink = null; }
+          else if (parkT > 1.6 && parkOff < 1.05) { parkOff += 0.2; parkAt = { u: parkAt.u + f2.u * 4, v: parkAt.v + f2.v * 4 }; parkT = 0; } }
       }
       const sa = stopAhead();
       if (sa < 1e8) want = Math.min(want, Math.sqrt(2 * 2.4 * Math.max(0, sa)));
@@ -227,8 +298,8 @@
         if (mw !== null) want = Math.min(want, Math.sqrt(2 * 2.4 * Math.max(0, mw)));
         if (tramWait(st) && st.at && Math.abs(c.v - st.at.v) < 9) want = 0;
       }
-      /* STOP: полная остановка у линии, потом дальше */
-      for (const sl of (level.city.stoplines || [])) if (sl.stop && !sl._botStopped) {
+      /* STOP и эстакада: полная остановка у линии, потом дальше */
+      for (const sl of (level.city.stoplines || [])) if (!sl.light && !sl._botStopped) {
         const f = fuv(car.th), lf = fuv(sl.yaw), nu = c.u + f.u * HALF_L, nv = c.v + f.v * HALF_L;
         const s = (nu - sl.u) * lf.u + (nv - sl.v) * lf.v;
         if (s > -3 && s < 0.2 && v < 0.1) { stopT += 1 / 60; if (stopT > 1.2) { sl._botStopped = true; stopT = 0; } }
@@ -252,8 +323,9 @@
     }
     const res = { done: !!(exam && exam.done), failed: !!(exam && exam.failed), score: exam ? exam.score : null,
       stage: exam ? exam.stage : null, stages: exam ? exam.route.length : null, hits: game.hits, log, t: +t.toFixed(1),
-      pos: (() => { const c = bodyPos(); return c.u.toFixed(1) + ',' + c.v.toFixed(1); })(), variant: level.pvar && level.pvar.id };
+      pos: (() => { const c = bodyPos(); return c.u.toFixed(1) + ',' + c.v.toFixed(1); })(), variant: level.pvar && level.pvar.id,
+      cmds: exam ? exam.route.map((x) => x.short) : [] };
     hideOv();
     return res;
-  };
+  }
 })();

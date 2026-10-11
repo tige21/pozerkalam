@@ -100,6 +100,56 @@
       cityReset();
     }],
     [/^на дороге нет машин$/, () => { level.actors = []; }],
+    /* экзамен из графа по зерну: тот же маршрут, что получит игрок с этим зерном */
+    [new RegExp('^экзамен по зерну ' + N + '$'), (seed) => {
+      window.EXAM_SEED = +seed; loadLevel(LEVELS.findIndex((d) => d.examRoute)); hideOv(); delete window.EXAM_SEED;
+      if (!exam || !exam.route.length) throw new Error('маршрут не сложился');
+    }],
+    /* машина у тротуара на месте финиша маршрута: этап «остановка у тротуара» — текущий */
+    [/^машина стоит у тротуара на месте финиша$/, () => {
+      const k = exam.route.findIndex((s) => s.turn === 'park'); if (k < 0) throw new Error('в маршруте нет финиша');
+      exam.stage = k; const sp = exam.route[k].spot; setBody(sp.u, sp.v, sp.th); car.vel = 0; car.sel = 'D'; car.gear = 1;
+      car.blink = 'R'; blinkOn.R = game.t; ctx.stage = k;
+    }],
+    /* игровое время идёт с заданной частотой кадров: этап держится секундами, а не числом кадров */
+    [new RegExp('^машина стоит ' + N + ' с при ' + N + ' кадрах в секунду$'), (sec, fps) => {
+      const dt = 1 / +fps, n = Math.round(+sec * +fps);
+      for (let i = 0; i < n && !exam.done; i++) { car.vel = 0; game.t += dt; lastClear = clearances(); phaseTick(dt); examTick(dt); }
+    }],
+    [/^этап экзамена (не )?закрыт$/, (not) => {
+      const closed = exam.done || exam.stage > ctx.stage;
+      if (!!not === closed) throw new Error('этап ' + (closed ? 'закрыт' : 'не закрыт'));
+    }],
+    /* машина проезжает узел первой команды поворота — прямо или по команде: телепорт по точкам полосы,
+       на каждом шаге — тот же examTick, что в кадре */
+    [/^машина проезжает узел первой команды поворота (прямо|по команде)$/, (how) => {
+      const k = exam.route.findIndex((s) => s.node && (s.turn === 'L' || s.turn === 'R')); if (k < 0) throw new Error('нет поворота');
+      const st = exam.route[k], n = cityGraph().V[st.node], R = n.round || n.r;
+      exam.stage = k; exam.planI = exam.route.plan.findIndex((p) => p.si === k); exam.lastE = null; ctx.cmd = st.short; ctx.stage = k;
+      const a = laneStart(st.node, st.armIn.yaw * 180 / Math.PI, R + 25);
+      const out = how === 'прямо' ? nodeArms(st.node).find((x) => x !== st.armIn && moveKind(st.armIn, x) === 'S') : st.armOut;
+      if (!out) throw new Error('прямо из узла дороги нет');
+      const b = laneOut(st.node, out.yaw * 180 / Math.PI, R + 25);
+      const pts = [a, { u: n.u, v: n.v }, b];
+      for (let i = 1; i < pts.length; i++) { const p0 = pts[i - 1], p1 = pts[i], L = Math.hypot(p1.u - p0.u, p1.v - p0.v), th = Math.atan2(p1.u - p0.u, p1.v - p0.v);
+        for (let d = 0; d < L; d += 0.5) { setBody(p0.u + (p1.u - p0.u) * d / L, p0.v + (p1.v - p0.v) * d / L, th);
+          car.vel = 3; car.gear = 1; game.t += 1 / 60; phaseTick(1 / 60); examTick(1 / 60); } }
+    }],
+    [/^в протоколе пропуск команды без баллов$/, () => {
+      const m = exam.log.find((l) => l.code === 'missed');
+      if (!m) throw new Error('пропуска в протоколе нет: ' + exam.log.map((l) => l.code).join(','));
+      if (m.pts !== 0 || exam.score !== 0) throw new Error('пропуск стоит баллов: ' + exam.score);
+      if (m.txt.indexOf(ctx.cmd) < 0) throw new Error('в строке протокола нет команды «' + ctx.cmd + '»: ' + m.txt);
+    }],
+    [/^пропуска команды нет$/, () => {
+      if (exam.log.some((l) => l.code === 'missed')) throw new Error('пропуск записан');
+    }],
+    [/^следующая команда — впереди по ходу машины$/, () => {
+      const st = exam.route[exam.stage]; if (!st) throw new Error('маршрут кончился');
+      const c = bodyPos(), f = fuv(car.th), at = st.at;
+      if ((at.u - c.u) * f.u + (at.v - c.v) * f.v <= 0) throw new Error('команда «' + st.short + '» позади машины');
+      if (exam.route[exam.stage].short === ctx.cmd && exam.stage === ctx.stage) throw new Error('маршрут не перестроен');
+    }],
     /* машина со своим маршрутом по городу: путь строит тот же cityRoute, что ведёт поток */
     [new RegExp('^по городу едет машина из точки \\(' + N + ', ' + N + '\\) в точку \\(' + N + ', ' + N + '\\) со скоростью ' + N + ' м/с$'),
       (u0, v0, u1, v1, sp) => {
