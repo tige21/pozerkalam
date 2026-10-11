@@ -808,6 +808,10 @@
 
 
 
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -10097,11 +10101,14 @@ function practiceResultHTML(pass){
     +head + examSvg()
     +(rows ? '<ul class="startlist viol">'+rows+'</ul>' : '')
     +(r ? '<p class="sd">Практика: заездов '+r.n+', чистых '+r.clean+'. Готовность к экзамену засчитывает только чистый.</p>' : '')
-    +'<p class="sd">'+(clean ? 'Следующий вариант будет другим: маршрут, сигналы и машины выпадают заново.'
-                             : 'Разбери ошибки — и ещё вариант. Не выходит — пройди урок с подсказками.')+'</p>'
-    +'<div class="winacts"><button data-act="learn" class="ghost">Учёба с подсказками</button>'
-    +'<button data-act="again" class="ghost">Ещё вариант</button>'
-    +'<span class="nextgo"><button data-act="next">Следующий уровень</button></span></div>'
+    +'<p class="sd">'+(clean ? '«Новый вариант» — другой маршрут, сигналы и машины этого урока.'
+                             : 'Разбери ошибки и проедь заново тот же маршрут. Не выходит — пройди урок с подсказками.')+'</p>'
+    /* «Заново» — тот же вариант, как на экране провала урока; «Новый вариант» — другой маршрут того же урока.
+       Без «Заново» игрок, не прошедший практику, не находил, как повторить уровень (владелец, 11.10.2026) */
+    +'<div class="winacts w4"><button data-act="retry"'+(pass?' class="ghost"':'')+'>Заново'+(MOB?'':' (R)')+'</button>'
+    +'<button data-act="again" class="ghost">Новый вариант</button>'
+    +'<button data-act="learn" class="ghost">Учёба с подсказками</button>'
+    +'<span class="nextgo"><button data-act="next"'+(pass?'':' class="ghost"')+'>Следующий уровень</button></span></div>'
     +'<p class="winfb"><button data-act="feedback:'+(pass?'win':'fail')+'" class="linkbtn">✉︎ Что-то не так — написать</button></p>';
 }
 function practiceEnd(pass){
@@ -14187,6 +14194,8 @@ function doAct(a){
   else if(a==='again'){ adsInterstitial('again');
     if(level.practice){ loadLevel(game.li); anLevelStart('again'); return; }
     restart(); hideOv(); anLevelStart('again'); }
+  /* практика: тот же вариант с начала — уровень не пересобирается, restart возвращает машину, поток и маршрут */
+  else if(a==='retry'){ adsInterstitial('again'); restart(); hideOv(); anLevelStart('again'); }
 }
 function ctrlHTML(){ return ''
   +'<div class="grid2"><ul>'
@@ -14669,6 +14678,7 @@ function pauseHTML(){
     return '<p class="pkick">Пауза · практика</p><h1>'+d.name+'</h1><div class="pstack">'
       +'<button type="button" data-act="resume" data-focus>Продолжить</button>'
       +'<button type="button" class="ghost" data-act="route">Маршрут и команды</button>'
+      +'<button type="button" class="ghost" data-act="retry">Заново</button>'
       +'<button type="button" class="ghost" data-act="again">Новый вариант</button>'
       +'<button type="button" class="ghost" data-act="learn">Учёба с подсказками</button>'
       +'<button type="button" class="ghost" data-act="menu:settings">Настройки</button>'

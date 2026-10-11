@@ -7,7 +7,7 @@
 
      PW_DIR=/tmp/pw node tools/practice-check.mjs
      PW_DIR=/tmp/pw URL=https://pozerkalam.space/play/ node tools/practice-check.mjs
-     FAULT=noblink|startstop|noyield|nocatch|hints PW_DIR=/tmp/pw node tools/practice-check.mjs   # каждая проверка обязана покраснеть
+     FAULT=noblink|startstop|noyield|nocatch|hints|noretry PW_DIR=/tmp/pw node tools/practice-check.mjs   # каждая проверка обязана покраснеть
 
    Код 1 — хоть одна проверка не прошла. */
 import { createRequire } from 'node:module';
@@ -127,6 +127,41 @@ const check = (name, ok, info) => { results.push({ name, ok, info }); console.lo
   }, FAULT);
   check('практика без подсказок: нет фаз, маркеров, линии, зоны и показа; команды называют улицы (@city-practice-no-hints)',
     r.length === 0, r.slice(0, 6).join('; '));
+}
+
+/* 5. После провала практики тот же вариант запускается с итога — кнопкой «Заново» и клавишей R — и из паузы;
+      «Новый вариант» даёт другой и открывает его бриф. До 11.10.2026 на итоге были только «Ещё вариант» и «Следующий уровень», и
+      владелец не нашёл, как повторить уровень */
+{
+  const fail = () => page.evaluate((fault) => {
+    if (fault === 'noretry' && !window.__noretry) { window.__noretry = 1; const f = window.practiceResultHTML;
+      window.practiceResultHTML = (p) => f(p).replace(/<button data-act="retry"[^>]*>[^<]*<\/button>/, ''); }
+    const st = level.start, f = fuv(st.th);
+    setBody(st.u + f.u * 6, st.v + f.v * 6, st.th); exam.stage = Math.min(1, exam.route.length - 1); exam.score = 5;
+    exam.failed = true; exam.failWhy = 'Выезд на встречную полосу'; practiceEnd(false);
+    const b = document.querySelector('#overlay button[data-act="retry"]');
+    return b ? { txt: b.textContent, ghost: b.classList.contains('ghost') } : null;
+  }, FAULT);
+  const state = (id) => page.evaluate((id) => { const st = level.start, c = bodyPos();
+    const ov = document.getElementById('overlay'), h1 = ov.querySelector('h1');
+    return { hidden: ov.style.display === 'none', brief: !!h1 && /^Практика:/.test(h1.textContent), done: game.done, same: level.pvar.id === id,
+      id: level.pvar.id, stage: exam.stage, score: exam.score, atStart: Math.hypot(c.u - st.u, c.v - st.v) < 0.01 }; }, id);
+  const fresh = (s) => s.hidden && !s.done && s.same && s.stage === 0 && s.score === 0 && s.atStart;
+  const id = await page.evaluate(() => {
+    const li = LEVELS.findIndex((d) => d.name.startsWith('26 '));
+    window.PRACTICE_VARIANT = 2; openLevel(li, 'practice', 'practice'); delete window.PRACTICE_VARIANT; hideOv(); paused = false;
+    return level.pvar.id; });
+  const out = {};
+  out.btn = await fail();
+  if (out.btn) { await page.click('#overlay button[data-act="retry"]'); out.click = await state(id); }
+  await fail(); await page.keyboard.press('KeyR'); out.key = await state(id);
+  out.pause = await page.evaluate(() => { menuGo('pause'); return !!document.querySelector('#overlay button[data-act="retry"]'); });
+  if (out.pause) { await page.click('#overlay button[data-act="retry"]'); out.pauseGo = await state(id); }
+  await fail(); await page.click('#overlay button[data-act="again"]'); out.other = await state(id);
+  const ok = out.btn && /^Заново/.test(out.btn.txt) && !out.btn.ghost && out.click && fresh(out.click) && fresh(out.key)
+    && out.pause && out.pauseGo && fresh(out.pauseGo) && !out.other.same && !out.other.done && out.other.brief;
+  check('после провала практики «Заново» — главная кнопка итога, тот же вариант с начала; R и пауза тоже, «Новый вариант» — другой (@city-practice-retry)',
+    ok, JSON.stringify(out));
 }
 
 check('страница без исключений', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
