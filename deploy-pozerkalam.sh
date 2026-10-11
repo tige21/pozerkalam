@@ -479,7 +479,9 @@ else
   if [ "$MIRROR_OK" = "1" ]; then
     # Смоук зеркала идёт через --resolve: гео-DNS с этой машины отдаст московский адрес,
     # а проверить надо именно зарубежное плечо.
-    m_code=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} -o /tmp/pz_mirror.html -D /tmp/pz_mirror.hdr -w "%{http_code}" \
+    # страница — 1,9 МБ, а канал до зеркала из-под VPN бывает 0,5 Мбит/с: за 15 с приходило 720 КБ,
+    # curl падал по таймауту после «200», и сверка sha256 ложно объявляла зеркало разошедшимся (11.10.2026)
+    m_code=$(curl -s -m 120 ${CURL_BIND[@]+"${CURL_BIND[@]}"} -o /tmp/pz_mirror.html -D /tmp/pz_mirror.hdr -w "%{http_code}" \
              --resolve "pozerkalam.space:443:$MIRROR_IP" https://pozerkalam.space/play/ || echo 000)
     m_sha=$(shasum -a 256 /tmp/pz_mirror.html | cut -d' ' -f1)
     echo "    зеркало /play/ -> ${m_code}"
