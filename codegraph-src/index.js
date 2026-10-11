@@ -5638,7 +5638,7 @@ function actorsTick(dt){
     if(byPlayer && s.v<0.3 && Math.abs(car.vel)<0.3){ s.waitT=(s.waitT||0)+dt; }
     else s.waitT=0;
     if(s.honkT>0) s.honkT-=dt;
-    if(s.waitT>=HONK_WAIT && !(s.honkT>0)){ honk(blk); s.honkT=HONK_REST; }
+    if(s.waitT>=HONK_WAIT && !(s.honkT>0)){ honk(blk, a); s.honkT=HONK_REST; }
     if(trafDbg && s.rt && i===0)
       console.warn('[FIX:traffic] a0 v='+s.v.toFixed(1)+' block='+block.toFixed(1)+' s='+s.s.toFixed(0));
     if(s.rt){
@@ -7989,9 +7989,10 @@ function adsRewarded(onReward){
   else onReward();   /* веб: награда без рекламы */
 }
 /* площадка требует ставить игру и звук на паузу на время полноэкранной рекламы (требования
-   Яндекс Игр, п. 4.7); звук гаснет сам — engineSound читает paused. Снимая паузу, не будим игру
+   Яндекс Игр, п. 4.7); звук гаснет сам — audioTick читает paused. Снимая паузу, не будим игру
    под открытым оверлеем: реклама с «Повторить» приходит уже после hideOv */
-window.adsPause=function(on){ paused = !!on || document.body.classList.contains('ov'); if(on) voiceHalt(); };
+window.adsPause=function(on){ paused = !!on || document.body.classList.contains('ov');
+  if(on){ voiceHalt(); if(SND){ SND.master.gain._v=0; SND.master.gain.setValueAtTime(0, AC.currentTime); } } };
 /* ВКонтакте: мини-приложение обязано послать VKWebAppInit — без него мобильный клиент держит
    экран загрузки, а площадка не считает приложение готовым. Библиотека vk-bridge не подключается
    (zero-dependency, CSP script-src 'self'): шлём событие тем же протоколом, и только когда запущены
@@ -8020,7 +8021,7 @@ function shiftSel(step){
   if(tgt==='P' && v>STOP_V){ deny('P включается только на полной остановке — дожми тормоз'); return; }
   if((tgt==='R'||tgt==='D') && v>STOP_V){
     deny('Смена направления только после полной остановки — дожми тормоз'); return; }
-  car.sel=tgt; tone(600,0.05,0.028,'sine');
+  car.sel=tgt; sndEvent('sel');
 }
 const game = { t:0, hits:0, holdT:0, done:false, li:0, hitCd:0, flash:0, moved:false,
                hitMsg:'', hitMsgT:0, parked:false, parkT:0 };
@@ -8415,10 +8416,10 @@ function untouchFar(A,o){
   TR_BOX.u=o.u; TR_BOX.v=o.v; TR_BOX.hw=o.hw+TOUCH_REARM; TR_BOX.hl=o.hl+TOUCH_REARM; TR_BOX.yaw=o.yaw;
   if(!satMTV(A,TR_BOX)) untouch(o);
 }
-const COL_ST={hard:false, fresh:false, freshObj:null};
+const COL_ST={hard:false, fresh:false, freshObj:null, touch:false};
 function resolveCollisions(dt){
   const A=carOBB(), f=fuv(car.th), st=COL_ST;
-  st.hard=false; st.fresh=false; st.freshObj=null;
+  st.hard=false; st.fresh=false; st.freshObj=null; st.touch=false;
   for(const o of level.obs) collideOne(o, A, f, dt, st);
   /* обустройство города — только из своих ячеек: сотни стволов и опор в level.obs стоили бы проверки на
      каждом подшаге */
@@ -8439,6 +8440,7 @@ function collideOne(o, A, f, dt, st){
     /* касание считаем по НАЧАЛУ контакта: без защёлки машина, стоящая на бордюре,
        набирала новое касание каждые полсекунды */
     if(!m){ untouchFar(A,o); return; }
+    st.touch=true;
     /* пока игрок не тронулся, чужая машина ему не «наезд»: защёлка ставится на любом
        пересечении OBB, кто бы ни двигался, и стоящий на старте получал аварийную ошибку
        за то, что поток прошёл вплотную */
@@ -10449,39 +10451,267 @@ function predict(){
   return {paths:res, icr:{u:cu,v:cv,R:Math.abs(R)}};
 }
 
-/* ---------- звук ---------- */
-let AC=null, engOsc=null, engGain=null, beepT=0;
-function initAudio(){
-  /* вкладка в фоне усыпляет контекст — без resume звук после возврата пропадает */
-  voiceUnlock();
-  if(AC){ if(AC.state==='suspended') AC.resume().catch(()=>{}); return; }
-  try{ AC=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return; }
-  engGain=AC.createGain(); engGain.gain.value=0; engGain.connect(AC.destination);
-  engOsc=AC.createOscillator(); engOsc.type='sawtooth'; engOsc.frequency.value=58;
-  const f=AC.createBiquadFilter(); f.type='lowpass'; f.frequency.value=430;
-  engOsc.connect(f); f.connect(engGain); engOsc.start();
+/* ---------- звук ----------
+   Весь звук — синтез WebAudio, без записей: игра — один файл, и запись мотора весила бы больше всего
+   остального звука. Граф: источники → шины (машина изнутри, мир снаружи, интерфейс) → мастер →
+   компрессор → выход. Шина «снаружи» идёт через ФНЧ, который в салоне закрывается до 900 Гц: стекло и
+   обшивка срезают верх, и город из кабины слышен глухо. Мастер гаснет без звука, на паузе, в фоне и на
+   рекламе (требование площадок); в фоне контекст ещё и усыпляется.
+   До 11.10.2026 звук был один пилообразный осциллятор с высотой от скорости, писки и удар — без шин,
+   ветра, реле поворотника, потока и трамвая; владелец: «звуки города и машины очень плохие» */
+let AC=null, SND=null, beepT=0;
+/* обороты на км/ч по ступеням четырёхступенчатого автомата: на первой 20 км/ч — 2400 об/мин */
+const ENG={idle:750, red:5800, k:[0, 120, 66, 44, 32], kR:125};
+const SND_FLOW=4, SND_REF=6, SND_FAR=70;
+const AU={on:false, rpm:750, load:0, v:0, cabin:false, scrape:0, bed:0, flow:[], tram:null, lu:0, lv:0};
+/* кандидаты в голоса потока — из пула: по объекту на машину каждый кадр — работа сборщику мусора */
+const AU_POOL=Array.from({length:48}, ()=>({d:0, sp:0, pan:0})), AU_TRAM={d:0, sp:0, pan:0};
+function sndGain(ctx, g){ const x=ctx.createGain(); x.gain.value=g||0; return x; }
+function sndFilt(ctx, type, f, q){ const b=ctx.createBiquadFilter(); b.type=type; b.frequency.value=f; if(q!==undefined) b.Q.value=q; return b; }
+function sndLoop(ctx, buf, off){ const s=ctx.createBufferSource(); s.buffer=buf; s.loop=true; s.start(0, off); return s; }
+/* шум детерминированный: запись для прослушки и проверка гейта повторяются байт в байт */
+function sndNoise(ctx){
+  const n=ctx.sampleRate*2, b=ctx.createBuffer(1, n, ctx.sampleRate), d=b.getChannelData(0);
+  let s=12345;
+  for(let i=0;i<n;i++){ s=(Math.imul(s, 1103515245)+12345)>>>0; d[i]=s/2147483648-1; }
+  return b;
 }
-function engineSound(sp){
-  if(!AC) return;
-  const t=AC.currentTime, on=opt.sound&&!paused;
-  engGain.gain.setTargetAtTime(on?(0.020+Math.min(1,sp/5)*0.040):0, t, 0.12);
-  engOsc.frequency.setTargetAtTime(50+Math.min(1,sp/5)*95, t, 0.12);
+/* спектр вспышек четырёхцилиндрового мотора: основная и затухающие гармоники, вторая сильная */
+function sndEngineWave(ctx){
+  const h=[0, 1, .62, .48, .34, .3, .2, .16, .12, .1, .08, .06, .05, .04, .03, .02];
+  const re=new Float32Array(h.length), im=new Float32Array(h);
+  return ctx.createPeriodicWave(re, im);
+}
+function sndPanner(ctx){ return ctx.createStereoPanner ? ctx.createStereoPanner() : null; }
+function audioBuild(ctx){
+  const S={ctx, nb:sndNoise(ctx), e:{rpm:ENG.idle, g:1, thr:0, acc:0, v:0}, lamp:false, trS:0, trK:0, trOn:false, bellT:-99};
+  const G=g=>sndGain(ctx, g), F=(t,f,q)=>sndFilt(ctx, t, f, q), wave=sndEngineWave(ctx);
+  S.master=G(0);
+  S.comp=ctx.createDynamicsCompressor();
+  S.comp.threshold.value=-16; S.comp.knee.value=12; S.comp.ratio.value=5; S.comp.attack.value=0.003; S.comp.release.value=0.25;
+  S.master.connect(S.comp); S.comp.connect(ctx.destination);
+  S.inn=G(1); S.inn.connect(S.master);
+  S.cab=F('lowpass', 16000, 0.5); S.cab.connect(S.master);
+  S.out=G(1); S.out.connect(S.cab);
+  S.ui=G(1); S.ui.connect(S.master);
+  /* мотор: две слегка расстроенные волны дают биение холостых, полпорядка — гул коленвала */
+  const osc=(w, f)=>{ const o=ctx.createOscillator(); if(typeof w==='string') o.type=w; else o.setPeriodicWave(w); o.frequency.value=f; return o; };
+  S.eo1=osc(wave, 25); S.eo2=osc(wave, 25.3); S.eSub=osc('sine', 12.5);
+  S.eMix=G(1); S.eo2g=G(0.45); S.eSubG=G(0.55); S.eLp=F('lowpass', 400, 0.9); S.eGain=G(0);
+  S.eo1.connect(S.eMix); S.eo2.connect(S.eo2g); S.eo2g.connect(S.eMix); S.eSub.connect(S.eSubG); S.eSubG.connect(S.eMix);
+  S.eMix.connect(S.eLp); S.eLp.connect(S.eGain); S.eGain.connect(S.inn);
+  /* впуск — шум, полоса за оборотами, громкость за газом: под нагрузкой мотор «дышит» */
+  S.inBp=F('bandpass', 300, 1.2); S.inG=G(0);
+  sndLoop(ctx, S.nb, 0.1).connect(S.inBp); S.inBp.connect(S.inG); S.inG.connect(S.eLp);
+  S.tyBp=F('bandpass', 500, 0.8); S.tyG=G(0);
+  sndLoop(ctx, S.nb, 0.5).connect(S.tyBp); S.tyBp.connect(S.tyG); S.tyG.connect(S.out);
+  S.wiLp=F('lowpass', 380, 0.7); S.wiG=G(0);
+  sndLoop(ctx, S.nb, 0.9).connect(S.wiLp); S.wiLp.connect(S.wiG); S.wiG.connect(S.out);
+  S.scBp=F('bandpass', 1600, 2.5); S.scG=G(0);
+  sndLoop(ctx, S.nb, 1.3).connect(S.scBp); S.scBp.connect(S.scG); S.scG.connect(S.inn);
+  S.bedLp=F('lowpass', 240, 0.6); S.bedG=G(0);
+  sndLoop(ctx, S.nb, 1.7).connect(S.bedLp); S.bedLp.connect(S.bedG); S.bedG.connect(S.out);
+  /* поток: четыре голоса на ближайшие машины — мотор и шины, панорама и затухание по расстоянию */
+  S.flow=[];
+  for(let i=0;i<SND_FLOW;i++){
+    const o=osc(wave, 30), og=G(0.5), nb=F('bandpass', 600, 0.9), lp=F('lowpass', 500, 0.7), g=G(0), p=sndPanner(ctx);
+    o.connect(og); og.connect(lp); sndLoop(ctx, S.nb, 0.23+i*0.37).connect(nb); nb.connect(lp); lp.connect(g);
+    if(p){ g.connect(p); p.connect(S.out); } else g.connect(S.out);
+    o.start(0);
+    S.flow.push({o, lp, g, p, a:null});
+  }
+  /* трамвай: низкий гул тележек, вой тягового мотора по скорости, гудение преобразователя на стоянке */
+  S.trLp=F('lowpass', 130, 0.8); S.trM=osc('sawtooth', 80); S.trMbp=F('bandpass', 320, 4); S.trMg=G(0);
+  S.trHum=osc('sine', 100); S.trHumG=G(0.06); S.trG=G(0); S.trP=sndPanner(ctx);
+  sndLoop(ctx, S.nb, 0.61).connect(S.trLp); S.trLp.connect(S.trG);
+  S.trM.connect(S.trMbp); S.trMbp.connect(S.trMg); S.trMg.connect(S.trG);
+  S.trHum.connect(S.trHumG); S.trHumG.connect(S.trG);
+  if(S.trP){ S.trG.connect(S.trP); S.trP.connect(S.out); } else S.trG.connect(S.out);
+  for(const o of [S.eo1, S.eo2, S.eSub, S.trM, S.trHum]) o.start(0);
+  return S;
+}
+/* параметр двигается плавно и только когда значение заметно сменилось: setTargetAtTime на каждом
+   кадре копил бы события в расписании десятков параметров */
+function sndSet(p, v, t, tc){
+  if(p._v!==undefined && Math.abs(v-p._v)<=1e-4*Math.max(1, Math.abs(v))) return;
+  p._v=v; p.setTargetAtTime(v, t, tc);
+}
+/* обороты автомата. Машина тренажёра ездит до 19 км/ч, поэтому порог переключения зависит не от газа,
+   а от того, разгоняется ли машина: в разгоне (acc ≈ 3 м/с²) первая держится до 2700 об/мин, на ровном
+   ходу автомат уходит на вторую уже с 1600 — с порогом только по газу мотор на полной скорости выл на
+   первой. Вниз — у холостых или кикдаун: газ в пол на малых оборотах. На малом ходу с газом
+   гидротрансформатор даёт мотору раскрутиться раньше колёс */
+function rpmStep(e, kmh, drive, thr, acc, dt){
+  let target;
+  if(drive===0){ target=ENG.idle+thr*2200; e.g=1; }
+  else if(drive<0){ target=Math.max(ENG.idle, kmh*ENG.kR); e.g=1; }
+  else {
+    const accF=clamp(acc/2.5, 0, 1), rg=kmh*ENG.k[e.g];
+    if(e.g<4 && rg > 1600+1100*thr*accF) e.g++;
+    else if(e.g>1 && (rg<760 || (thr>0.8 && accF>0.5 && rg<1250))) e.g--;
+    target=Math.max(ENG.idle, kmh*ENG.k[e.g]);
+  }
+  if(drive!==0 && thr>0) target=Math.max(target, ENG.idle+thr*(1000-Math.min(kmh, 15)*30));
+  target=Math.min(target, ENG.red);
+  const tau=target>e.rpm ? 0.16 : 0.28;
+  e.rpm += (target-e.rpm)*Math.min(1, dt/tau);
+  return e.rpm;
+}
+function audioUpdate(S, st, t){
+  sndSet(S.master.gain, st.on ? 0.8 : 0, t, 0.05);
+  sndSet(S.cab.frequency, st.cabin ? 900 : 16000, t, 0.15);
+  sndSet(S.out.gain, st.cabin ? 0.8 : 1, t, 0.15);
+  /* четыре цилиндра, четыре такта: две вспышки за оборот, частота — обороты / 30 */
+  const f=st.rpm/30, r=st.rpm/ENG.red, L=st.load;
+  sndSet(S.eo1.frequency, f, t, 0.04); sndSet(S.eo2.frequency, f*1.012, t, 0.04); sndSet(S.eSub.frequency, f/2, t, 0.04);
+  sndSet(S.eLp.frequency, 240+st.rpm*0.22+L*1100, t, 0.07);
+  sndSet(S.eGain.gain, (st.cabin ? 0.17 : 0.12)*(0.45+0.4*r+0.35*L), t, 0.07);
+  sndSet(S.inBp.frequency, 180+st.rpm*0.35, t, 0.07);
+  sndSet(S.inG.gain, 0.04+0.3*L*(0.3+r), t, 0.09);
+  const vk=Math.min(1, st.v/16);
+  sndSet(S.tyG.gain, 0.24*Math.pow(vk, 1.3), t, 0.15); sndSet(S.tyBp.frequency, 280+st.v*45, t, 0.15);
+  sndSet(S.wiG.gain, 0.2*vk*vk, t, 0.2);
+  sndSet(S.scG.gain, st.scrape ? Math.min(0.4, 0.1+st.scrape*0.3) : 0, t, 0.03);
+  sndSet(S.bedG.gain, st.bed, t, 0.8);
+  for(let i=0;i<S.flow.length;i++){
+    const V=S.flow[i], q=st.flow[i];
+    if(!q){ sndSet(V.g.gain, 0, t, 0.25); continue; }
+    const att=SND_REF/Math.max(SND_REF, q.d);
+    sndSet(V.o.frequency, (900+q.sp*120)/30, t, 0.2);
+    sndSet(V.lp.frequency, 280+1600*att, t, 0.2);
+    sndSet(V.g.gain, 0.36*att*(0.35+Math.min(1, q.sp/10)*0.8), t, 0.15);
+    if(V.p) sndSet(V.p.pan, q.pan, t, 0.06);
+  }
+  const T=st.tram;
+  if(T){
+    const att=SND_REF/Math.max(SND_REF, T.d);
+    sndSet(S.trG.gain, 0.5*att, t, 0.15);
+    sndSet(S.trLp.frequency, 90+T.sp*12, t, 0.2);
+    sndSet(S.trM.frequency, 60+T.sp*26, t, 0.2); sndSet(S.trMbp.frequency, 240+T.sp*100, t, 0.2);
+    sndSet(S.trMg.gain, Math.min(0.5, T.sp*0.06), t, 0.2);
+    if(S.trP) sndSet(S.trP.pan, T.pan, t, 0.06);
+  } else sndSet(S.trG.gain, 0, t, 0.3);
+}
+/* разовые звуки: всплеск шума через полосу (щелчки, стыки, удар) и тон с огибающей */
+function sndBurst(S, t, bus, f, q, dur, vol, type){
+  const c=S.ctx, s=c.createBufferSource(), b=sndFilt(c, type||'bandpass', f, q), g=c.createGain();
+  s.buffer=S.nb; g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+  s.connect(b); b.connect(g); g.connect(bus); s.start(t, (t*7.31)%1.5, dur+0.02);
+}
+function sndTone(S, t, bus, f, dur, vol, type, f2){
+  const c=S.ctx, o=c.createOscillator(), g=c.createGain();
+  o.type=type||'sine'; o.frequency.setValueAtTime(f, t); if(f2) o.frequency.exponentialRampToValueAtTime(f2, t+dur);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t+0.006); g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+  o.connect(g); g.connect(bus); o.start(t); o.stop(t+dur+0.03);
+}
+function sndAt(S, pan, att){
+  const c=S.ctx, g=c.createGain(); g.gain.value=att;
+  const p=sndPanner(c); if(p){ p.pan.value=clamp(pan, -1, 1); g.connect(p); p.connect(S.out); } else g.connect(S.out);
+  return g;
+}
+/* реле поворотника щёлкает на каждом фронте лампы: включилась — «тик», погасла — «так» */
+function sndRelay(S, t, on){
+  sndBurst(S, t, S.inn, on ? 3400 : 2300, 7, 0.012, 0.5);
+  sndTone(S, t, S.inn, on ? 1900 : 1300, 0.014, 0.05, 'square');
+}
+const SND_EVT={
+  sel:(S, t)=>{ sndBurst(S, t, S.inn, 1200, 3, 0.03, 0.35); sndTone(S, t, S.inn, 150, 0.05, 0.18, 'sine', 90); },
+  stalk:(S, t)=>sndBurst(S, t, S.inn, 2800, 4, 0.012, 0.3),
+  handOn:(S, t)=>{ for(let i=0;i<6;i++) sndBurst(S, t+i*0.028, S.inn, 2600, 5, 0.008, 0.22); },
+  handOff:(S, t)=>{ sndBurst(S, t, S.inn, 900, 2, 0.05, 0.3); sndTone(S, t, S.inn, 120, 0.06, 0.12, 'sine', 70); },
+};
+function sndEvent(kind){
+  if(!SND || !AU.on || !SND_EVT[kind]) return;
+  SND_EVT[kind](SND, AC.currentTime);
+}
+/* удар: глухой провал тона и шум без верха — машину слышно корпусом, а не динамиком */
+function sndHit(S, t, k){
+  sndTone(S, t, S.inn, 120, 0.24, 0.55*k, 'sine', 40);
+  sndBurst(S, t, S.inn, 700, 0.7, 0.14, 0.45*k, 'lowpass');
+}
+/* гудок: два пилообразных тона через форманты 1,1 и 2,4 кГц — так звучит рупорный сигнал машины */
+function sndHorn(S, t, pan, att, dur){
+  const c=S.ctx, out=sndAt(S, pan, att), g=c.createGain(), f1=sndFilt(c, 'bandpass', 1100, 3), f2=sndFilt(c, 'bandpass', 2400, 4), m=sndFilt(c, 'lowpass', 3000, 0.7);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.5, t+0.02);
+  g.gain.setValueAtTime(0.5, t+dur-0.05); g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+  for(const f of [405, 507]){ const o=c.createOscillator(); o.type='sawtooth'; o.frequency.value=f; o.connect(g); o.start(t); o.stop(t+dur+0.02); }
+  g.connect(f1); g.connect(f2); g.connect(m); f1.connect(out); f2.connect(out); m.connect(out);
+}
+/* звонок трамвая: три негармонических частоты колокола, два удара */
+function sndBell(S, t, pan, att){
+  const out=sndAt(S, pan, att);
+  for(const k of [0, 0.26]) for(const [f, d, v] of [[1550, 1.3, 0.3], [2330, 0.9, 0.18], [3610, 0.5, 0.1]]) sndTone(S, t+k, out, f, d, v, 'sine');
+}
+/* стык рельса: два удара тележки с разносом по базе */
+function sndClack(S, t, pan, att, gap){
+  const out=sndAt(S, pan, att);
+  for(const k of [0, gap]){ sndBurst(S, t+k, out, 900, 1.5, 0.035, 0.6); sndTone(S, t+k, out, 75, 0.06, 0.3, 'sine', 50); }
+}
+function initAudio(){
+  voiceUnlock();
+  /* вкладка в фоне усыпляет контекст — без resume звук после возврата пропадает */
+  if(AC){ if(AC.state==='suspended' && document.visibilityState!=='hidden') AC.resume().catch(()=>{}); return; }
+  try{ AC=new (window.AudioContext||window.webkitAudioContext)(); SND=audioBuild(AC); }
+  catch(e){ AC=null; SND=null; console.warn('[audio] WebAudio недоступен — игра без звука'); }
+}
+/* слушатель — у машины, лево и право — по направлению взгляда: что видно слева, то и слышно слева */
+function sndPan(u, v){
+  const fu=-viewCam.f.x, fv=viewCam.f.z, n=Math.hypot(fu, fv)||1, du=u-AU.lu, dv=v-AU.lv, d=Math.hypot(du, dv)||1;
+  return clamp((du*fv/n-dv*fu/n)/d, -1, 1);
+}
+function audioTick(dt){
+  if(!AC || !SND) return;
+  const S=SND, t=AC.currentTime, c=bodyPos();
+  AU.on=opt.sound && !paused && document.visibilityState!=='hidden';
+  /* звук включили, пока контекст спал после фона, — будим здесь: audioHide будит только при включённом звуке */
+  if(AU.on && AC.state==='suspended' && !S.waking){ S.waking=true; AC.resume().then(()=>{ S.waking=false; }, ()=>{ S.waking=false; }); }
+  AU.lu=c.u; AU.lv=c.v;
+  const thr=input.fwd ? 1 : 0, v=Math.abs(car.vel);
+  S.e.thr += (thr-S.e.thr)*Math.min(1, dt/0.12);
+  if(dt>0){ S.e.acc += ((v-(S.e.v||0))/dt - S.e.acc)*Math.min(1, dt/0.3); S.e.v=v; }
+  AU.rpm=rpmStep(S.e, v*3.6, car.sel==='D' ? 1 : car.sel==='R' ? -1 : 0, S.e.thr, S.e.acc, dt);
+  AU.load=S.e.thr; AU.v=Math.abs(car.vel); AU.cabin=opt.camMode===CAM_FP;
+  AU.scrape=COL_ST.touch && AU.v>0.15 ? Math.min(1, AU.v/3) : 0;
+  AU.bed=level.city ? (opt.traffic==='off' ? 0.025 : 0.045) : 0.015;
+  AU.flow.length=0; AU.tram=null;
+  let tram=null, n=0;
+  for(const a of level.actors){
+    const s=a.act; if(!s || s.ped || !s.started || a.u>9e3) continue;
+    const d=Math.hypot(a.u-c.u, a.v-c.v);
+    if(a.kind==='tram'){ tram=a; AU.tram=AU_TRAM; AU_TRAM.d=d; AU_TRAM.sp=s.v||0; AU_TRAM.pan=sndPan(a.u, a.v); continue; }
+    if(d>SND_FAR || n>=AU_POOL.length) continue;
+    const q=AU_POOL[n++]; q.d=d; q.sp=s.v||0; q.pan=sndPan(a.u, a.v);
+    AU.flow.push(q);
+  }
+  AU.flow.sort((x, y)=>x.d-y.d);
+  if(AU.flow.length>SND_FLOW) AU.flow.length=SND_FLOW;
+  audioUpdate(S, AU, t);
+  const lamp=!!car.blink && Math.floor(game.t/0.75)%2===0;
+  if(lamp!==S.lamp){ S.lamp=lamp; if(AU.on) sndRelay(S, t, lamp); }
+  if(tram && AU.tram){
+    const s=tram.act, T=AU.tram, att=SND_REF/Math.max(SND_REF, T.d);
+    if(!S.trOn){ S.trOn=true; S.trS=0; S.trK=0; if(AU.on && T.d<90) sndBell(S, t, T.pan, att); S.bellT=game.t; }
+    /* машина на путях впереди — трамвай звонит, как в жизни: он не объезжает и не уступает */
+    if((s.v||0)>0.5 && game.t-S.bellT>6){
+      const f=fuv(tram.yaw), du=c.u-tram.u, dv=c.v-tram.v, lon=du*f.u+dv*f.v-7, lat=Math.abs(du*f.v-dv*f.u);
+      if(lon>0 && lon<30 && lat<2.2){ S.bellT=game.t; if(AU.on) sndBell(S, t, T.pan, att); }
+    }
+    S.trS+=(s.v||0)*dt;
+    const k=Math.floor(S.trS/12.5);
+    if(k!==S.trK){ S.trK=k; if(AU.on && T.d<60) sndClack(S, t, T.pan, att, 2.2/Math.max(1, s.v||1)); }
+  } else S.trOn=false;
+}
+/* фон: вкладка скрыта — мастер в ноль сразу (rAF стоит, тик не придёт), контекст спит; вернулась — проснулся */
+function audioHide(hidden){
+  if(!AC || !SND) return;
+  if(hidden){ SND.master.gain._v=0; SND.master.gain.setValueAtTime(0, AC.currentTime); AC.suspend().catch(()=>{}); }
+  else if(opt.sound) AC.resume().catch(()=>{});
 }
 function tone(freq,dur,vol,type){
-  if(!AC||!opt.sound) return;
-  const t=AC.currentTime, o=AC.createOscillator(), g=AC.createGain();
-  o.type=type||'square'; o.frequency.setValueAtTime(freq,t);
-  g.gain.setValueAtTime(0.0001,t); o.connect(g); g.connect(AC.destination);
-  g.gain.exponentialRampToValueAtTime(vol,t+0.008);
-  g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
-  o.start(t); o.stop(t+dur+0.02);
+  if(!SND || !AU.on) return;
+  sndTone(SND, AC.currentTime, SND.ui, freq, dur, vol*1.6, type||'square');
 }
-function thud(k){ if(!AC||!opt.sound) return;
-  const t=AC.currentTime, o=AC.createOscillator(), g=AC.createGain();
-  o.type='triangle'; o.frequency.setValueAtTime(150,t);
-  o.frequency.exponentialRampToValueAtTime(45,t+0.16);
-  g.gain.setValueAtTime(0.28*k,t); g.gain.exponentialRampToValueAtTime(0.0001,t+0.24);
-  o.connect(g); g.connect(AC.destination); o.start(t); o.stop(t+0.27); }
+function thud(k){ if(SND && AU.on) sndHit(SND, AC.currentTime, k); }
 
 /* ---------- голос инструктора ----------
    Голос идёт поверх текста, а не вместо: русского голоса нет на части Android и Windows, на iOS речь
@@ -12886,6 +13116,7 @@ function authWaitEnd(){
 document.addEventListener('visibilitychange', ()=>{
   /* в фоне rAF стоит и voiceTick не зовётся — голос глушится здесь, иначе договорил бы в свёрнутой вкладке */
   if(document.visibilityState==='hidden') voiceHalt();
+  audioHide(document.visibilityState==='hidden');
   if(document.visibilityState==='visible' && authWait) authPollTick();
   if(document.visibilityState==='hidden' && syncDirty) syncNow('hide', true);
 });
@@ -13992,12 +14223,12 @@ function setBlink(dir){
   car.blink = (car.blink===dir) ? null : dir;
   car.blinkTh = car.th;
   if(car.blink) blinkLog[car.blink]=game.t;
-  tone(car.blink?940:620,0.03,0.05,'square');
+  sndEvent('stalk');
   syncBlinkDom();
 }
 function setHand(on){
   car.hand=on;
-  tone(on?520:700,0.05,0.07,'square');
+  sndEvent(on?'handOn':'handOff');
   /* без toast: бейдж (!) уже показывает состояние, а уведомление перекрывало
      карточку «газ — и снимай ручник» ровно в секунду трогания на подъёме */
   syncHandDom();
@@ -15500,16 +15731,15 @@ function simTick(dt){
   phaseTick(dt);
   tutTick();
   parkBeep(dt);
-  engineSound(Math.abs(car.vel));
+  audioTick(dt);
 }
 /* гудок машины, которую держит игрок: два тона, громкость по дистанции. Молчит без звука, на
    паузе, в показе и когда уровень закончен */
 const HONK_WAIT=4, HONK_REST=7;
-function honk(d){
-  if(paused||!opt.sound||!AC||game.done||demo) return;
-  const vol=clamp(0.5-d/40, 0.08, 0.5);
-  tone(430,0.18,vol,'square');
-  setTimeout(()=>{ if(!paused&&opt.sound&&AC) tone(470,0.22,vol,'square'); }, 220);
+function honk(d, a){
+  if(!SND||!AU.on||game.done||demo) return;
+  const c=bodyPos(), dd=a ? Math.hypot(a.u-c.u, a.v-c.v) : d, att=SND_REF/Math.max(SND_REF, dd), pan=a ? sndPan(a.u, a.v) : 0, t=AC.currentTime;
+  sndHorn(SND, t, pan, att, 0.2); sndHorn(SND, t+0.3, pan, att, 0.32);
 }
 function parkBeep(dt){
   if(paused||!opt.sound||!AC) return;
