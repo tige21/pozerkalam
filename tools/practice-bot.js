@@ -207,6 +207,7 @@
   };
   /* экзамен из графа: маршрут по зерну, настоящий режим — ошибка не прощается. Поток у экзамена всегда
      плотный; без opts.traffic поток убирается — проверяется маршрут, а не уступание */
+  const BOT_CRUISE = 5.2;
   window.examDrive = function (seed, opts) {
     opts = opts || {};
     const li = LEVELS.findIndex((l) => l.examRoute);
@@ -315,7 +316,9 @@
         if (bl && car.blink !== bl) { car.blink = bl; car.blinkTh = car.th; } }
       const tgt = useStanley ? stanley(pts, bias) : aim ? steerTo(aim) : 0, err = tgt - car.steer;
       if (Math.abs(err) > rad(0.8)) { if (err > 0) input.right = true; else input.left = true; }
-      if (v > want + 0.25) input.back = true; else if (v < want - 0.25 && want > 0) input.fwd = true;
+      /* газ — не выше прежнего потолка машины 5,2 м/с: в городе машина теперь едет до 60 км/ч, а маршруты бота и
+         детекторы откалиброваны на этом ходу; с газом до упора машина стояла на 5,2, так она стоит и сейчас */
+      if (v > want + 0.25) input.back = true; else if (v < want - 0.25 && want > 0 && v < BOT_CRUISE) input.fwd = true;
       if (want === 0) input.back = true;
       if (opts.trace && Math.round(t * 60) % 30 === 0) {
         const lp = lanePos();

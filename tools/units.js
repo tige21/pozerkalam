@@ -179,6 +179,46 @@ function unitCheck() {
   ok('с ручником машина не разгоняется', Math.abs(car.vel) < CAR.maxF * 0.5);
   car.hand = false;
 
+  /* скорость в городе (план speed-limits-ribbon, Ф2): потолок — уровня, выше 5,2 м/с разгон по мощности,
+     накат слабее, кривизна по сцеплению, руль медленнее. Ниже 5,2 м/с — ни одной разницы с прежним */
+  g('скорость в городе');
+  ok('во дворе потолок прежний', level.vmax === CAR.maxF && vmaxNow() === CAR.maxF);
+  level.vmax = CAR.vCity;
+  ok('в городе потолок 60 км/ч', Math.abs(vmaxNow() * 3.6 - 60) < 1e-9);
+  demo = {}; ok('показ и в городе едет со старым потолком', vmaxNow() === CAR.maxF); demo = null;
+  reset('D'); car.vel = 4; drive(0.5, { fwd: true });
+  near('до 5,2 м/с разгон прежний', car.vel, 4 + CAR.accel * 0.5, 0.02);
+  reset('D'); car.vel = 10; drive(0.5, { fwd: true });
+  near('на 36 км/ч разгон по мощности: a = 3,1 · 5,2 / v', car.vel, 10 + CAR.accel * CAR.maxF / 10 * 0.5, 0.03);
+  reset('D'); car.vel = CAR.vCity - 0.05; drive(1, { fwd: true });
+  near('выше 60 км/ч в городе машина не разгоняется', car.vel, CAR.vCity, 1e-6);
+  reset('D'); car.vel = 12; drive(1, {});
+  near('накат на 43 км/ч слабее парковочного', car.vel, 12 - CAR.drag * 0.45, 0.03);
+  reset('D'); car.vel = 7; drive(1, {});
+  /* на 25 км/ч накат 1,35 · 5,2 / v: v dv = −1,35 · 5,2 dt → v = √(49 − 2 · 1,35 · 5,2) */
+  near('накат на 25 км/ч слабеет как 5,2 / v', car.vel, Math.sqrt(49 - 2 * CAR.drag * CAR.maxF), 0.02);
+  reset('D'); car.vel = 4; drive(1, {});
+  near('накат на парковочном ходу прежний', car.vel, 4 - CAR.drag, 0.02);
+  const turnRate = (v) => { reset('D'); car.vel = v; car.steer = CAR.maxSteer; input.right = true; const th0 = car.th;
+    stepCar(1 / 120); input.right = false; return { got: angNorm(car.th - th0) * 120, v: car.vel }; };
+  let tr = turnRate(5);
+  near('на 18 км/ч полный руль поворачивает как раньше', tr.got, tr.v * Math.tan(CAR.maxSteer) / CAR.wheelbase, 1e-9);
+  tr = turnRate(12);
+  near('на 43 км/ч поворот ограничен сцеплением 7,2 м/с²', tr.got, CAR.grip / tr.v, 1e-9);
+  reset('D'); car.vel = 12; car.steer = -CAR.maxSteer; input.left = true; { const th0 = car.th; stepCar(1 / 120); input.left = false;
+    near('влево сцепление ограничивает так же', angNorm(car.th - th0) * 120, -CAR.grip / car.vel, 1e-9); }
+  reset('D'); car.vel = 12;
+  near('на 43 км/ч руль вращается вдвое медленнее', steerRateNow(), (CAR.steerStill + (CAR.steerRoll - CAR.steerStill) * (1 - Math.exp(-12 / CAR.steerVref))) * 0.5, 1e-9);
+  car.vel = 40;
+  near('на любой скорости руль не медленнее трети', steerRateNow(), (CAR.steerStill + (CAR.steerRoll - CAR.steerStill) * (1 - Math.exp(-40 / CAR.steerVref))) * 0.35, 1e-9);
+  car.vel = -2;
+  near('задним ходом руль вращается так же, как вперёд', steerRateNow(), CAR.steerStill + (CAR.steerRoll - CAR.steerStill) * (1 - Math.exp(-2 / CAR.steerVref)), 1e-9);
+  car.vel = 5;
+  near('на парковочном ходу руль прежний', steerRateNow(), CAR.steerStill + (CAR.steerRoll - CAR.steerStill) * (1 - Math.exp(-5 / CAR.steerVref)), 1e-9);
+  level.vmax = CAR.maxF; reset('D');
+  loadLevel(LEVELS.findIndex((d) => d.traffic === 'city')); hideOv(); paused = true;
+  ok('городской уровень получает потолок 60 км/ч', level.vmax === CAR.vCity);
+
   g('зазоры: борт и углы');
   loadLevel(LEVELS.findIndex((d) => d.name === '14 · Габарит: нос к стене')); hideOv(); paused = true;
   setBody(0, -3.0, 0); car.vel = 0;

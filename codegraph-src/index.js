@@ -1901,7 +1901,10 @@ const CAR = {
   wheelR:0.33, wheelW:0.22,
   maxSteer:rad(34.5), steerStill:rad(23), steerRoll:rad(46), steerVref:0.5,
   steerRatio:15.5, casterV:2.2, casterGain:rad(2.2), casterMax:rad(50),
-  maxF:5.2, maxR:3.4, accel:3.1, brake:6.4, drag:1.35, creep:1.15, creepAccel:1.5
+  maxF:5.2, maxR:3.4, accel:3.1, brake:6.4, drag:1.35, creep:1.15, creepAccel:1.5,
+  /* город: до 60 км/ч (шкала спидометра, ПДД 10.2); сцепление — предел бокового ускорения; выше steerVfast
+     руль вращается медленнее — клавиша вкл/выкл на скорости иначе крутит машину волчком */
+  vCity:60/3.6, grip:7.2, steerVfast:6
 };
 const HALF_L = CAR.length/2, HALF_W = CAR.width/2;
 /* время до упора в текстах — из CAR, а не числом: цифра «1,8 с» уже расходилась с реальной */
@@ -1916,9 +1919,14 @@ const EYE = { lat:-0.36, y:1.22, z:-0.20 };
 /* руление тем легче и быстрее, чем быстрее катится машина:
    на месте шина скребёт пятном контакта, в качении доворачивается свободно */
 function steerRateNow(){
-  const k = 1 - Math.exp(-Math.abs(car.vel)/CAR.steerVref);
-  return CAR.steerStill + (CAR.steerRoll - CAR.steerStill)*k;
+  const v=Math.abs(car.vel), k = 1 - Math.exp(-v/CAR.steerVref);
+  const r=CAR.steerStill + (CAR.steerRoll - CAR.steerStill)*k;
+  return v>CAR.steerVfast ? r*Math.max(0.35, CAR.steerVfast/v) : r;
 }
+/* потолок скорости — уровня: во дворе и на площадке прежние 5,2 м/с (там по ПДД 20 км/ч, и на них
+   откалиброваны все показы), в городе — 60 км/ч. Показ едет со старым потолком и в городе: его сегменты
+   без своего vmax держат газ до упора, и с новым потолком поехали бы все 23 калибровки */
+function vmaxNow(){ return demo ? CAR.maxF : (level.vmax || CAR.maxF); }
 function lockTime(){ return CAR.maxSteer/steerRateNow(); }
 /* упор руля: в машине он ощущается рукой, здесь — цветом метки и щелчком.
    Щелчок по фронту, иначе он звучал бы каждый кадр всё время удержания упора */
@@ -8225,7 +8233,7 @@ function loadLevel(i){
     v0=Math.min(v0,z.bb.v0); v1=Math.max(v1,z.bb.v1);
   }
   level = { def, obs:b.obs, rend:buildRenderList(b.obs), dec:b.dec, start:b.start, goal:b.goal,
-            ramps:b.ramps||[], city:b.city||null, actors:b.obs.filter(o=>o.act),
+            ramps:b.ramps||[], city:b.city||null, actors:b.obs.filter(o=>o.act), vmax:b.city ? CAR.vCity : CAR.maxF,
             practice:P, pvar:b.pvar||null, lightShift:b.lightShift||0,
             /* городу — запас 12 м: с 3 м разворот на L24 упирался в невидимую границу на v=-1,5 */
             bounds:{u0:u0-(b.city?12:3), u1:u1+(b.city?12:3), v0:v0-(b.city?12:3), v1:v1+(b.city?12:3)},
@@ -8663,20 +8671,30 @@ function stepCar(dt){
   } else if(brakePedal){
     slow(CAR.brake);
   } else if(dir!==0 && gas){
-    const mx = dir>0?CAR.maxF:CAR.maxR;
-    car.vel += dir*CAR.accel*dt;
+    const mx = dir>0?vmaxNow():CAR.maxR, v=Math.abs(car.vel);
+    /* выше 5,2 м/с разгон ограничен мощностью (a·v постоянно): до 60 км/ч за ≈ 9,5 с, как малолитражка с
+       автоматом; ниже — прежний разгон, на нём стоят показы */
+    car.vel += dir*(v>CAR.maxF ? CAR.accel*CAR.maxF/v : CAR.accel)*dt;
     if(Math.abs(car.vel)>mx) car.vel=dir*mx;
   } else if(dir!==0){
     const cr=CAR.creep*dir;                      /* АКПП ползёт без газа */
     if(dir>0 ? car.vel<cr : car.vel>cr){
       car.vel += dir*CAR.creepAccel*dt;
       car.vel = dir>0 ? Math.min(car.vel,cr) : Math.max(car.vel,cr);
-    } else slow(CAR.drag);
+    } else {
+      /* накат на скорости слабее: 1,35 м/с² — торможение мотором на парковочном ходу, с 50 км/ч машина
+         так встала бы за 10 с */
+      const v=Math.abs(car.vel);
+      slow(v>CAR.maxF ? CAR.drag*Math.max(0.45, CAR.maxF/v) : CAR.drag);
+    }
   } else {
     slow(CAR.drag*0.45);                          /* N — свободный накат */
   }
 
-  const om=(car.vel/CAR.wheelbase)*Math.tan(car.steer);
+  /* сцепление: кривизна не круче grip/v² — на скорости полный руль ведёт машину шире (снос), а не разворачивает
+     её на месте. На 5,2 м/с полный руль даёт 7,0 м/с² вбок, предел 7,2 — на парковочном ходу ничего не меняется */
+  const kSteer=Math.tan(car.steer)/CAR.wheelbase, kGrip=CAR.grip/Math.max(1e-6, car.vel*car.vel);
+  const om=car.vel*(Math.abs(kSteer)>kGrip ? Math.sign(kSteer)*kGrip : kSteer);
   const f=fuv(car.th+om*dt*0.5);
   car.ru += f.u*car.vel*dt; car.rv += f.v*car.vel*dt;
   car.th = angNorm(car.th+om*dt);
@@ -9116,21 +9134,24 @@ function examNav(){
   const c=bodyPos();
   const d=(exam.leg && exam.leg.stage===exam.stage) ? exam.leg.dist
         : Math.hypot(st.at.u-c.u, st.at.v-c.v);
-  if(d>75) return {glyph:g, text:st.cmd, dist:d};
+  /* пороги формулировок — не только метры: на 60 км/ч «через 30 м» звучит за 1,8 с до манёвра, когда
+     перестраиваться уже поздно. На парковочном ходу метры больше секунд — пороги прежние */
+  const v=Math.abs(car.vel), far=Math.max(75, v*7), mid=Math.max(28, v*3.5), close=Math.max(10, v*1.2);
+  if(d>far) return {glyph:g, text:st.cmd, dist:d};
   /* короткую форму даём только манёвру: на этапе «веди прямо» точка at — это конец
      участка, игрок стоит от неё в десятках метров, и «прямо по проспекту» вместо полной
      команды звучало как обрывок уже на старте экзамена */
   if(st.turn==='straight') return {glyph:g, text:st.cmd, dist:d};
   /* bare — та же команда без «через N м»: на карточке метры стоят в чипе, и две цифры рядом спорили */
-  if(d>28) return {glyph:g, text:'Через '+(Math.round(d/10)*10)+' м — '+examShort(st), bare:examShort(st), dist:d};
-  if(d>10) return {glyph:g, text:examShort(st), dist:d};
+  if(d>mid) return {glyph:g, text:'Через '+(Math.round(d/10)*10)+' м — '+examShort(st), bare:examShort(st), dist:d};
+  if(d>close) return {glyph:g, text:examShort(st), dist:d};
   return {glyph:g, text:st.cmd, dist:d};
 }
 /* чипы карточки экзамена: метры до манёвра (крупно округлены вдали — карточка не пересобирается каждый
    метр) и баллы. В настоящем режиме счёт не показывается: инспектор называет его в конце */
 function examTags(nav){
   const t=[], fl=examFlags();
-  if(nav && fl.dist && nav.dist!==null && nav.dist<75)
+  if(nav && fl.dist && nav.dist!==null && nav.dist<Math.max(75, Math.abs(car.vel)*7))
     t.push((nav.dist>30 ? Math.round(nav.dist/5)*5 : Math.round(nav.dist))+' м');
   if(fl.dist) t.push('баллы '+exam.score);
   return t.length ? t : null;
@@ -10708,7 +10729,8 @@ function audioBuild(ctx, B){
   S.cab=F('lowpass', 16000, 0.5); S.cab.connect(S.master);
   S.out=G(1); S.out.connect(S.cab);
   S.ui=G(1); S.ui.connect(S.master);
-  /* ветер — шум без верха и с записями, и в синтезе: своей записи нет, на 19 км/ч он едва слышен */
+  /* ветер — шум без верха и с записями, и в синтезе: своей записи нет; на парковочном ходу он едва слышен,
+     в городе на 60 км/ч — уже слышен */
   S.wiLp=F('lowpass', 380, 0.7); S.wiG=G(0);
   sndSrc(S, sndLoop(ctx, S.nb, 0.9)).connect(S.wiLp); S.wiLp.connect(S.wiG); S.wiG.connect(S.out);
   if(S.B) sndBuildRec(S); else sndBuildSyn(S);
@@ -10774,8 +10796,8 @@ function sndSet(p, v, t, tc){
   if(p._v!==undefined && Math.abs(v-p._v)<=1e-4*Math.max(1, Math.abs(v))) return;
   p._v=v; p.setTargetAtTime(v, t, tc);
 }
-/* обороты автомата. Машина тренажёра ездит до 19 км/ч, поэтому порог переключения зависит не от газа,
-   а от того, разгоняется ли машина: в разгоне (acc ≈ 3 м/с²) первая держится до 2700 об/мин, на ровном
+/* обороты автомата. Во дворе машина тренажёра ездит до 19 км/ч, поэтому порог переключения зависит не от
+   газа, а от того, разгоняется ли машина: в разгоне (acc ≈ 3 м/с²) первая держится до 2700 об/мин, на ровном
    ходу автомат уходит на вторую уже с 1600 — с порогом только по газу мотор на полной скорости выл на
    первой. Вниз — у холостых или кикдаун: газ в пол на малых оборотах. На малом ходу с газом
    гидротрансформатор даёт мотору раскрутиться раньше колёс */
