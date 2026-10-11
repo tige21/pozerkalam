@@ -48,6 +48,13 @@ adapter = (
  'setInterval(window.__ysave,30000);'
  '});}).catch(function(){});'
  'if(ysdk.features&&ysdk.features.LoadingAPI)ysdk.features.LoadingAPI.ready();'
+ # разметка геймплея — требование модерации площадки: start, пока игрок едет, stop на паузе, в меню, на
+ # итогах, на рекламе (adsPause ставит paused) и в фоне. Состояние читается из игры раз в 0,5 с — так
+ # разметка не зависит от того, каким путём игра встала на паузу (#184)
+ 'var G=ysdk.features&&ysdk.features.GameplayAPI;'
+ 'if(G){var gp=false;setInterval(function(){var on=false;'
+ 'try{on=!paused&&!game.done&&document.visibilityState==="visible"}catch(e){}'
+ 'if(on!==gp){gp=on;try{if(on)G.start();else G.stop()}catch(e){}}},500)}'
  '}).catch(function(e){console.warn("[ya] init",e)});</script>')
 assert '</body>' in s
 s = s.replace('</body>', adapter + '</body>', 1)

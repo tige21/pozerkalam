@@ -830,6 +830,8 @@
 
 
 
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -14018,6 +14020,11 @@ function fbHTML(){
   +'"></textarea>'
   +'<input id="fbContact" class="fbfield" maxlength="120" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="done" '
   +'placeholder="Телеграм или почта — если нужен ответ. Необязательно">'
+  /* контакт — персональные данные (152-ФЗ): согласие названо у кнопки. В Яндекс Играх ссылки наружу
+     запрещены правилами площадки — там политика названа без ссылки (#180) */
+  +'<p class="fbnote">Отправляя, соглашаешься на обработку текста и контакта по '
+  +(window.YaGames ? 'политике конфиденциальности тренажёра'
+    : '<a href="https://pozerkalam.space/privacy/" target="_blank" rel="noopener">политике конфиденциальности</a>')+'.</p>'
   +(fbShot?'<label class="fbrow"><input type="checkbox" id="fbShot" checked>'
     +'Приложить снимок экрана</label>':'')
   +'<input class="fbhp" id="fbHp" tabindex="-1" autocomplete="off" aria-hidden="true">'

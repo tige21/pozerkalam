@@ -280,6 +280,8 @@ body.compact #overlay .gbseg button{width:auto;margin:0;padding:10px 16px;font-s
   font-size:13px;color:#93a7bd;cursor:pointer}
 #overlay .fbrow input{width:16px;height:16px;accent-color:#1b5faa}
 #overlay .fberr{margin-top:14px;color:#ff9aa3;font-size:13.5px;line-height:1.5}
+#overlay .fbnote{margin:8px 0 0;color:#8ea2b8;font-size:12.5px;line-height:1.45}
+#overlay .fbnote a{color:#b9cbe0}
 #overlay .fberr button{margin-top:10px}
 /* ловушка для автозаполняющих ботов: человек этого поля не видит и не таб-нится в него */
 #overlay .fbhp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
@@ -14018,6 +14020,11 @@ function fbHTML(){
   +'"></textarea>'
   +'<input id="fbContact" class="fbfield" maxlength="120" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="done" '
   +'placeholder="Телеграм или почта — если нужен ответ. Необязательно">'
+  /* контакт — персональные данные (152-ФЗ): согласие названо у кнопки. В Яндекс Играх ссылки наружу
+     запрещены правилами площадки — там политика названа без ссылки (#180) */
+  +'<p class="fbnote">Отправляя, соглашаешься на обработку текста и контакта по '
+  +(window.YaGames ? 'политике конфиденциальности тренажёра'
+    : '<a href="https://pozerkalam.space/privacy/" target="_blank" rel="noopener">политике конфиденциальности</a>')+'.</p>'
   +(fbShot?'<label class="fbrow"><input type="checkbox" id="fbShot" checked>'
     +'Приложить снимок экрана</label>':'')
   +'<input class="fbhp" id="fbHp" tabindex="-1" autocomplete="off" aria-hidden="true">'

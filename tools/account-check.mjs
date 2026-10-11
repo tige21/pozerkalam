@@ -11,7 +11,7 @@
    FAULT=offeroff показывает его без флага — @acct-offer-off; FAULT=offersite — на любой площадке —
    @acct-offer-site-only; FAULT=offerbuyer — и купившему — @acct-offer-not-buyer. FAULT=avatar — фото не рисуется —
    @acct-avatar-shown; FAULT=avfail — битое фото не убирается — @acct-avatar-fallback; FAULT=policy — строки об
-   обновлении политики нет — @acct-policy-note. */
+   обновлении политики нет — @acct-policy-note; FAULT=consent — нет согласия в форме отзывов — @acct-feedback-consent. */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -632,6 +632,25 @@ let offerViewA = [], offerClickA = [];
   check('в Яндекс Играх, VK, Telegram и во фрейме предложения нет, уровень открывается сразу (@acct-offer-site-only)',
     ['ya', 'vk', 'tg', 'frame'].every(k => res[k] && res[k].li === 19 && !res[k].offer) && views === 0, JSON.stringify({ ...res, views }));
   await ctx.close();
+}
+
+/* согласие на обработку у формы отзывов (#180): контакт — персональные данные, согласие названо у кнопки
+   «Отправить» со ссылкой на политику; в Яндекс Играх ссылки наружу запрещены — там политика без ссылки */
+{
+  const { ctx, page } = await openGame({});
+  const r = await page.evaluate((fault) => {
+    const probe = () => { openFeedback('game'); const n = document.querySelector('#overlay .fbnote'), b = document.getElementById('fbSend');
+      const a = n && n.querySelector('a');
+      return { text: n ? n.textContent : '', href: a ? a.getAttribute('href') : null, before: !!n && !!b && n.compareDocumentPosition(b) === Node.DOCUMENT_POSITION_FOLLOWING }; };
+    if (fault === 'consent') { const f = window.fbHTML; window.fbHTML = () => f().replace(/<p class="fbnote">[\s\S]*?<\/p>/, ''); }
+    const site = probe(); fbClose();
+    window.YaGames = {}; const ya = probe(); fbClose(); delete window.YaGames;
+    return { site, ya };
+  }, FAULT);
+  await ctx.close();
+  check('форма отзывов: согласие на обработку у кнопки «Отправить», на сайте — со ссылкой на политику, в Яндекс Играх — без ссылки наружу (@acct-feedback-consent)',
+    /соглашаешься/.test(r.site.text) && /\/privacy\/$/.test(r.site.href || '') && r.site.before && /соглашаешься/.test(r.ya.text) && r.ya.href === null,
+    JSON.stringify(r));
 }
 
 await browser.close();

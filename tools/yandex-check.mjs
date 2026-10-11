@@ -53,7 +53,8 @@ window.YaGames={init:function(){
     getPlayer:function(){rec('getPlayer');return Promise.resolve({
       getData:function(){rec('getData');return Promise.resolve({trainer_traffic:'dense',trainer_marks:'0'})},
       setData:function(o){rec('setData');window.__ya.saved=o;return Promise.resolve()}})},
-    features:{LoadingAPI:{ready:function(){rec('ready');window.__ya.ready=true}}},
+    features:{LoadingAPI:{ready:function(){rec('ready');window.__ya.ready=true}},
+      GameplayAPI:{start:function(){rec('gpStart')},stop:function(){rec('gpStop')}}},
     environment:{i18n:{lang:'ru'}}
   };
   return Promise.resolve(ysdk);
@@ -150,6 +151,22 @@ const run = await page.evaluate(() => ({ level: game.li, paused, faces: typeof f
 check('уровень 1 запущен из билда площадки: кадр идёт, консоль чистая (@dist-yandex-console-clean)',
   run.level === 0 && !run.paused && run.faces > 0 && errors.length === 0,
   JSON.stringify(run) + (errors.length ? ' ошибки: ' + errors.join(' | ') : ''));
+
+/* 7. разметка геймплея (требование модерации, #184): start, пока игрок едет, stop на паузе, на рекламе и на
+      итогах, снова start после возврата. Последний вызов после каждого шага — то, что видит площадка */
+const gp = await page.evaluate(async () => {
+  const last = () => { const c = window.__ya.calls.filter((x) => x === 'gpStart' || x === 'gpStop'); return c[c.length - 1] || null; };
+  const wait = () => new Promise((r) => setTimeout(r, 700));
+  const out = {}; await wait(); out.driving = last();
+  menuGo('pause'); await wait(); out.pause = last();
+  doAct('resume'); await wait(); out.resume = last();
+  window.adsPause(true); await wait(); out.ad = last(); window.adsPause(false); await wait(); out.afterAd = last();
+  win(); await wait(); out.done = last();
+  return out;
+});
+check('разметка геймплея: start на езде, stop на паузе, рекламе и итогах, start после возврата (@dist-yandex-gameplay)',
+  gp.driving === 'gpStart' && gp.pause === 'gpStop' && gp.resume === 'gpStart' && gp.ad === 'gpStop' && gp.afterAd === 'gpStart' && gp.done === 'gpStop',
+  JSON.stringify(gp));
 
 /* 7. записи звука лежат в архиве рядом со страницей и грузятся из него при включении звука */
 const zipList = execFileSync('unzip', ['-Z1', path.join(ROOT, 'build', 'yandex.zip')], { encoding: 'utf8' }).split('\n').filter(Boolean);
