@@ -33,7 +33,8 @@ page.on('pageerror', (e) => pageErrors.push(String(e).split('\n')[0]));
 await page.goto(url + (url.includes('?') ? '&' : '?') + 'nocache=' + Date.now());
 await page.waitForFunction(() => typeof LEVELS !== 'undefined' && LEVELS.length > 0, null, { timeout: 20000 });
 await page.evaluate(() => { try { for (const k of ['trainer_seen', 'trainer_drive', 'trainer_hint', 'pz_offer']) localStorage.setItem(k, '1'); } catch (e) {} });
-await page.addScriptTag({ content: fs.readFileSync(path.join(HERE, 'practice-bot.js'), 'utf8') });
+/* evaluate, а не addScriptTag: CSP прода режет инлайновый <script> без хэша, а вычисление через протокол — нет */
+await page.evaluate(fs.readFileSync(path.join(HERE, 'practice-bot.js'), 'utf8'));
 
 const results = [];
 const check = (name, ok, info) => { results.push({ name, ok, info }); console.log((ok ? '  ok   ' : '  FAIL ') + name + (info ? ' — ' + info : '')); };
