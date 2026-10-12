@@ -879,6 +879,23 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -9185,7 +9202,7 @@ function examFailHTML(){
     +'<p>Штрафные баллы: <b>'+exam.score+'</b> (допускается до '+(EXAM_FAIL_SUM-1)+')</p>'
     +(exam.failNote ? '<p class="sd">'+exam.failNote+'</p>' : '')
     +examSvg()
-    +'<ul class="startlist">'+examLogRows()+'</ul>'
+    +'<ul class="loglist">'+examLogRows()+'</ul>'
     +'<p>На настоящем экзамене после трёх неудач пересдача — через полгода. Здесь — сразу.</p>'
     +'<button data-act="again">Заново'+(MOB?'':' (R)')+'</button> '
     +'<button data-act="pick" class="ghost">Выбрать уровень</button> '
@@ -9216,31 +9233,35 @@ function examRouteSvg(){
   const dots=pts.map((st,i)=>'<circle cx="'+px(st.at.u)+'" cy="'+py(st.at.v)+'" r="2" fill="'
     +(i===0?'#50dc82':i===pts.length-1?'#ff5a66':'#ffcf4d')+'"/>').join('');
   const labels=mp.names.map(nm=>'<text x="'+px(nm.u)+'" y="'+py(nm.v)+'" fill="#9fb4c9" '
-    +'font-size="5.5" text-anchor="middle">'+nm.name+'</text>').join('');
+    +'font-size="9" text-anchor="middle" stroke="#0b0f14" stroke-width="2.4" paint-order="stroke">'+nm.name+'</text>').join('');
   return '<svg viewBox="0 0 '+W.toFixed(0)+' '+Hh.toFixed(0)+'" '
     +'style="width:100%;max-height:220px;background:rgba(0,0,0,.28);border-radius:8px;margin:8px 0">'
     +roads+line+labels+dots+'</svg>';
+}
+/* один маркер на пункт — номер, «✓» пройденного или «▸» текущего — в своей колонке: квадрат списка плюс «2.»
+   плюс «▸» давали три маркера на строку */
+function routeRowsHTML(){
+  return exam.route.map((st,i)=>
+    '<li'+(i<exam.stage ? ' class="done"' : i===exam.stage ? ' class="cur"' : '')+'><span class="rk">'
+    +(i<exam.stage ? '✓' : i===exam.stage ? '▸' : (i+1)+'.')+'</span>'+st.cmd+'</li>').join('');
 }
 function examBriefHTML(){
   const started=exam.stage>0 || game.moved;
   /* пройденные этапы гасим галочкой, текущий выделяем: список из девяти команд без
      отметки «ты здесь» на середине заезда читать нечем */
-  const rows=exam.route.map((st,i)=>
-    i<exam.stage ? '<li style="opacity:.45">✓ '+st.cmd+'</li>'
-    : i===exam.stage ? '<li><b style="color:#ffcf4d">▸ '+st.cmd+'</b></li>'
-    : '<li>'+(i+1)+'. '+st.cmd+'</li>').join('');
+  const rows=routeRowsHTML();
   return '<h1>Экзаменационный маршрут</h1>'
     +'<p>'+(examTrain()
       ? 'Тренировочный режим: фиолетовая лента на асфальте ведёт по маршруту, зазоры и карта включены, ошибка не обрывает поездку — её разберут на месте.'
       : 'Настоящий режим: только команды инспектора, без ленты, карты и датчиков; грубая ошибка — незачёт сразу.')+'</p>'
     +examRouteSvg()
-    +'<ul class="startlist">'+rows+'</ul>'
+    +'<ul class="routelist">'+rows+'</ul>'
     +'<p style="color:#93a7bd">Допустимо до '+(EXAM_FAIL_SUM-1)+' штрафных баллов. '
     +'Маршрут в каждом заезде новый. '
     +(examTrain()?'Лента идёт по твоей полосе: правой, а перед манёвром переходит в нужную.':'')
     +(started?' Карта в углу открывает этот список в любой момент.':'')+'</p>'
+    +(started?'':examModeBtnHTML())
     +'<button data-act="brief">'+(started?'Продолжить':'Поехали')+'</button> '
-    + (started?'':examModeBtnHTML())
     +'<button data-act="pick" class="ghost">Выбрать уровень</button>';
 }
 /* главная кнопка — безопасная: «Да, прервать» стояло первым синим, и Enter с фокусом на нём обрывал попытку */
@@ -9318,7 +9339,7 @@ function levelFailHTML(){
   return '<h1>Попытка не засчитана</h1>'
     +'<p><b>'+attempt.why+'</b></p>'
     +(rule?'<p style="color:#93a7bd">'+rule+'</p>':'')
-    +'<ul class="startlist">'+attempt.log.map(l=>'<li>'+l.txt
+    +'<ul class="loglist">'+attempt.log.map(l=>'<li>'+l.txt
       +' <span style="opacity:.55">('+l.t.toFixed(0)+' с)</span></li>').join('')+'</ul>'
     +'<p>Грубая ошибка отменяет поездку целиком — так же, как на экзамене.</p>'
     +'<button data-act="again">Заново'+(MOB?'':' (R)')+'</button> '
@@ -9801,8 +9822,11 @@ function setExamMode(m){
   toast(m==='real' ? 'Экзамен: настоящий — инспектор молчит, грубая ошибка валит попытку'
                    : 'Экзамен: тренировочный — подсказки, навигация и разбор ошибок включены', 4);
 }
-const examModeBtnHTML=()=>'<button data-act="exammode" class="ghost">Экзамен: '
-  +(examTrain()?'тренировочный':'НАСТОЯЩИЙ')+'</button>';
+/* режим — пара сегментов, как в разделе «Экзамен»: кнопка «Экзамен: НАСТОЯЩИЙ» читалась как статус */
+const examModeBtnHTML=()=>'<div class="gbrow"><span class="gbl">Режим</span><span class="gbseg" role="group" aria-label="Режим экзамена">'
+  +[['train','тренировочный'],['real','настоящий']].map(([k,t])=>{ const on=(k==='real')!==examTrain();
+    return '<button type="button" aria-pressed="'+on+'"'+(on?' class="on"':'')+' data-act="exammode:'+k+'">'+t+'</button>'; }).join('')
+  +'</span></div>';
 let examSavedOpts=null;
 /* инспектор молчалив: подсказки, маркеры и идеальная траектория выключаются в памяти,
    минуя pressKey — тот пишет trainer_marks в localStorage и затёр бы настройки игрока */
@@ -9882,7 +9906,7 @@ function examPassHTML(){
   return '<h1>Экзамен сдан</h1>'
     +'<p>Штрафные баллы: <b>'+exam.score+'</b> из допустимых '+(EXAM_FAIL_SUM-1)+'</p>'
     +examSvg()
-    +'<ul class="startlist">'+examLogRows()+'</ul>'
+    +'<ul class="loglist">'+examLogRows()+'</ul>'
     +'<p>Время маршрута: <b>'+game.t.toFixed(0)+' с</b> · порядок манёвров в следующий раз может быть другим</p>'
     +examNextHTML()
     +'<button data-act="again">Ещё маршрут</button> '
@@ -10251,15 +10275,12 @@ function oncomingTick(dt){
 }
 function practiceBriefHTML(){
   const d=level.def, pr=d.practice, started=exam.stage>0 || game.moved;
-  const rows=exam.route.map((st,i)=>
-    i<exam.stage ? '<li style="opacity:.45">✓ '+st.cmd+'</li>'
-    : i===exam.stage ? '<li><b style="color:#ffcf4d">▸ '+st.cmd+'</b></li>'
-    : '<li>'+(i+1)+'. '+st.cmd+'</li>').join('');
+  const rows=routeRowsHTML();
   return '<h1>Практика: '+pr.title+'</h1>'
     +'<p>'+pr.intro+'</p>'
     +'<p class="sd">Команды — как у инспектора: куда ехать. Как ехать — решаешь сам: подсказок, линии на асфальте и показа нет. Судят '+pr.judged+'.</p>'
     +examRouteSvg()
-    +'<ul class="startlist">'+rows+'</ul>'
+    +'<ul class="routelist">'+rows+'</ul>'
     +'<button data-act="brief">'+(started?'Продолжить':'Поехали')+'</button> '
     +'<button data-act="learn" class="ghost">Учёба с подсказками</button> '
     +'<button data-act="pick" class="ghost">Выбрать уровень</button>';
@@ -12847,7 +12868,7 @@ function setMirScale(v){
   opt.mirScale=v;
   try{ localStorage.setItem('trainer_mirscale', String(v)); }catch(e){}
   for(const k in mirBuf) delete mirBuf[k];     /* канвасы пересоздаются под новый размер */
-  toast('Зеркала: '+Math.round(v*100)+'%', 2);
+  toast('Зеркала: '+Math.round(v*100)+'\u00a0%', 2);
 }
 function cycleMirScale(step){
   const i=MIR_SCALES.indexOf(opt.mirScale);
@@ -13437,7 +13458,7 @@ function coachCard(kind, icon, main, goal, ph){
   if(key===coachKey) return;
   coachKey=key;
   const el=$('coach');
-  el.className='k-'+kind+(why?' haswhy':'')+(coachLineOpen?' open':'');
+  el.className='k-'+kind+(why?' haswhy':'')+(coachLineOpen?' open':'')+(!main && !icon && !goal ? ' empty' : '');
   let m=null;
   if(goal && goal.metric){
     m=COACH_METRICS[goal.metric];
@@ -13512,7 +13533,7 @@ function updateHUD(){
   document.body.classList.toggle('needbrake',
     MOB && !paused && (selBlockT>0 || (car.sel==='P' && !input.back)));
   /* DOM трогаем только на изменение: запись innerHTML/textContent каждый кадр — лишний пересчёт стилей */
-  setText($('demoBtn'), demo ? '■ остановить показ' : '▶ демонстрация');
+  setText($('demoBtn'), demo ? '■ Остановить показ' : '▶ Демонстрация');
   const demoVis = (DEMOS[game.li] && !level.practice) ? '' : 'none';
   if($('demoBtn').style.display!==demoVis) $('demoBtn').style.display=demoVis;
   /* боковые зеркала начинаются не выше 0.4·H: в невысоком окне они доходят до кнопки,
@@ -13527,9 +13548,14 @@ function updateHUD(){
   /* кнопка называет переход, как и меню ≡: «поток: обычный · 7» читалось строкой состояния.
      Число машин — в подсказке при наведении, кнопка живёт только на десктопе */
   if(trafOn){ const tb=$('trafBtn'), nx=TRAF_ORDER[(TRAF_ORDER.indexOf(opt.traffic)+1)%TRAF_ORDER.length];
-    setText(tb, 'поток: '+TRAF_NAMES[trafKey()]+' → '+TRAF_NAMES[nx]);
+    setText(tb, 'Поток: '+TRAF_NAMES[trafKey()]+' → '+TRAF_NAMES[nx]);
     const tt='Машин в городе: '+trafCount()+'. Нажми — поток станет «'+TRAF_NAMES[nx]+'»';
     if(tb.title!==tt) tb.title=tt; }
+  /* видимые боковые кнопки идут подряд с шагом 36 px: на экзамене «Демонстрации» нет, и между «Заново» и
+     «Написать» стояла дыра. Позиции пишутся только при смене набора */
+  const sbSig=demoVis+'|'+fbVis+'|'+trafVis;
+  if(sbSig!==sideSig){ sideSig=sbSig; let y=102;
+    for(const id of ['restartBtn','demoBtn','fbBtn','trafBtn']){ const b=$(id); if(b.style.display==='none') continue; b.style.top=y+'px'; y+=36; } }
   $('gearVal').classList.toggle('deny', selBlockT>0);
   if(gearShown!==car.sel){
     gearShown=car.sel;
@@ -14564,6 +14590,8 @@ function doAct(a){
   if(a==='task'){ showTask(); return; }
   if(a==='demo'){ hideOv(); startDemo(); return; }
   if(a.indexOf('exammode:')===0){
+    /* тот же режим ещё раз — ничего: setExamMode перезагрузил бы экзамен с новым маршрутом */
+    if(a.slice(9)===(examTrain()?'train':'real')) return;
     /* при загруженном экзамене setExamMode перезагружает уровень, а loadLevel открывает бриф поверх раздела */
     const back = menu.scr==='exam' ? menu.from : null;
     setExamMode(a.slice(9));
@@ -14650,7 +14678,7 @@ function levelPickHTML(tab){
     const pg=progOf(l.name), done=progPassed(l.name), locked=levelLocked(i), g=levelTab(i);
     groups[g]=(groups[g]||'')+'<button type="button" class="lvcard'+(i===game.li?' on':'')+(done?' pass':'')
       +(weakSet.has(i)?' weak':'')+(locked?' locked':'')+'" data-lvl="'+i+'">'
-      +'<span class="n">'+(l.custom?'★':(i+1))+(done?' ✓':'')+(locked?' 🔒':'')+'</span>'
+      +'<span class="n">'+(l.custom?'★':(i+1))+(done?' ✓':'')+(locked?ICON_LOCK:'')+'</span>'
       +'<span class="t">'+nm+'</span>'
       +'<span class="d">'
       +(locked?'Премиум · '+PAY.price:pg?progLine(l.name):esc(l.task||''))+'</span></button>';
@@ -14690,6 +14718,8 @@ function touchCtrlHTML(){ return ''
   +'<li>Провести пальцем по экрану — осмотреться, щипок двумя пальцами — приблизить</li>'
   +'<li>На экзамене тап по строке команды повторяет её голосом (при включённом звуке)</li>'
   +'</ul>'; }
+/* замок и телефон — штрихом в цвет текста: цветные эмодзи 🔒 и 📱 рисовались по-своему на каждой системе */
+const ICON_LOCK='<svg class="lk" role="img" aria-label="закрыт" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></svg>';
 const LOGO_SVG='<svg viewBox="0 0 256 128" aria-hidden="true"><g fill="none"><rect x="10.5" y="24.5" width="235" height="79" rx="30" stroke="#fff" stroke-width="13"/><path d="M42 97H72L118 50H110Z" fill="#fff"/><path d="M214 97H184L138 50H146Z" fill="#fff"/><path d="M128 56 151 92 128 80 105 92Z" fill="#ffd63c"/></g></svg>';
 const ICON_GEAR='<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
 /* «Играть» ведёт туда, где игрок остановился: последний открытый уровень, пока он не пройден, иначе
@@ -15081,7 +15111,7 @@ const SETTINGS=[
    get:()=>opt.guides, set:v=>setOpt('guides', v)},
   {id:'trails', tab:'hints', label:'След колёс', kind:'switch', get:()=>opt.trails, set:v=>setOpt('trails', v)},
   {id:'mirrors', tab:'mirrors', label:'Зеркала на экране', kind:'switch', get:()=>opt.mirrors, set:v=>setOpt('mirrors', v)},
-  {id:'mirscale', tab:'mirrors', label:'Размер зеркал', kind:'step', vals:MIR_SCALES.map(k=>[k, Math.round(k*100)+'%']),
+  {id:'mirscale', tab:'mirrors', label:'Размер зеркал', kind:'step', vals:MIR_SCALES.map(k=>[k, Math.round(k*100)+'\u00a0%']),
    get:()=>opt.mirScale, set:v=>setMirScale(v)},
   {id:'mirpreset', tab:'mirrors', label:'Положение зеркал', kind:'step', vals:MIR_PRESETS.map((p,i)=>[i,p.name]),
    desc:()=>{ const i=mirPresetNow(); return i<0 ? 'Твоя настройка: зеркала повёрнуты тягой' : MIR_PRESETS[i].tip; },
@@ -15695,6 +15725,7 @@ const DEMOS = {
   ]}
 };
 let demo=null;
+let sideSig='';
 function demoActive(){ return !!demo; }
 function stopDemo(){ demo=null; for(const k in input) input[k]=false; }
 function startDemo(){
@@ -16506,13 +16537,20 @@ function showTouchHelp(){
   const busy=['.tsteer','.tdrive','#tview','#tgear','#trestart','#pauseBtn','#coach'].map(s=>document.querySelector(s))
     .filter(el=>el && el.getBoundingClientRect().width>0).map(R).concat([R(act)]);
   const cross=(a,c)=>Math.max(0,Math.min(a.r,c.r)-Math.max(a.l,c.l))*Math.max(0,Math.min(a.b,c.b)-Math.max(a.t,c.t));
+  /* вырез экрана: env() читается только через вычисленный стиль — пробник с полями safe-area */
+  const sp=document.createElement('div');
+  sp.style.cssText='position:fixed;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px);visibility:hidden';
+  layer.appendChild(sp);
+  const spc=getComputedStyle(sp), SL=6+(parseFloat(spc.paddingLeft)||0), SR=6+(parseFloat(spc.paddingRight)||0),
+    ST=6+(parseFloat(spc.paddingTop)||0), SB=6+(parseFloat(spc.paddingBottom)||0);
+  sp.remove();
   const mark=(sel,text,below)=>{
     const el=document.querySelector(sel); if(!el || !el.getBoundingClientRect().width) return;
     const b=el.getBoundingClientRect();
     const d=document.createElement('div'); d.className='thl'; d.textContent=text;
     layer.appendChild(d);
     const w=d.offsetWidth, h=d.offsetHeight, cx=b.left+b.width/2;
-    const xs=[cx-w/2, b.left, b.right-w].map(x=>Math.max(6,Math.min(innerWidth-w-6,x)));
+    const xs=[cx-w/2, b.left, b.right-w].map(x=>Math.max(SL,Math.min(innerWidth-w-SR,x)));
     const ym=b.top+b.height/2-h/2, cands=[];
     for(let k=0;k<6;k++){
       const up=b.top-h-10-k*(h+6), dn=b.bottom+10+k*(h+6);
@@ -16522,14 +16560,14 @@ function showTouchHelp(){
     }
     let best=null;
     for(const [x, y, k] of cands){
-      if(x<6 || x+w>innerWidth-6 || y<6 || y+h>innerHeight-6) continue;
+      if(x<SL || x+w>innerWidth-SR || y<ST || y+h>innerHeight-SB) continue;
       const box={l:x, t:y, r:x+w, b:y+h}, over=busy.reduce((s,c)=>s+cross(box,c),0);
       /* перекрытие решает, дальность — при равном: чистое место в двух кольцах лучше залезания рядом */
       const cost=over*12+k*w*h*0.6;
       if(!best || cost<best.cost) best={x, y, cost};
       if(!over && !k) break;
     }
-    if(!best) best={x:xs[0], y:Math.max(6,Math.min(innerHeight-h-6,b.top-h-10))};
+    if(!best) best={x:xs[0], y:Math.max(ST,Math.min(innerHeight-h-SB,b.top-h-10))};
     d.style.left=best.x+'px'; d.style.top=best.y+'px';
     busy.push({l:best.x-4, t:best.y-4, r:best.x+w+4, b:best.y+h+4});
   };
@@ -16551,7 +16589,7 @@ function onbSteps(){
     {sel:'#angVal', text:'«Угол к цели» — насколько машина довёрнута к оси парковки. Когда карточка говорит «до 45°» — это вот это число.'},
     {sel:'#cf', text:'«Зазоры» — расстояние до препятствий с четырёх сторон, как парктроник. «0,3 м сзади» из карточки — смотри сюда. Тап по чипу цели в карточке подсветит нужную ячейку.'},
     {sel:'#gearVal', text:'Селектор-автомат. Enter переключает D ⇄ R, из P выходят с зажатым тормозом (S или пробел). Буквы кликабельны.'},
-    {sel:MOB?'#trestart':'#demoBtn', text:MOB?'⟲ — начать уровень заново. Запутался — начни с чистого листа.':'Не получается — жми «демонстрация»: машина сама покажет манёвр и объяснит каждый шаг.'}
+    {sel:MOB?'#trestart':'#demoBtn', text:MOB?'⟲ — начать уровень заново. Запутался — начни с чистого листа.':'Не получается — жми «Демонстрация»: машина сама покажет манёвр и объяснит каждый шаг.'}
   ].filter(s=>{ const el=document.querySelector(s.sel);
     return el && el.getBoundingClientRect().width>0; });
 }

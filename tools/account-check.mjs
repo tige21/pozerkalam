@@ -504,7 +504,7 @@ async function avatarState(page) {
     window.PAYWALL_FORCE = [19];
     doAct('start'); showLevelPick();
     const card = document.querySelector('.lvcard[data-lvl="19"]');
-    const lock = { cls: card.classList.contains('locked'), n: card.querySelector('.n').textContent, d: card.querySelector('.d').textContent };
+    const lock = { cls: card.classList.contains('locked'), n: !!card.querySelector('.n .lk[aria-label]'), d: card.querySelector('.d').textContent };
     card.click();
     const ov = document.getElementById('overlay');
     return { lock, li: game.li, shown: ov.style.display !== 'none', h1: (ov.querySelector('h1') || {}).textContent,
@@ -512,8 +512,8 @@ async function avatarState(page) {
       back: !!ov.querySelector('[data-act="pick"]'), restore: !!ov.querySelector('[data-act="pay-restore"]') };
   });
   const pv = await rbEvents(page, 'paywall_view');
-  check('закрытый уровень: 🔒 на карточке, пейволл гостю с входом, без «Купить» до провайдера (@acct-paywall-screen)',
-    r.lock.cls && /🔒/.test(r.lock.n) && /Премиум/.test(r.lock.d) && r.li !== 19 && r.shown && r.h1 === 'Эстакада: трогание в горку'
+  check('закрытый уровень: замок на карточке, пейволл гостю с входом, без «Купить» до провайдера (@acct-paywall-screen)',
+    r.lock.cls && r.lock.n && /Премиум/.test(r.lock.d) && r.li !== 19 && r.shown && r.h1 === 'Эстакада: трогание в горку'
       && r.login === 2 && !r.buy && r.back && !r.restore && pv.length === 1 && pv[0].li === 20 && pv[0].via === 'pick',
     JSON.stringify({ ...r, pv }));
   check('консоль чиста на пейволле', realErrors(errors).length === 0, realErrors(errors).slice(0, 2).join(' | '));

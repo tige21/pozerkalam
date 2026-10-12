@@ -75,6 +75,7 @@ scene('main-back', ['desk', 'phone'], `${SEED_BACK}; menuGo('main')`, { wait: 12
 for (const t of ['start', 'yard', 'drill', 'pad', 'city', 'own'])
   scene('levels-' + t, t === 'start' || t === 'city' ? ['desk', 'phone', 'se'] : ['desk', 'phone'], `${SEED_BACK}; menuGo('levels','${t}','main')`);
 scene('levels-new', ['desk', 'phone'], `menuGo('levels',null,'main')`);
+scene('levels-locked', ['desk', 'phone'], `window.PAYWALL_FORCE = [19, 20, 21]; menuGo('levels','pad','main')`);
 scene('exam', ['desk', 'phone'], `${SEED_BACK}; menuGo('exam',null,'main')`);
 scene('profile-guest', ['desk', 'phone', 'se'], `${SEED_BACK}; menuGo('profile',null,'main')`);
 scene('profile-logged', ['desk', 'phone'], `${SEED_BACK}; menuGo('profile',null,'main')`, { logged: true, wait: 1400 });

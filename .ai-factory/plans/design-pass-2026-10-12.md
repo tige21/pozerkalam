@@ -45,7 +45,7 @@ CLAUDE.md главнее style-lock. Новый цвет — только чер
   (экран со сломанной структурой — `/web-design-engineer` вместо трёх)
 
 ### Фаза 3 — детали
-- [ ] Task 5: `/better-typography` → `/better-ui` → `/mobile-native`
+- [x] Task 5: `/better-typography` → `/better-ui` → `/mobile-native`
 
 ### Фаза 4 — тексты
 - [ ] Task 6: `/better-writing`, затем `deslop-scan.py` по новым строкам; подсказки манёвров и тексты
