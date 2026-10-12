@@ -126,8 +126,12 @@ def compose(kind, text, contact, ctx):
             pass
     if ctx.get('mob'):
         tech.append('телефон')
+    if ctx.get('soft'):
+        tech.append('без видеокарты')
     if tech:
         head.append(' · '.join(tech))
+    if ctx.get('gpu'):
+        head.append('GPU: ' + str(ctx['gpu'])[:80])
     if ctx.get('ua'):
         head.append(str(ctx['ua'])[:180])
     if contact:

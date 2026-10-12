@@ -73,10 +73,12 @@ async function openPage(file) {
      рисует салон гранями по праву, а зеркала обновляются по кругу — в одном кадре есть, в другом нет */
   const frame = await page.evaluate(() => {
     let interior = 0, cube = 0, main = false;
+    /* куб на кадре — из GL-канваса или из 2D-холста его кэша (drawCabinCube); копия GL → холст кэша — не отрисовка на кадр */
+    const isCubeDraw = (g, src) => (src === cubeGL.canvas || src === cabinBake.cache || src === mirBake.cache) && g !== cabinBake.cacheG && g !== mirBake.cacheG;
     const origI = emitInterior, origS = drawSceneInto, origD = CanvasRenderingContext2D.prototype.drawImage;
     window.drawSceneInto = (o) => { main = o.cube === cabinBake; try { return origS(o); } finally { main = false; } };
     window.emitInterior = (...a) => { if (main) interior++; return origI(...a); };
-    CanvasRenderingContext2D.prototype.drawImage = function (src, ...a) { if (main && cubeGL.canvas && src === cubeGL.canvas) cube++; return origD.call(this, src, ...a); };
+    CanvasRenderingContext2D.prototype.drawImage = function (src, ...a) { if (main && isCubeDraw(this, src)) cube++; return origD.call(this, src, ...a); };
     try { render(0); } finally { window.emitInterior = origI; window.drawSceneInto = origS; CanvasRenderingContext2D.prototype.drawImage = origD; }
     return { state: cabinBake.state, interior, cube };
   });
@@ -183,9 +185,10 @@ if (okPage.frame.state === 'ready') {
   const mir = await okPage.page.evaluate((fault) => {
     if (fault === 'mirror') mirBake.state = 'failed';
     let interior = 0, cube = 0, on = false;
+    const isCubeDraw = (g, src) => (src === cubeGL.canvas || src === cabinBake.cache || src === mirBake.cache) && g !== cabinBake.cacheG && g !== mirBake.cacheG;
     const origI = emitInterior, origD = CanvasRenderingContext2D.prototype.drawImage;
     window.emitInterior = (...a) => { if (on) interior++; return origI(...a); };
-    CanvasRenderingContext2D.prototype.drawImage = function (src, ...a) { if (on && src === cubeGL.canvas) cube++; return origD.call(this, src, ...a); };
+    CanvasRenderingContext2D.prototype.drawImage = function (src, ...a) { if (on && isCubeDraw(this, src)) cube++; return origD.call(this, src, ...a); };
     const rect = mirrorRects().center, b = mirrorBuf(rect, 'center');
     on = true;
     try { renderMirrorInto(b, rect, 'center'); } finally { on = false; window.emitInterior = origI; CanvasRenderingContext2D.prototype.drawImage = origD; }

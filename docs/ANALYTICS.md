@@ -78,7 +78,7 @@ ch "SELECT querystring, country, detected_client_signals, detected_header_heuris
 | `exam_quit` | экзамен брошен на середине: другой уровень, меню, закрытая вкладка | `stage`, `n`, `mode`, `score`, `code` | — |
 | `demo_start` | демонстрация | `li`, `kind` | `demo-start` |
 | `feedback_open` / `feedback_sent` | форма отзыва | `src` / `kind` | `feedback-open:<src>` / `feedback-sent` |
-| `perf` | раз за сессию после 20 с езды | `q`, `fps`, `js`, `dpr`, `cores`, `mem`, `gfx`, `cam`, `mob` | — |
+| `perf` | раз за сессию после 20 с езды | `q`, `qb` (худший уровень сессии), `fps`, `p50`/`p95` (мс между кадрами), `js` (render + HUD), `sim` (симуляция), `dpr`, `vw`/`vh` (окно), `cores`, `mem`, `gpu` (строка рендерера WebGL), `soft` (программный рендер), `gfx`, `cam`, `mob`, `li` | — |
 | `auth_start` / `auth_ok` / `auth_fail` | вход | `provider`, `mode` / `is_new` / `reason` | — |
 | `logout`, `account_delete`, `sync_fail` | аккаунт | `provider` / — / `reason` | — |
 | `paywall_view` | закрытый уровень | `li`, `kind`, `via`, `account` | — |

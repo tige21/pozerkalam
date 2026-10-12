@@ -35,8 +35,10 @@ input,textarea{-webkit-user-select:text;user-select:text}
 #overlay .bootnote{margin:0;color:#c3d2e2;font-size:15px;line-height:1.5}
 body.drag #view{cursor:grabbing}
 body.mir #coach{top:calc(var(--mirbot,100px) + 8px)}
-.panel{position:fixed;background:rgba(9,14,20,.74);border:1px solid rgba(255,255,255,.10);
-  border-radius:10px;padding:10px 12px;backdrop-filter:blur(6px);pointer-events:none;z-index:5}
+/* панели над живой канвой — без backdrop-filter: размытие пересчитывается каждый кадр, и без видеокарты оно
+   занимало четверть работы композитора (замер 12.10.2026); фон плотнее, чтобы текст читался так же */
+.panel{position:fixed;background:rgba(9,14,20,.80);border:1px solid rgba(255,255,255,.10);
+  border-radius:10px;padding:10px 12px;pointer-events:none;z-index:5}
 #topleft{left:14px;top:14px;max-width:min(31vw,420px);pointer-events:auto;cursor:pointer}
 #topleft .lvl{font-size:15px;font-weight:700;color:#9fd0ff;letter-spacing:.2px}
 #topleft .task{font-size:13px;line-height:1.4;margin-top:5px;color:#cfe0f0}
@@ -158,7 +160,7 @@ body.needbrake .tdrive [data-hold="back"]{background:rgba(190,52,52,.8);border-c
 .ok{color:#4ade80!important}.warn{color:#fbbf24!important}.bad{color:#f87171!important}
 #overlay{position:fixed;inset:0;z-index:20;display:flex;align-items:flex-start;justify-content:center;
   overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior:contain;
-  background:rgba(4,7,11,.82);backdrop-filter:blur(5px);
+  background:rgba(4,7,11,.86);
   padding:24px max(24px,env(safe-area-inset-right,0px)) 24px max(24px,env(safe-area-inset-left,0px))}
 #overlay .card{max-width:760px;width:100%;margin:auto 0;background:rgba(12,18,26,.96);
   border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:26px 30px}
@@ -310,7 +312,7 @@ body.compact #overlay .gbseg button{width:auto;margin:0;padding:10px 16px;font-s
 body.touch #touchui{display:block}
 .tcluster,#tview,#trestart,#tgear span{
   position:fixed;z-index:9;border:1px solid rgba(255,255,255,.20);
-  background:rgba(14,20,28,.62);backdrop-filter:blur(6px);
+  background:rgba(14,20,28,.70);
   color:#e8eef6;font-weight:700;letter-spacing:.4px;
   box-shadow:0 2px 14px rgba(0,0,0,.35);touch-action:none;cursor:pointer}
 .tcluster{display:flex;bottom:calc(12px + var(--bot,0px));border-radius:16px;overflow:hidden}
@@ -372,7 +374,7 @@ body.edit #topleft,body.edit #coach,body.edit #bar,body.edit #hint,
 body.edit .sidebtn,body.edit #touchui,body.edit #topright{display:none!important}
 #edpal{position:fixed;left:12px;top:12px;z-index:8;width:186px;max-height:calc(100dvh - 24px);
   overflow:auto;overscroll-behavior:contain;background:rgba(9,14,20,.9);border:1px solid rgba(255,255,255,.12);
-  border-radius:12px;padding:10px;backdrop-filter:blur(6px)}
+  border-radius:12px;padding:10px}
 #edpal h4{font-size:11px;color:#9fd0ff;text-transform:uppercase;letter-spacing:.6px;margin:8px 0 4px}
 #edpal h4:first-child{margin-top:0}
 #edpal .row{display:grid;grid-template-columns:1fr 1fr;gap:5px}
@@ -398,7 +400,7 @@ body.compact #edhint{left:168px;top:8px;font-size:11px;padding:5px 9px}
 #thelp{position:fixed;inset:0;z-index:15}
 /* затемнение кладётся четырьмя кусками ВОКРУГ подсвеченного элемента, а не сплошным слоем:
    сплошной накрывал и сам элемент, и тур показывал рамкой на карточку, текст которой не прочитать */
-#thelp .onbmask{position:absolute;background:rgba(4,7,11,.78);backdrop-filter:blur(3px)}
+#thelp .onbmask{position:absolute;background:rgba(4,7,11,.82)}
 /* рамка онбординга: подсвечивает элемент HUD, о котором идёт речь */
 #thelp .onbring{position:absolute;border:2px solid #ffd63c;border-radius:10px;pointer-events:none;
   animation:onbPulse 1.1s ease-in-out infinite alternate}
@@ -542,18 +544,18 @@ body.fp #hint{display:none}
 #pauseBtn{margin:0;width:36px;height:36px;padding:0;border-radius:10px;pointer-events:auto;flex:none;
   display:grid;place-items:center;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.18);color:#e8eef6}
 #pauseBtn svg{width:16px;height:16px;fill:currentColor}
-body.hud-off #topright{background:none;border:0;padding:0;backdrop-filter:none}
-body.touch #topright{padding:0;background:none;border:0;backdrop-filter:none}
+body.hud-off #topright{background:none;border:0;padding:0}
+body.touch #topright{padding:0;background:none;border:0}
 body.touch #lvlIdx{display:none}
-body.touch #pauseBtn{width:44px;height:44px;border-radius:12px;background:rgba(14,20,28,.62);
-  backdrop-filter:blur(6px);box-shadow:0 2px 14px rgba(0,0,0,.35)}
+body.touch #pauseBtn{width:44px;height:44px;border-radius:12px;background:rgba(14,20,28,.70);
+  box-shadow:0 2px 14px rgba(0,0,0,.35)}
 body.touch #pauseBtn svg{width:18px;height:18px}
 body.ov #pauseBtn{visibility:hidden}
 /* в главном меню за оверлеем витрина, а не уровень: HUD не нужен, фон оверлея прозрачный, и тяга
    по свободному месту доходит до канваса — машину крутят пальцем */
 body.menu #topleft,body.menu #topright,body.menu #coach,body.menu #bar,body.menu #hint,body.menu #touchui,
 body.menu #blinkers,body.menu #handbrake,body.menu .sidebtn{display:none!important}
-body.menu #overlay{background:none;backdrop-filter:none;pointer-events:none}
+body.menu #overlay{background:none;pointer-events:none}
 body.menu #overlay.lay-card{background:rgba(4,7,11,.62);pointer-events:auto}
 #overlay.lay-main,#overlay.lay-panel{padding:0;align-items:stretch;justify-content:flex-start;overflow:hidden}
 #overlay.lay-main .card{max-width:none;width:100%;height:100%;margin:0;padding:0;background:none;border:0;border-radius:0;
@@ -3166,7 +3168,7 @@ function cubeGLUpload(bake){
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
     bake.tex.push(t); bake.L.set(f.look,i*3); bake.R.set(f.right,i*3); bake.U.set(f.up,i*3);
   });
-  cubeGL.bound=null;
+  cubeGL.bound=null; bake.key=null;
 }
 const CUBE_ROT=new Float32Array(9);
 /* луч камеры (вправо, вверх, вперёд) → направление в кадре кузова (lat, y, z): обратная к осям кузова
@@ -3193,15 +3195,33 @@ function drawCabinCube(u,v,th,bake){
     for(let row=0; row<3; row++) CUBE_ROT[col*3+row]=inv[row*3]*v3.x+inv[row*3+1]*v3.y+inv[row*3+2]*v3.z; }
   /* GL-канвас один на основной вид и зеркало: размер только растёт, а проход рисуется в его левый
      верхний угол — подгонка размера под каждый проход пересоздавала бы буфер дважды за кадр */
-  const gc=cubeGL.canvas, w=ctx.canvas.width, hh=ctx.canvas.height;
-  if(gc.width<w || gc.height<hh){ gc.width=Math.max(gc.width,w); gc.height=Math.max(gc.height,hh); }
-  const y0=gc.height-hh;
-  gl.viewport(0,y0,w,hh); gl.scissor(0,y0,w,hh);
-  gl.uniformMatrix3fv(cubeGL.loc.rot,false,CUBE_ROT);
-  gl.uniform2f(cubeGL.loc.half, VP.w*0.5/cam.scale, VP.h*0.5/cam.scale);
-  gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
-  gl.drawArrays(gl.TRIANGLES,0,3);
-  ctx.save(); ctx.setTransform(1,0,0,1,0,0); ctx.drawImage(gc,0,0,w,hh,0,0,w,hh); ctx.restore();
+  const gc=cubeGL.canvas, w=ctx.canvas.width, hh=ctx.canvas.height, hx=VP.w*0.5/cam.scale, hy=VP.h*0.5/cam.scale;
+  if(!cubeKeySame(bake, w, hh, hx, hy)){
+    if(gc.width<w || gc.height<hh){ gc.width=Math.max(gc.width,w); gc.height=Math.max(gc.height,hh); }
+    const y0=gc.height-hh;
+    gl.viewport(0,y0,w,hh); gl.scissor(0,y0,w,hh);
+    gl.uniformMatrix3fv(cubeGL.loc.rot,false,CUBE_ROT);
+    gl.uniform2f(cubeGL.loc.half, hx, hy);
+    gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLES,0,3);
+    if(!bake.cache){ bake.cache=document.createElement('canvas'); bake.cacheG=bake.cache.getContext('2d'); }
+    if(bake.cache.width!==w || bake.cache.height!==hh){ bake.cache.width=w; bake.cache.height=hh; }
+    else bake.cacheG.clearRect(0,0,w,hh);
+    bake.cacheG.drawImage(gc,0,0,w,hh,0,0,w,hh);
+    const K=bake.key || (bake.key=new Float64Array(13));
+    K.set(CUBE_ROT); K[9]=w; K[10]=hh; K[11]=hx; K[12]=hy;
+  }
+  ctx.save(); ctx.setTransform(1,0,0,1,0,0); ctx.drawImage(bake.cache,0,0); ctx.restore();
+}
+/* глаз в кузове неподвижен: картинка куба меняется только с поворотом головы относительно кузова
+   (CUBE_ROT, в нём и наклон эстакады), размером кадра и полем зрения. GL-проход и копия в 2D-холст
+   куба — только тогда, в кадре одна drawImage из холста: без видеокарты чтение WebGL в 2D стоило 28 мс
+   на кадр, салон шёл 10 fps (замер 12.10.2026) */
+function cubeKeySame(bake, w, hh, hx, hy){
+  const K=bake.key; if(!K || !bake.cache) return false;
+  if(K[9]!==w || K[10]!==hh || K[11]!==hx || K[12]!==hy) return false;
+  for(let i=0;i<9;i++) if(Math.abs(K[i]-CUBE_ROT[i])>1e-7) return false;
+  return true;
 }
 function emitInteriorLive(u,v,th){
   const K=cabinCtx(u,v,th);
@@ -5490,7 +5510,15 @@ function trafSegLen(rt, i){
   const n=rt.pts.length, a=rt.pts[((i%n)+n)%n], b=rt.pts[(((i+1)%n)+n)%n];
   return Math.sqrt((b.u-a.u)*(b.u-a.u)+(b.v-a.v)*(b.v-a.v));
 }
+/* курс вершины считается на маршрут один раз: trafPose зовёт его дважды на вызов, а вызовов в городе с
+   потоком около тысячи за кадр (atan2 и angNorm на каждый). Точки маршрута после постройки не меняются */
 function trafVertYaw(rt, i){
+  const n=rt.pts.length;
+  if(i<0 || i>n) return trafVertYawRaw(rt, i);
+  const C=rt._vy || (rt._vy=new Float64Array(n+1).fill(NaN)), y=C[i];
+  return y===y ? y : (C[i]=trafVertYawRaw(rt, i));
+}
+function trafVertYawRaw(rt, i){
   const n=rt.pts.length;
   if(rt.open){ if(i<=0) return trafSegYaw(rt,0); if(i>=n-1) return trafSegYaw(rt,n-2); }
   const h0=trafSegYaw(rt,i-1), h1=trafSegYaw(rt,i);
@@ -8149,9 +8177,11 @@ const anPerfTimer=setInterval(()=>{
   if(paused || game.done) return;
   if(++anPerfN<4) return;
   clearInterval(anPerfTimer);
-  track('perf', { q:qLevel, fps:Math.round(1000/Math.max(frameGap,1)), js:+frameCost.toFixed(1),
-    dpr:+(window.devicePixelRatio||1).toFixed(2), cores:navigator.hardwareConcurrency,
-    mem:navigator.deviceMemory, gfx:opt.gfx, cam:opt.camMode, mob:MOB });
+  const g=perfGaps.slice().sort((a,b)=>a-b), pct=(k)=>g.length ? +g[Math.min(g.length-1, Math.floor(g.length*k))].toFixed(1) : null;
+  track('perf', { q:qLevel, qb:qBest, fps:Math.round(1000/Math.max(frameGap,1)), p50:pct(0.5), p95:pct(0.95),
+    js:+frameCost.toFixed(1), sim:+simCost.toFixed(1),
+    dpr:+(window.devicePixelRatio||1).toFixed(2), vw:innerWidth, vh:innerHeight, cores:navigator.hardwareConcurrency,
+    mem:navigator.deviceMemory, gpu:GPU_INFO.renderer, soft:GPU_INFO.soft, gfx:opt.gfx, cam:opt.camMode, mob:MOB, li:game.li+1 });
 }, 5000);
 /* рекламный слой: в веб-билде no-op, билд Яндекс Игр подставляет window.ADS.
    Кулдаун interstitial жёсткий: площадки снимают игры за частый показ,
@@ -8276,19 +8306,20 @@ let dprCap = 2;
    зерна салона — они структура сцены, зерно — деталь. Текстура — вторая заливка всей грани, и на
    программном Canvas 80-метровая стена уровня 1 стоила 51 → 40 fps на q3; рёбра там в пределах
    шума замера (46 и 47 fps с ними и без) */
-const QUALITY=[ {dpr:2,    grain:true,  grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true, facD:Infinity},
-                {dpr:1.5,  grain:true,  grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true, facD:Infinity},
-                {dpr:1.5,  grain:false, grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true, facD:150},
-                {dpr:1.25, grain:false, grad:false, cars:true,  detail:true,  maxD:70, edges:true,  tex:false, facD:0},
-                {dpr:1,    grain:false, grad:false, cars:false, detail:true,  maxD:70, edges:false, tex:false, facD:0},
-                {dpr:1,    grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false, facD:0},
+/* mirDiv — зеркало обновляется раз в столько кадров (mirPick): проход зеркала стоит в городе 0,75
+   основного вида, и с первого же шага вниз его доля в кадре падает вдвое */
+const QUALITY=[ {dpr:2,    grain:true,  grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true, facD:Infinity, mirDiv:1},
+                {dpr:1.5,  grain:true,  grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true, facD:Infinity, mirDiv:2},
+                {dpr:1.5,  grain:false, grad:true,  cars:true,  detail:true,  maxD:85, edges:true,  tex:true, facD:150, mirDiv:2},
+                {dpr:1.25, grain:false, grad:false, cars:true,  detail:true,  maxD:70, edges:true,  tex:false, facD:0, mirDiv:2},
+                {dpr:1,    grain:false, grad:false, cars:false, detail:true,  maxD:70, edges:false, tex:false, facD:0, mirDiv:3},
+                {dpr:1,    grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false, facD:0, mirDiv:3},
                 /* ниже 1,0 — рендер в меньшем разрешении с растяжением браузером: на большом мониторе
                    с программным Canvas и DPR 1,0 (2560×1440) выходило 16 fps */
-                {dpr:0.8,  grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false, facD:0},
-                {dpr:0.65, grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false, facD:0},
-                {dpr:0.5,  grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false, facD:0} ];
+                {dpr:0.8,  grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false, facD:0, mirDiv:3},
+                {dpr:0.65, grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false, facD:0, mirDiv:4},
+                {dpr:0.5,  grain:false, grad:false, cars:false, detail:false, maxD:55, edges:false, tex:false, facD:0, mirDiv:4} ];
 function qDetail(){ return QUALITY[qLevel].detail; }
-const Q_SLOW_MIRRORS=5;    /* с этого уровня зеркала обновляются через кадр */
 /* первые секунды после загрузки кадры рваные (уровень, ресайз, прогрев) — регулятор молчит,
    иначе он опускал уровень и храповик навсегда запирал зерно на машине, которая тянет всё */
 let qLevel=0, qBest=0, qBadT=0, qGoodT=0, qCoolT=2.0, frameGap=16;
@@ -8310,12 +8341,43 @@ function qTick(rdt){
       const step = frameGap>60 ? 3 : frameGap>35 ? 2 : 1;
       const next=Math.min(QUALITY.length-1, qLevel+step);
       qBest=Math.max(qBest, next); qApply(next); } }
-  else if(frameGap<Q_GAP_GOOD && frameCost<6){ qGoodT+=rdt; qBadT=0;
+  /* вверх — только по езде: на паузе сцена рисуется 5 раз в секунду (renderDue), а витрина меню дешевле
+     любого уровня, и «хорошие» кадры там поднимали качество, которое уровень потом не тянул */
+  else if(frameGap<Q_GAP_GOOD && frameCost+simCost<6 && !paused && !showroomOn()){ qGoodT+=rdt; qBadT=0;
     if(qGoodT>Q_GOOD_HOLD && qLevel>qBest) qApply(qLevel-1); }
   else { qBadT=0; qGoodT=0; }
 }
 /* счётчик кадра по интервалу rAF, а не по JS-времени: растеризация Canvas в JS не видна */
 const PERF_ON=(()=>{ try{ return /[?&]perf=1/.test(location.search) || localStorage.getItem('trainer_perf')==='1'; }catch(e){ return false; } })();
+/* программный рендер: драйвер видеокарты в чёрном списке браузера или аппаратное ускорение выключено. Тогда
+   композитор Chrome тратит ≈13 мс на кадр даже на M4 при любом уровне качества (замер 12.10.2026), а
+   регулятор полминуты спускается по ступеням, мыля картинку. Игра стартует с Q_SOFT_START и один раз
+   говорит, где включить ускорение. Под автоматизацией не действует: headless-браузер гейтов рисует
+   через SwiftShader, и все гейты ушли бы на q4; GPU_SOFT_FORCE — обход для гейта */
+const Q_SOFT_START=4;
+const GPU_INFO=(()=>{
+  try{
+    const c=document.createElement('canvas'), gl=c.getContext('webgl') || c.getContext('experimental-webgl');
+    if(!gl) return {renderer:'', soft:true};
+    const ext=gl.getExtension('WEBGL_debug_renderer_info');
+    const r=String((ext && gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) || gl.getParameter(gl.RENDERER) || '');
+    const lose=gl.getExtension('WEBGL_lose_context'); if(lose) lose.loseContext();
+    return {renderer:r.slice(0,80), soft:/swiftshader|llvmpipe|softpipe|software|basic render/i.test(r)};
+  }catch(e){ return {renderer:'', soft:false}; }
+})();
+function gpuSoft(){ return !!window.GPU_SOFT_FORCE || (GPU_INFO.soft && !navigator.webdriver); }
+const GPU_NOTE='Браузер рисует без видеокарты: включи аппаратное ускорение в его настройках';
+/* подсказка — раз на устройство, когда игрок уже едет: на паузе и в меню она погасла бы непрочитанной */
+let gpuNoteT=0;
+const gpuNoteTimer=setInterval(()=>{
+  if(!gpuSoft()){ clearInterval(gpuNoteTimer); return; }
+  try{ if(localStorage.getItem('pz_gpu_note')){ clearInterval(gpuNoteTimer); return; } }catch(e){}
+  if(paused || game.done || showroomOn()){ gpuNoteT=0; return; }
+  if(++gpuNoteT<3) return;
+  clearInterval(gpuNoteTimer);
+  toast(GPU_NOTE, 8);
+  try{ localStorage.setItem('pz_gpu_note', '1'); }catch(e){}
+}, 1000);
 const perfGaps=[]; let perfT=0, perfLastTs=0, facesFrame=0;
 let hudMode = 0;                    /* 0 — все панели, 1 — только зазоры, 2 — чистый экран */
 function applyHud(){
@@ -8328,7 +8390,9 @@ function cycleHud(){
   applyHud();
 }
 const TRAIL_STEP = 0.14, TRAIL_MAX = 260;
-let trailBudget = TRAIL_MAX, frameCost = 6;
+/* simCost — JS симуляции кадра (simTick) отдельно от frameCost (render + HUD): на городе с потоком она
+   10 % кадра, и регулятор, который её не видел, считал кадр дешевле, чем он есть */
+let trailBudget = TRAIL_MAX, frameCost = 6, simCost = 0;
 
 function bodyPos(){ const f=fuv(car.th); return {u:car.ru+f.u*C2R, v:car.rv+f.v*C2R}; }
 function setBody(u,v,th){ const f=fuv(th); car.ru=u-f.u*C2R; car.rv=v-f.v*C2R; car.th=th; }
@@ -8593,6 +8657,8 @@ function untouch(o){
    выталкивает кузов на глубину + 2 мм, на следующем подшаге пересечения уже нет, и газ вталкивал машину
    обратно — упёршийся в стену набирал касание за касанием (68 за 3 с, @collision-push-once) */
 const TOUCH_REARM=0.10, TR_BOX={u:0,v:0,hw:0,hl:0,yaw:0};
+const CAR_HALF_DIAG=Math.sqrt(HALF_W*HALF_W+HALF_L*HALF_L);
+function obsHalfDiag(o){ return o._hd || (o._hd=Math.sqrt(o.hw*o.hw+o.hl*o.hl)); }
 function untouchFar(A,o){
   if(!o._touch) return;
   TR_BOX.u=o.u; TR_BOX.v=o.v; TR_BOX.hw=o.hw+TOUCH_REARM; TR_BOX.hl=o.hl+TOUCH_REARM; TR_BOX.yaw=o.yaw;
@@ -8614,6 +8680,10 @@ function resolveCollisions(dt){
 }
 function collideOne(o, A, f, dt, st){
     if(o.kind==='cone' && o.knocked) return;
+    /* описанные окружности не пересекаются — прямоугольники тоже: satMTV (восемь ортов и sin/cos на вызов)
+       шёл по всем сотням препятствий города на каждом подшаге 1/120 с */
+    const rr=obsHalfDiag(o)+CAR_HALF_DIAG, du=o.u-A.u, dv=o.v-A.v;
+    if(du*du+dv*dv>rr*rr){ untouchFar(A,o); return; }
     /* прямоугольник — только грубый отсев, чтобы не гонять точную проверку по всем
        препятствиям уровня; касание объявляется по настоящему следу кузова */
     if(!satMTV(A,o)){ untouchFar(A,o); return; }
@@ -8682,10 +8752,10 @@ let cornerHold = null;
 const CLR_NEAR=[];
 function clearNear(c){
   CLR_NEAR.length=0;
-  const reach=Math.hypot(HALF_W,HALF_L)+SENS_MAX+0.02;
+  const reach=CAR_HALF_DIAG+SENS_MAX+0.02;
   for(const o of level.obs){
     if(o.kind==='cone' && o.knocked) continue;
-    const rr=reach+Math.hypot(o.hw,o.hl), du=o.u-c.u, dv=o.v-c.v;
+    const rr=reach+obsHalfDiag(o), du=o.u-c.u, dv=o.v-c.v;
     if(du*du+dv*dv<=rr*rr) CLR_NEAR.push(o);
   }
   return CLR_NEAR;
@@ -11769,7 +11839,7 @@ function drawPill(p, txt, sk){
      и панель зазоров. Порог считается по ВЕРХНЕЙ кромке пилюли (она рисуется на 23 px выше точки) */
   if(MOB && (sp.y > VP.y+VP.h-104 || sp.y < VP.y+mirBot+70)) return;
   ctx.font=(MOB?'10.5px':'12px')+' ui-sans-serif,system-ui';
-  const w=ctx.measureText(txt).width+14, h=19;
+  const w=textW(txt)+14, h=19;
   /* пилюля у края кадра сдвигается внутрь целиком, а не срезается краем экрана */
   const x=clamp(sp.x, VP.x+w/2+4, VP.x+VP.w-w/2-4);
   /* пилюли не должны наезжать друг на друга — сдвигаем вверх, пока место занято */
@@ -11789,7 +11859,7 @@ function drawPill(p, txt, sk){
   labelBoxes.push({x, y, w, h});
   ctx.fillStyle=sk.bg; roundRect(x-w/2,y,w,h,6); ctx.fill();
   ctx.strokeStyle=sk.br; ctx.lineWidth=1; ctx.stroke();
-  ctx.fillStyle=sk.fg; ctx.textAlign='center'; ctx.fillText(txt,x,y+14);
+  ctx.fillStyle=sk.fg; ctx.textAlign='center'; fillTextC(txt,x,y+14);
   ctx.textAlign='left';
 }
 function drawMarkLabels(s){
@@ -12719,6 +12789,37 @@ function cycleMirScale(step){
 const MIR_KINDS=['center','left','right'];
 function mirDprMax(){ return qLevel<=1 ? 2 : 1.5; }
 const mirBuf={}; let mirTurn=0;
+/* за кадр обновляется одно зеркало — самое давнее; на слабых уровнях раз в QUALITY[q].mirDiv кадров и
+   не чаще MIR_HZ_MAX на зеркало. Проход зеркала — вторая сцена целиком: в городе он стоил 30–45 %
+   рендера, а на экране 120 Гц зеркала получали по 40 Гц. Пока в зеркале ничего не меняется (машина
+   стоит, а актёров нет или игра на паузе), буфер не перерисовывается вовсе */
+const MIR_HZ_MAX=24, MIR_SIG_N=10, MIR_SIG=new Float64Array(MIR_SIG_N);
+function mirSig(kind){
+  const S=MIR_SIG, a=mirAdj(kind);
+  S[0]=car.ru; S[1]=car.rv; S[2]=car.th; S[3]=car.steer; S[4]=a.yaw; S[5]=a.pitch; S[6]=qLevel;
+  S[7]=(input.back?1:0) + (car.sel==='R'?2:0) + (opt.guides?4:0) + (opt.marks?8:0) + opt.refs*16;
+  S[8]=car.blink ? (car.blink==='L'?1:2) + 3*(Math.floor(game.t/0.75)%2) : 0;
+  S[9]=game.li;
+  return S;
+}
+function mirStill(b, kind){
+  if(!b || !b.fresh || !b.sig) return false;
+  /* в городе живут актёры и светофоры, их фаза в сигнатуру не входит */
+  if((level.actors.length || level.city) && !paused && !game.done) return false;
+  const S=mirSig(kind);
+  for(let i=0;i<MIR_SIG_N;i++) if(S[i]!==b.sig[i]) return false;
+  return true;
+}
+function mirPick(){
+  if((mirTurn++ % QUALITY[qLevel].mirDiv)!==0) return null;
+  const now=performance.now();
+  let best=null, age=-1;
+  for(const k of MIR_KINDS){
+    const b=mirBuf[k], a = b && b.fresh ? now-b.t : Infinity;
+    if(a>age && !mirStill(b, k)){ age=a; best=k; }
+  }
+  return age*MIR_HZ_MAX >= 1000 ? best : null;
+}
 function mirrorBuf(rect, kind){
   const sc=Math.min(DPR, mirDprMax()), w=Math.round(rect.w*sc), h=Math.round(rect.h*sc);
   let b=mirBuf[kind];
@@ -12735,7 +12836,8 @@ function renderMirrorInto(b, rect, kind){
     setCam(mc.pos, mc.tgt, null, mc.fov);
     drawSceneInto({grid:false, trails:false, guides:opt.guides&&kind!=='center', maxD:qLevel<=1?60:46, cube:kind==='center'?mirBake:null});
   } finally { ctx=mainCtx; pxScale=mainScale; mirPassOn=false; }
-  b.fresh=true;
+  b.fresh=true; b.t=performance.now();
+  (b.sig || (b.sig=new Float64Array(MIR_SIG_N))).set(mirSig(kind));
 }
 /* HUD-зеркало рисуется как зеркало, а не как панель интерфейса: безель градиентом, кромка
    стекла, виньетка к углам и диагональный блик малой альфы. Подпись «левое/правое/салонное» —
@@ -12793,7 +12895,7 @@ function renderMirror(rect, kind, draw, widget){
     ctx.fillStyle=hot?'rgba(255,224,120,.95)':'rgba(214,228,242,.6)';
     ctx.font='10px ui-sans-serif,system-ui';
     ctx.textAlign='left';
-    ctx.fillText(label, rect.x+6, rect.y+13);
+    fillTextC(label, rect.x+6, rect.y+13);
   }
   /* при настройке показываем перекрестье и градусы — иначе непонятно,
      что именно меняется и насколько зеркало уже отведено от штатного положения */
@@ -12909,15 +13011,14 @@ function render(dt){
     return;
   }
   drawSceneInto({grid:true, trails:opt.trails, guides:opt.guides, maxD:QUALITY[qLevel].maxD, labels:true, cube:cabinBake});
-  /* буферы зеркал обновляются и с выключенными HUD-виджетами, пока камера в салоне: стекло
-     3D-корпусов живёт на них, а клавиша Z прячет только виджеты */
-  if(opt.mirrors || opt.camMode===CAM_FP){ const r=mirrorRects(), slow=qLevel>=Q_SLOW_MIRRORS, t=mirTurn++;
-    const turn = slow && (t%2) ? null : MIR_KINDS[(slow ? t>>1 : t)%3];
+  /* буфер зеркала читает только HUD-виджет: стекло 3D-корпусов и салонной планки с 08.10 — картинка,
+     и в салоне с выключенными виджетами каждый кадр шёл холостой проход сцены */
+  if(opt.mirrors){ const r=mirrorRects(), turn=mirPick();
     /* зеркало, чьё перетаскивание идёт сейчас, обновляется каждый кадр — иначе настройка «плывёт» */
     const live=mirDrag&&mirDrag.kind;
-    renderMirror(r.center,'center', turn==='center'||live==='center', opt.mirrors);
-    renderMirror(r.left,'left', turn==='left'||live==='left', opt.mirrors);
-    renderMirror(r.right,'right', turn==='right'||live==='right', opt.mirrors);
+    renderMirror(r.center,'center', turn==='center'||live==='center', true);
+    renderMirror(r.left,'left', turn==='left'||live==='left', true);
+    renderMirror(r.right,'right', turn==='right'||live==='right', true);
     const mb=Math.round(r.center.y+r.center.h);
     if(opt.mirrors && mb!==mirBot){ mirBot=mb; document.documentElement.style.setProperty('--mirbot', mb+'px'); }
   }
@@ -13015,9 +13116,9 @@ function drawRouteMap(x,y,w,h){
     const px=X(nm.u), py=Y(nm.v);
     if(px<x+8||px>x+w-8||py<y+16||py>y+h-6) continue;
     ctx.fillStyle='rgba(10,16,24,.75)';
-    const tw=ctx.measureText(nm.name).width+6;
+    const tw=textW(nm.name)+6;
     ctx.fillRect(px-tw/2, py-6, tw, 12);
-    ctx.fillStyle='#a9bdd2'; ctx.fillText(nm.name, px, py);
+    ctx.fillStyle='#a9bdd2'; fillTextC(nm.name, px, py);
   }
   ctx.textBaseline='alphabetic';
   const cur=exam.route[exam.stage];
@@ -13025,7 +13126,7 @@ function drawRouteMap(x,y,w,h){
     ctx.fillStyle='#ffcf4d';
     ctx.beginPath(); ctx.arc(X(cur.at.u), Y(cur.at.v), 4, 0, TAU); ctx.fill();
     ctx.font='13px ui-sans-serif,system-ui'; ctx.textAlign='left';
-    ctx.fillText(TURN_GLYPH[cur.turn]||'', X(cur.at.u)+6, Y(cur.at.v)-3);
+    fillTextC(TURN_GLYPH[cur.turn]||'', X(cur.at.u)+6, Y(cur.at.v)-3);
   }
   /* машина — треугольником по курсу: точка не отвечала на вопрос «куда я смотрю».
      Мир (u,v) ложится на экран как (u, −v), поэтому вторая координата с минусом */
@@ -13039,10 +13140,46 @@ function drawRouteMap(x,y,w,h){
   ctx.closePath(); ctx.fill();
   ctx.restore();
   ctx.fillStyle='#7f93a9'; ctx.font='10px ui-sans-serif,system-ui'; ctx.textAlign='left';
-  ctx.fillText('маршрут · этап '+(exam.stage+1)+'/'+exam.route.length+' · нажми', x+9, y+14);
+  fillTextC('маршрут · этап '+(exam.stage+1)+'/'+exam.route.length+' · нажми', x+9, y+14);
 }
 
 /* ---------- панели ---------- */
+/* подписи HUD из готового холста: fillText в Chrome — разбор шрифта и растр глифов на каждый вызов, а
+   подписи панели руля, миникарты, меток и карты маршрута одинаковы из кадра в кадр (без них JS кадра на
+   ноутбуке ×6 был на 0,5–0,9 мс меньше, замер 12.10.2026). Холст заводится с третьего одинакового
+   запроса: числа, меняющиеся каждый кадр (обороты руля на ходу), идут обычным fillText и холстов не
+   плодят. Левый верх холста ставится в пиксель устройства — иначе подпись мылилась бы */
+const TXT_C=new Map(), TXT_SEEN=new Map(), TXT_W=new Map(), TXT_MAX=300;
+let txtG=null;
+function textW(txt){
+  const k=ctx.font+'|'+txt; let w=TXT_W.get(k);
+  if(w===undefined){ if(TXT_W.size>=TXT_MAX) TXT_W.clear(); w=ctx.measureText(txt).width; TXT_W.set(k, w); }
+  return w;
+}
+function fillTextC(txt, x, y){
+  const g=ctx, fs=g.fillStyle, sc=pxScale;
+  if(typeof fs!=='string'){ g.fillText(txt, x, y); return; }
+  const bl=g.textBaseline, k=g.font+'|'+fs+'|'+bl+'|'+sc+'|'+txt;
+  let e=TXT_C.get(k);
+  if(!e){
+    const n=(TXT_SEEN.get(k)||0)+1;
+    if(TXT_SEEN.size>=TXT_MAX) TXT_SEEN.clear();
+    TXT_SEEN.set(k, n);
+    if(n<3){ g.fillText(txt, x, y); return; }
+    if(!txtG) txtG=document.createElement('canvas').getContext('2d');
+    txtG.font=g.font; txtG.textAlign='left'; txtG.textBaseline=bl;
+    const m=txtG.measureText(txt), L=Math.ceil(m.actualBoundingBoxLeft)+2, A=Math.ceil(m.actualBoundingBoxAscent)+2;
+    const cw=L+Math.ceil(m.actualBoundingBoxRight)+2, ch=A+Math.ceil(m.actualBoundingBoxDescent)+2;
+    const c=document.createElement('canvas'); c.width=Math.ceil(cw*sc); c.height=Math.ceil(ch*sc);
+    const cg=c.getContext('2d'); cg.scale(sc, sc); cg.font=g.font; cg.fillStyle=fs; cg.textAlign='left'; cg.textBaseline=bl;
+    cg.fillText(txt, L, A);
+    if(TXT_C.size>=TXT_MAX) TXT_C.clear();
+    e={c, L, A, w:m.width, cw:c.width/sc, ch:c.height/sc};
+    TXT_C.set(k, e);
+  }
+  const al=g.textAlign, x0 = al==='center' ? x-e.w/2 : (al==='right'||al==='end') ? x-e.w : x;
+  g.drawImage(e.c, Math.round((x0-e.L)*sc)/sc, Math.round((y-e.A)*sc)/sc, e.cw, e.ch);
+}
 function roundRect(x,y,w,h,r){
   ctx.beginPath();
   ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
@@ -13101,16 +13238,16 @@ function drawSteerPanel(x,y,w,h){
   ctx.font='12px ui-monospace,Menlo,Consolas,monospace'; ctx.textAlign='left';
   const turns=car.steer*CAR.steerRatio/TAU;
   ctx.fillStyle='#dbe7f3';
-  ctx.fillText(Math.abs(turns)<0.03 ? 'руль прямо'
+  fillTextC(Math.abs(turns)<0.03 ? 'руль прямо'
      : Math.abs(turns).toFixed(2).replace('.',',')+' об. '+(car.steer>0?'вправо':'влево')
        +'   ('+Math.abs(deg(car.steer)).toFixed(0)+'°)', x+14, y+h-32);
   ctx.fillStyle='#8fa6bd'; ctx.font='11px ui-monospace,Menlo,Consolas,monospace';
-  ctx.fillText(sw.R===Infinity ? 'радиус ∞ — колёса прямо'
+  fillTextC(sw.R===Infinity ? 'радиус ∞ — колёса прямо'
      : 'R ось '+dec1(sw.R)+' м · габарит '+dec1(sw.out)+' м · коридор '+dec1(sw.corr)+' м',
      x+14, y+h-14);
   ctx.fillStyle = Math.abs(car.vel)<0.25 ? '#fbbf24' : '#7fd6a2';
   ctx.textAlign='right';
-  ctx.fillText('до упора '+dec1(lockTime())+' с', x+w-14, y+h-32);
+  fillTextC('до упора '+dec1(lockTime())+' с', x+w-14, y+h-32);
   ctx.textAlign='left';
 }
 function dec1(v){ return v.toFixed(1).replace('.',','); }
@@ -13172,8 +13309,8 @@ function drawMinimap(x,y,size){
   ctx.restore();
   ctx.restore();
   ctx.fillStyle='#7f93a9'; ctx.font=(MOB?'9px':'11px')+' ui-sans-serif,system-ui';
-  ctx.textAlign='right'; ctx.fillText('↑ север', x+size-7, y+13);
-  if(!MOB){ ctx.textAlign='left'; ctx.fillText('карта · С', x+9, y+15); }
+  ctx.textAlign='right'; fillTextC('↑ север', x+size-7, y+13);
+  if(!MOB){ ctx.textAlign='left'; fillTextC('карта · С', x+9, y+15); }
   ctx.textAlign='left';
 }
 
@@ -14101,7 +14238,8 @@ function fbCtx(){
   let scr='';
   try{ scr=innerWidth+'x'+innerHeight; }catch(e){}
   return { level:d.name||'', li:game.li, cam:opt.camMode,
-    q:qLevel, gap:+frameGap.toFixed(1), js:+frameCost.toFixed(1),
+    q:qLevel, gap:+frameGap.toFixed(1), js:+frameCost.toFixed(1), sim:+simCost.toFixed(1),
+    gpu:GPU_INFO.renderer, soft:GPU_INFO.soft,
     dpr:+(window.devicePixelRatio||1).toFixed(2), screen:scr, mob:!!MOB,
     runs:runsCnt, t:+game.t.toFixed(1), build:window.BUILD||'dev',
     ua:navigator.userAgent };
@@ -14833,7 +14971,7 @@ function setTraffic(v){
 function fullAvail(){ const el=document.documentElement; return !!(el.requestFullscreen || el.webkitRequestFullscreen); }
 const SETTINGS=[
   {id:'gfx', tab:'screen', label:'Графика', kind:'seg', vals:[['auto','авто'],['max','максимум']],
-   desc:()=>opt.gfx==='max' ? 'Все детали всегда, кадры могут просесть' : 'Качество подстраивается под скорость кадра',
+   desc:()=>gpuSoft() ? GPU_NOTE : opt.gfx==='max' ? 'Все детали всегда, кадры могут просесть' : 'Качество подстраивается под скорость кадра',
    get:()=>opt.gfx, set:setGfx},
   {id:'hud', tab:'screen', label:'Панели на экране', kind:'seg', vals:[[0,'все'],[1,'зазоры'],[2,'скрыть']],
    get:()=>hudMode, set:setHud},
@@ -16148,6 +16286,10 @@ try{ const e=localStorage.getItem('trainer_exammode'); if(e==='real') opt.examMo
 try{ const t=localStorage.getItem('trainer_traffic'); if(TRAF_SPACING[t]) opt.traffic=t; }catch(e){}
 trafDbg = /[?&]traffic=1/.test(location.search);
 try{ if(localStorage.getItem('trainer_gfx')==='max') opt.gfx='max'; }catch(e){}
+if(gpuSoft()){
+  console.info('[perf] программный рендер: '+(GPU_INFO.renderer||'WebGL недоступен'));
+  if(opt.gfx!=='max'){ qLevel=qBest=Q_SOFT_START; dprCap=QUALITY[Q_SOFT_START].dpr; }
+}
 try{ const m=parseFloat(localStorage.getItem('trainer_mirscale')); if(MIR_SCALES.indexOf(m)>=0) opt.mirScale=m; }catch(e){}
 if(MOB) opt.refs = 1;   /* на телефоне метки расстояний мешают, но габариты нужны везде */
 try{ const r=localStorage.getItem('trainer_refs'); if(r!==null) opt.refs=clamp(+r|0,0,2); }catch(e){}
@@ -16409,8 +16551,22 @@ function perfTick(dt){
   let sum=0; for(const x of g) sum+=x;
   const p95=g[Math.floor(g.length*0.95)], fps=1000/(sum/g.length);
   el.hidden=false;
-  setText(el, fps.toFixed(0)+' fps · p95 '+p95.toFixed(1)+' мс · js '+frameCost.toFixed(1)+' мс · dpr '+DPR.toFixed(2)+' · q'+qLevel+(opt.gfx==='max'?'!':'')+' · exp '+EXPAND_DEV+' · грани '+facesFrame+' · декали '+decDrawn+' · кам '+opt.camMode+' d'+opt.dist.toFixed(1)+' y'+Math.round(deg(opt.camYaw))+' p'+Math.round(deg(opt.pitch))+' fy'+Math.round(deg(opt.fpYaw))+' fp'+Math.round(deg(opt.fpPitch))+' · L'+(game.li+1)+' xy '+car.ru.toFixed(1)+','+car.rv.toFixed(1)+' th'+Math.round(deg(angNorm(car.th))));
+  setText(el, fps.toFixed(0)+' fps · p95 '+p95.toFixed(1)+' мс · js '+frameCost.toFixed(1)+' мс · sim '+simCost.toFixed(1)+' мс · dpr '+DPR.toFixed(2)+' · q'+qLevel+(opt.gfx==='max'?'!':'')+' · exp '+EXPAND_DEV+' · грани '+facesFrame+' · декали '+decDrawn+' · кам '+opt.camMode+' d'+opt.dist.toFixed(1)+' y'+Math.round(deg(opt.camYaw))+' p'+Math.round(deg(opt.pitch))+' fy'+Math.round(deg(opt.fpYaw))+' fp'+Math.round(deg(opt.fpPitch))+' · L'+(game.li+1)+' xy '+car.ru.toFixed(1)+','+car.rv.toFixed(1)+' th'+Math.round(deg(angNorm(car.th))));
 }
+/* под паузой сцена стоит, а оверлей закрывает её на 86 %: перерисовка 5 раз в секунду и сразу после
+   ввода или смены размера — настройка, поменянная под оверлеем, видна в следующем же кадре. Витрина
+   меню и редактор рисуются каждый кадр: там движется картинка */
+const PAUSE_RENDER_DT=0.2;
+let pauseRenderT=0, renderDirty=true;
+function renderDue(rdt){
+  if(!paused || showroomOn() || editor){ pauseRenderT=0; return true; }
+  pauseRenderT+=rdt;
+  if(!renderDirty && pauseRenderT<PAUSE_RENDER_DT) return false;
+  renderDirty=false; pauseRenderT=0;
+  return true;
+}
+for(const ev of ['pointerdown','pointermove','pointerup','wheel','keydown','resize'])
+  addEventListener(ev, ()=>{ renderDirty=true; }, {capture:true, passive:true});
 function frame(ts){
   requestAnimationFrame(frame);
   let rdt=0.016;
@@ -16420,12 +16576,15 @@ function frame(ts){
   let dt=last? Math.min(0.05, now-last) : 0.016; last=now;
   /* три блока кадра под своим try: исключение в HUD не останавливает мир, исключение в физике
      не гасит карточку, и rAF выше уже запрошен — цикл живёт при любом падении */
+  const tSim=performance.now();
   try{ simTick(dt); }catch(e){ crashHit('sim', e); }
   const t0=performance.now();
+  simCost += (t0-tSim - simCost)*0.08;
   facesFrame=0;
-  try{ render(dt); }catch(e){ crashHit('render', e); }
+  const drawn=renderDue(rdt);
+  if(drawn) try{ render(dt); }catch(e){ crashHit('render', e); }
   try{ updateHUD(); }catch(e){ crashHit('hud', e); }
-  frameCost += (performance.now()-t0 - frameCost)*0.08;
+  if(drawn) frameCost += (performance.now()-t0 - frameCost)*0.08;
   if(PERF_ON) perfTick(dt);
   if(frameCost > 11) trailBudget = Math.max(70, trailBudget-10);
   else if(frameCost < 7) trailBudget = Math.min(TRAIL_MAX, trailBudget+4);
