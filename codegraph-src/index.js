@@ -896,6 +896,10 @@
 
 
 
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -14938,9 +14942,10 @@ function menuGo(scr, tab, from){
   if(!same) console.info('[menu] экран', scr+(tab?':'+tab:''), from ? '← '+from : '');
 }
 /* ряд вкладок на таче листается: открытая вкладка ставится в поле зрения (на «Свои ★» ряд показывал начало,
-   и открытой вкладки на экране не было), край гаснет, пока справа есть ещё вкладки */
+   и открытой вкладки на экране не было), край гаснет с той стороны, где есть ещё вкладки */
 function mtabsSync(tb){
-  const more=()=>tb.classList.toggle('more', tb.scrollLeft+tb.clientWidth < tb.scrollWidth-2);
+  const more=()=>{ tb.classList.toggle('more', tb.scrollLeft+tb.clientWidth < tb.scrollWidth-2);
+    tb.classList.toggle('less', tb.scrollLeft > 2); };
   const on=tb.querySelector('.on');
   if(on && tb.scrollWidth>tb.clientWidth){
     const x=on.getBoundingClientRect().left-tb.getBoundingClientRect().left+tb.scrollLeft;

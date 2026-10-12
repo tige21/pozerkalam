@@ -52,7 +52,7 @@ CLAUDE.md главнее style-lock. Новый цвет — только чер
   уровней не трогать без прогона `learner.js`
 
 ### Фаза 5 — анимации (только если аудит нашёл)
-- [ ] Task 7: `/review-animations` → `/improve-animations` → `/optimize-web-animations`; кадр упирается
+- [x] Task 7 (замер — правок нет; `/review-animations` только по вызову пользователя): `/review-animations` → `/improve-animations` → `/optimize-web-animations`; кадр упирается
   в JS — ничего тяжёлого
 
 ### Фаза 6 — итог

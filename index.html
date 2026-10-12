@@ -639,6 +639,10 @@ body.menu #overlay.lay-card{background:rgba(4,7,11,.62);pointer-events:auto}
 body:not(.touch) .mtabs{flex-wrap:wrap;overflow-x:visible}
 .mtabs.more{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 44px),transparent);
   mask-image:linear-gradient(to right,#000 calc(100% - 44px),transparent)}
+/* ряд прокручен к открытой вкладке — левые ушли за край, и левый край гаснет так же */
+.mtabs.less{-webkit-mask-image:linear-gradient(to right,transparent,#000 44px);mask-image:linear-gradient(to right,transparent,#000 44px)}
+.mtabs.less.more{-webkit-mask-image:linear-gradient(to right,transparent,#000 44px,#000 calc(100% - 44px),transparent);
+  mask-image:linear-gradient(to right,transparent,#000 44px,#000 calc(100% - 44px),transparent)}
 #overlay .mtabs button{margin:0;flex:none;padding:8px 14px;border-radius:999px;font-size:13.5px;font-weight:500;white-space:nowrap;
   background:transparent;border-color:rgba(255,255,255,.14);color:#b9cadb}
 /* цель касания не меньше 40 px — порог touch-check 36, вкладка была 34 */
@@ -14938,9 +14942,10 @@ function menuGo(scr, tab, from){
   if(!same) console.info('[menu] экран', scr+(tab?':'+tab:''), from ? '← '+from : '');
 }
 /* ряд вкладок на таче листается: открытая вкладка ставится в поле зрения (на «Свои ★» ряд показывал начало,
-   и открытой вкладки на экране не было), край гаснет, пока справа есть ещё вкладки */
+   и открытой вкладки на экране не было), край гаснет с той стороны, где есть ещё вкладки */
 function mtabsSync(tb){
-  const more=()=>tb.classList.toggle('more', tb.scrollLeft+tb.clientWidth < tb.scrollWidth-2);
+  const more=()=>{ tb.classList.toggle('more', tb.scrollLeft+tb.clientWidth < tb.scrollWidth-2);
+    tb.classList.toggle('less', tb.scrollLeft > 2); };
   const on=tb.querySelector('.on');
   if(on && tb.scrollWidth>tb.clientWidth){
     const x=on.getBoundingClientRect().left-tb.getBoundingClientRect().left+tb.scrollLeft;
