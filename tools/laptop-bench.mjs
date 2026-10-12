@@ -53,6 +53,8 @@ async function open(browser, file, sc) {
   const cdp = await ctx.newCDPSession(page);
   const url = 'file://' + file + '?nocache=' + Date.now();
   await page.goto(url);
+  /* без ожидания evaluate изредка ловил «Execution context was destroyed» — страница ещё догружалась */
+  await page.waitForFunction(() => typeof LEVELS !== 'undefined', null, { timeout: 30000 });
   await page.evaluate(() => { for (const k of ['trainer_seen', 'trainer_hint', 'trainer_drive']) localStorage.setItem(k, '1');
     localStorage.setItem('trainer_runs', '9'); localStorage.setItem('trainer_touch', '0'); });
   await page.goto(url + 'r');

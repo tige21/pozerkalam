@@ -8178,7 +8178,7 @@ const anPerfTimer=setInterval(()=>{
   if(++anPerfN<4) return;
   clearInterval(anPerfTimer);
   const g=perfGaps.slice().sort((a,b)=>a-b), pct=(k)=>g.length ? +g[Math.min(g.length-1, Math.floor(g.length*k))].toFixed(1) : null;
-  track('perf', { q:qLevel, qb:qBest, fps:Math.round(1000/Math.max(frameGap,1)), p50:pct(0.5), p95:pct(0.95),
+  track('perf', { q:qLevel, qb:qBest, qw:qWorst, fps:Math.round(1000/Math.max(frameGap,1)), p50:pct(0.5), p95:pct(0.95),
     js:+frameCost.toFixed(1), sim:+simCost.toFixed(1),
     dpr:+(window.devicePixelRatio||1).toFixed(2), vw:innerWidth, vh:innerHeight, cores:navigator.hardwareConcurrency,
     mem:navigator.deviceMemory, gpu:GPU_INFO.renderer, soft:GPU_INFO.soft, gfx:opt.gfx, cam:opt.camMode, mob:MOB, li:game.li+1 });
@@ -8322,13 +8322,27 @@ const QUALITY=[ {dpr:2,    grain:true,  grad:true,  cars:true,  detail:true,  ma
 function qDetail(){ return QUALITY[qLevel].detail; }
 /* первые секунды после загрузки кадры рваные (уровень, ресайз, прогрев) — регулятор молчит,
    иначе он опускал уровень и храповик навсегда запирал зерно на машине, которая тянет всё */
-let qLevel=0, qBest=0, qBadT=0, qGoodT=0, qCoolT=2.0, frameGap=16;
-const Q_GAP_BAD=19, Q_GAP_GOOD=17.5, Q_BAD_HOLD=0.6, Q_GOOD_HOLD=6.0, Q_COOL=1.2;
+let qLevel=0, qBest=0, qWorst=0, qBadT=0, qCoolT=2.0, frameGap=16;
+const Q_GAP_BAD=19, Q_GAP_GOOD=17.5, Q_BAD_HOLD=0.6, Q_COOL=1.2;
+/* спуск проверяется, подъём пробуется (#342, аналитика 12.10.2026: у половины сессий Яндекс Браузера на
+   Windows картинка застревала на q6–q8 при 56 fps). Прежний храповик ставил qBest на каждую ступень вниз, и
+   ветка «вверх» не срабатывала никогда — первая же просадка (загрузка городского уровня, смена вкладки)
+   мылила картинку до перезагрузки. Теперь:
+   - спуск (qDesc) помнит, с какого уровня и интервала кадра начался; дошёл до низа, а кадр не стал короче
+     хотя бы на Q_DESC_GAIN — кадр держит не картинка (экран или браузер на 30 Гц — #254, композитор без
+     видеокарты), качество возвращается к началу спуска, и на этом же интервале (±Q_NOGAIN_BAND) вниз не идём;
+   - выше qBest — проба после qProbeHold с ровных кадров; плохие кадры в окне пробы — назад и ждать вдвое
+     дольше (до Q_PROBE_MAX), прошла — новый уровень принят;
+   - две секунды после загрузки уровня и возврата во вкладку решений нет (qSceneChange) */
+const Q_DESC_GAIN=0.8, Q_NOGAIN_BAND=1.15, Q_PROBE_HOLD0=20, Q_PROBE_MAX=320, Q_PROBE_WIN=4, Q_SCENE_COOL=2;
+let qDesc=null, qNoGainGap=0, qProbe=null, qProbeHold=Q_PROBE_HOLD0, qProbeT=0;
 function qApply(level){
-  qLevel=level; qCoolT=Q_COOL; qBadT=0; qGoodT=0;
+  qLevel=level; qCoolT=Q_COOL; qBadT=0;
   const d=QUALITY[level].dpr;
   if(dprCap!==d){ dprCap=d; resize(); }
 }
+function qSceneChange(){ qCoolT=Math.max(qCoolT, Q_SCENE_COOL); qDesc=null; qProbe=null; qNoGainGap=0; qBadT=0; qProbeT=0; }
+function qDescKeep(d, gapNow){ return gapNow < d.gap*Q_DESC_GAIN; }
 /* таймеры регулятора идут по РЕАЛЬНОМУ времени кадра (rdt), не по dt физики: dt зажат 50 мс,
    и при 16 fps лестница спускалась вдвое медленнее, чем шли секунды. При сильной просадке
    шаг сразу на 2–3 ступени — ждать по ступени на 16 fps значит мучить игрока полминуты */
@@ -8336,16 +8350,37 @@ function qTick(rdt){
   /* «максимум» — ручной режим: игрок сознательно выбрал картинку вместо плавности */
   if(opt.gfx==='max') return;
   if(qCoolT>0){ qCoolT-=rdt; return; }
-  if(frameGap>Q_GAP_BAD){ qBadT+=rdt; qGoodT=0;
-    if(qBadT>Q_BAD_HOLD && qLevel<QUALITY.length-1){
-      const step = frameGap>60 ? 3 : frameGap>35 ? 2 : 1;
-      const next=Math.min(QUALITY.length-1, qLevel+step);
-      qBest=Math.max(qBest, next); qApply(next); } }
+  const last=QUALITY.length-1;
+  if(qProbe){
+    qProbe.t+=rdt;
+    if(frameGap>Q_GAP_BAD){ const from=qProbe.from; qProbe=null; qProbeHold=Math.min(Q_PROBE_MAX, qProbeHold*2); qApply(from); }
+    else if(qProbe.t>=Q_PROBE_WIN){ qProbe=null; qBest=qLevel; }
+    return;
+  }
+  if(frameGap>Q_GAP_BAD){
+    qProbeT=0;
+    if(qNoGainGap && frameGap<qNoGainGap*Q_NOGAIN_BAND){ qBadT=0; return; }
+    qBadT+=rdt;
+    if(qBadT<=Q_BAD_HOLD) return;
+    if(qLevel<last){
+      if(!qDesc) qDesc={from:qLevel, best:qBest, gap:frameGap};
+      const step = frameGap>60 ? 3 : frameGap>35 ? 2 : 1, next=Math.min(last, qLevel+step);
+      qBest=Math.max(qBest, next); qWorst=Math.max(qWorst, next); qApply(next);
+    } else if(qDesc){
+      const d=qDesc; qDesc=null; qBadT=0;
+      if(!qDescKeep(d, frameGap)){ qNoGainGap=d.gap; qBest=d.best; qApply(d.from); }
+    }
+    return;
+  }
+  qBadT=0;
   /* вверх — только по езде: на паузе сцена рисуется 5 раз в секунду (renderDue), а витрина меню дешевле
-     любого уровня, и «хорошие» кадры там поднимали качество, которое уровень потом не тянул */
-  else if(frameGap<Q_GAP_GOOD && frameCost+simCost<6 && !paused && !showroomOn()){ qGoodT+=rdt; qBadT=0;
-    if(qGoodT>Q_GOOD_HOLD && qLevel>qBest) qApply(qLevel-1); }
-  else { qBadT=0; qGoodT=0; }
+     любого уровня, и «хорошие» кадры там поднимали качество, которое уровень потом не тянул. JS кадра — до 60 %
+     бюджета: проба сама откатится, а порог 6 мс не пускал наверх ноутбуки с 7–10 мс при ровных 60 fps */
+  if(frameGap<Q_GAP_GOOD && frameCost+simCost<Q_GAP_GOOD*0.6 && !paused && !showroomOn()){
+    qDesc=null; qNoGainGap=0;
+    if(qLevel>0){ qProbeT+=rdt;
+      if(qProbeT>=qProbeHold){ qProbeT=0; qProbe={from:qLevel, t:0}; qApply(qLevel-1); } }
+  }
 }
 /* счётчик кадра по интервалу rAF, а не по JS-времени: растеризация Canvas в JS не видна */
 const PERF_ON=(()=>{ try{ return /[?&]perf=1/.test(location.search) || localStorage.getItem('trainer_perf')==='1'; }catch(e){ return false; } })();
@@ -8423,6 +8458,7 @@ function buildRenderList(obs){
   return out;
 }
 function loadLevel(i){
+  qSceneChange();
   examTeardown();
   voiceReset();
   game.li = ((i%LEVELS.length)+LEVELS.length)%LEVELS.length;
@@ -13802,6 +13838,7 @@ function authWaitEnd(){
 }
 /* игрок вернулся из вкладки входа — спросить сразу, не дожидаясь двух секунд таймера */
 document.addEventListener('visibilitychange', ()=>{
+  if(!document.hidden) qSceneChange();
   /* в фоне rAF стоит и voiceTick не зовётся — голос глушится здесь, иначе договорил бы в свёрнутой вкладке */
   if(document.visibilityState==='hidden') voiceHalt();
   audioHide(document.visibilityState==='hidden');
@@ -14942,7 +14979,7 @@ const SET_TABS=[['screen','Экран'],['hints','Подсказки'],['mirrors
 function setGfx(v){
   opt.gfx=v;
   try{ localStorage.setItem('trainer_gfx', v); }catch(e){}
-  if(v==='max'){ qBest=0; qApply(0); }
+  if(v==='max'){ qBest=0; qDesc=null; qProbe=null; qNoGainGap=0; qApply(0); }
 }
 function setHud(v){
   hudMode=v;
@@ -16288,7 +16325,7 @@ trafDbg = /[?&]traffic=1/.test(location.search);
 try{ if(localStorage.getItem('trainer_gfx')==='max') opt.gfx='max'; }catch(e){}
 if(gpuSoft()){
   console.info('[perf] программный рендер: '+(GPU_INFO.renderer||'WebGL недоступен'));
-  if(opt.gfx!=='max'){ qLevel=qBest=Q_SOFT_START; dprCap=QUALITY[Q_SOFT_START].dpr; }
+  if(opt.gfx!=='max'){ qLevel=qBest=qWorst=Q_SOFT_START; dprCap=QUALITY[Q_SOFT_START].dpr; }
 }
 try{ const m=parseFloat(localStorage.getItem('trainer_mirscale')); if(MIR_SCALES.indexOf(m)>=0) opt.mirScale=m; }catch(e){}
 if(MOB) opt.refs = 1;   /* на телефоне метки расстояний мешают, но габариты нужны везде */

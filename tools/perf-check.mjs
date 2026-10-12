@@ -10,10 +10,12 @@
    - куб салона перерисовывается через WebGL только при повороте головы, иначе берётся из своего холста;
    - без видеокарты игра стартует с q4 и один раз подсказывает включить аппаратное ускорение;
    - событие perf уходит раз за сессию с рендерером WebGL, p50/p95 и временем симуляции;
-   - на паузе сцена под оверлеем перерисовывается ≤ 5 раз в секунду, ввод — сразу.
+   - на паузе сцена под оверлеем перерисовывается ≤ 5 раз в секунду, ввод — сразу;
+   - регулятор качества после просадки пробует вернуться, на потолке 30 кадров не мылит картинку,
+     а загрузку уровня просадкой не считает (#342, #254).
 
      PW_DIR=/tmp/pw node tools/perf-check.mjs
-     FAULT=mirrate|mirhidden|mirstatic|backdrop|cubecache|gpunote|perfev|pauserender PW_DIR=/tmp/pw node tools/perf-check.mjs   # каждая — красная
+     FAULT=mirrate|mirhidden|mirstatic|backdrop|cubecache|gpunote|perfev|pauserender|ratchet|nogain|scenecool PW_DIR=/tmp/pw node tools/perf-check.mjs   # каждая — красная
 
    Код 1 — хоть одна проверка не прошла. */
 import { createRequire } from 'node:module';
@@ -169,6 +171,35 @@ const CITY = await page.evaluate(() => LEVELS.findIndex((l) => l.traffic === 'ci
   }), FAULT);
   check('пауза: сцена под оверлеем ≤ 7 перерисовок в секунду, ввод перерисовывает сразу (@app-perf-pause)',
     r.paused && r.idle <= 7 && r.idle >= 3 && r.poked >= 1, JSON.stringify(r));
+}
+
+/* 9. Регулятор качества (#342, #254): настоящий qTick на синтетических интервалах кадра — кадры игры его не
+   зовут, пока идёт проверка. Прежний храповик держал первую просадку до перезагрузки, а на 30 Гц без нагрузки
+   спускал картинку до q8 */
+{
+  const r = await page.evaluate((fault) => {
+    let QT = qTick; qTick = function () {};
+    if (fault === 'ratchet') { let gT = 0; QT = (rdt) => { if (opt.gfx === 'max') return; if (qCoolT > 0) { qCoolT -= rdt; return; }
+      if (frameGap > 19) { qBadT += rdt; gT = 0; if (qBadT > 0.6 && qLevel < QUALITY.length - 1) { const step = frameGap > 60 ? 3 : frameGap > 35 ? 2 : 1, next = Math.min(QUALITY.length - 1, qLevel + step); qBest = Math.max(qBest, next); qApply(next); } }
+      else if (frameGap < 17.5 && frameCost + simCost < 6) { gT += rdt; qBadT = 0; if (gT > 6 && qLevel > qBest) qApply(qLevel - 1); } else { qBadT = 0; gT = 0; } }; }
+    if (fault === 'nogain') qDescKeep = () => true;
+    if (fault === 'scenecool') qSceneChange = () => {};
+    loadLevel(0); hideOv(); paused = false; opt.gfx = 'auto';
+    const reset = () => { qApply(0); qBest = 0; qDesc = null; qProbe = null; qProbeHold = Q_PROBE_HOLD0; qProbeT = 0; qNoGainGap = 0; qCoolT = 0; qBadT = 0; };
+    const run = (sec, gap, js) => { for (let t = 0; t < sec; t += 0.05) { frameGap = gap; frameCost = js; simCost = 0.2; QT(0.05); } };
+    const out = {};
+    reset(); run(1.0, 40, 3); out.dropTo = qLevel; run(27, 12, 3); out.recovered = qLevel; out.bestAfter = qBest;
+    run(21.3, 12, 3); out.probing = qLevel; run(1.5, 30, 3); out.afterFail = qLevel; out.hold = qProbeHold;
+    reset(); run(40, 33.3, 2); out.cap30 = qLevel; out.noGain = +qNoGainGap.toFixed(1);
+    reset(); loadLevel(0); hideOv(); run(1.5, 80, 3); out.afterLoad = qLevel;
+    qTick = QT; reset();
+    return out;
+  }, FAULT);
+  check('регулятор: после просадки проба вверх через 20 с, неудачная — откат и ожидание вдвое (@app-perf-quality-recover)',
+    r.dropTo === 2 && r.recovered === 1 && r.bestAfter === 1 && r.probing === 0 && r.afterFail === 1 && r.hold === 40, JSON.stringify(r));
+  check('регулятор: потолок 30 кадров без нагрузки не мылит картинку — спуск без выигрыша возвращается к q0 (@app-perf-quality-nogain)',
+    r.cap30 === 0 && r.noGain > 30, JSON.stringify({ cap30: r.cap30, noGain: r.noGain }));
+  check('регулятор: две секунды после загрузки уровня просадки не считаются (@app-perf-quality-scene)', r.afterLoad === 0, JSON.stringify({ afterLoad: r.afterLoad }));
 }
 
 /* 7. Событие perf: одно за сессию после 20 с езды, с рендерером и временем симуляции — без них по аналитике
