@@ -1,10 +1,10 @@
 # Style lock — «По зеркалам» (тренажёр парковки, RU, телефон + десктоп)
 
-Established: 2026-09-26. Source: user-specified brief + existing product pixels — токены сняты с `landing/src/layouts/Base.astro:36–46` и `index.html` (CSS 21–437), проверены `scripts/check_contrast.py --matrix`. Сгенерированная палитра (`generate_palette.py --mood technical --mode dark --seed 2026`, изумрудная #0a8662/#30b88b) отклонена: у продукта есть живой бренд и логотип, лендинг и игра уже делят одни токены — смена палитры дала бы ровно то расползание, которое этот файл должен предотвращать.
+Established: 2026-09-26. Сверено с CLAUDE.md 2026-10-12 (дизайн-проход): backdrop-filter, меню и пауза, тач-HUD. Source: user-specified brief + existing product pixels — токены сняты с `landing/src/layouts/Base.astro:36–46` и `index.html` (CSS 21–437), проверены `scripts/check_contrast.py --matrix`. Сгенерированная палитра (`generate_palette.py --mood technical --mode dark --seed 2026`, изумрудная #0a8662/#30b88b) отклонена: у продукта есть живой бренд и логотип, лендинг и игра уже делят одни токены — смена палитры дала бы ровно то расползание, которое этот файл должен предотвращать.
 
 ## Palette
 - Background: `#0b0f14` `--asphalt` (страница, сцена под HUD). Тона: `#10171f` `--asphalt-2` (секция), `#151f2a` `--asphalt-3` (карточка лендинга)
-- Surface: `#0c121a` (оверлей игры `rgba(12,18,26,.96)`); панели HUD — `rgba(9,14,20,.74)` + `backdrop-filter:blur(6px)`; лендинг — `--glass rgba(13,20,28,.72)`
+- Surface: `#0c121a` (оверлей игры `rgba(12,18,26,.96)`, панель раздела меню `rgba(10,15,22,.96)`); панели HUD — `rgba(9,14,20,.80)` **без `backdrop-filter`** (CLAUDE.md, 12.10.2026: размытие над живой канвой — четверть работы композитора без видеокарты); лендинг — `--glass rgba(13,20,28,.72)`
 - Primary: `#1b5faa` (синий знака «P»: главная кнопка, активный сегмент), border `#3e83cf`, hover `#2571c4`
 - Accent: `#9fd0ff` `--beam` (свет приборов: заголовки уровня, подписи-ссылки, фокус-ринг `#7dd8ff`); низкий тон `#58b0ff` `--beam-lo` (полоса прогресса чипа, маркер списка)
 - Text primary: `#e8eef6` `--ink` — contrast vs background 16.47 (AA pass)
@@ -32,7 +32,7 @@ Established: 2026-09-26. Source: user-specified brief + existing product pixels 
 
 ## Shape language
 - Corner radius: 4 (микро: `.kbd`, бейдж передачи), 8 (ячейки HUD, поля), 10 (панели, кнопки игры, боковые кнопки), 12 (тач-кнопки, карточки уровней, кнопки ≡), 16 (оверлей-карточка, тач-кластер), 999 (pill-кнопки лендинга, чип цели). Применено 26.09.2026: 5→4, 6→8, 9→10, 11→12, 15→16, 20→999; лендинг 14→12 при следующем касании.
-- Shadow depth: почти нет — `0 2px 14px rgba(0,0,0,.35)` только на плавающих тач-кнопках; глубину даёт `backdrop-filter:blur(6px)` + полупрозрачный фон.
+- Shadow depth: почти нет — `0 2px 14px rgba(0,0,0,.35)` только на плавающих тач-кнопках; глубину даёт плотный полупрозрачный фон (`backdrop-filter` над живой канвой запрещён CLAUDE.md). Свечения-тени у кнопок не ставить (аудит 12.10, #31).
 - Border usage: hairline `rgba(255,255,255,.09–.16)` (`--edge/--edge-2`) как граница панелей; состояние несёт цветная кромка 4px слева (`k-stop/k-hit/k-almost/k-ok`) + иконка, не только цвет.
 
 ## Density & spacing
@@ -45,7 +45,7 @@ Established: 2026-09-26. Source: user-specified brief + existing product pixels 
 - Section separation: whitespace + смена тона `--asphalt-2`, без разделителей
 
 ## Structure
-- App shell (игра): канва во весь экран, `#topleft` задание · `#coach` карточка в верхней полосе · `#topright` счётчик · `#bar` приборы внизу · зеркала и карта по углам; телефон — карточка над рядом передач. Оверлеи — одна карточка 760px по центру, один filled-button на экран (остальные `.ghost`).
+- App shell (игра): канва во весь экран, `#topleft` задание · `#coach` карточка в верхней полосе · `#topright` индекс уровня, знак ограничения и кнопка паузы · `#bar` приборы внизу · зеркала и карта по углам; телефон — плиток `#bar` нет, карточка — одна строка вверху под салонным зеркалом, тап раскрывает её на 4 с. Оверлеи (`showOv(html, lay)`): `lay-main` — главное меню колонкой над машиной на подиуме, `lay-panel` — раздел меню панелью слева во всю высоту (вкладки, тело листается), `lay-pause` — компактная карточка паузы, `lay-card` — карточка 760 px по центру (итоги, бриф, отзыв, пейволл). Один filled-button на экран (остальные `.ghost`); разрушительное действие главной кнопкой не бывает.
 - Лендинг: прикреплённый герой с лентой реплик (`tools/hero-tape.mjs` — гейт), дальше «пять вопросов посетителя» (CLAUDE.md).
 - Shared chrome: логотип (контур машины + шеврон) + «По зеркалам»; подвал со ссылкой на /avtoshkolam/.
 - Build stamp / log: `.tastemaker/log.json` пока нет — сборок через tastemaker не было.
@@ -68,7 +68,7 @@ Established: 2026-09-26. Source: user-specified brief + existing product pixels 
 - Memory precedence note: бриф «сгенерировать палитру» разрешён в пользу существующего бренда (правило «preserve existing identity» + «real pixels over descriptions»); генератор прогнан, результат записан как отклонённый кандидат
 
 ## Navigation chrome
-- Sidebar: нет. Панели HUD — `rgba(9,14,20,.74)` на канве; ≡-меню (тач) — сетка кнопок на `rgba(5,8,12,.86)`
+- Sidebar: нет. Панели HUD — `rgba(9,14,20,.80)` на канве; ≡-меню снято 05.10.2026 — пауза кнопкой ❚❚ (`#pauseBtn`) в правом верхнем углу на всех устройствах, разделы — панелью слева
 - Active item: filled Primary `#1b5faa` + рамка `#58a0e0`; тач-передача `.on` — синий `rgba(56,132,214,.72)`, R — красный, D — зелёный
 - Inactive hover: `border-color rgba(159,208,255,.35–.6)` + фон `rgba(159,208,255,.08)`; hover только под `@media (hover:hover)` (сейчас не так — см. аудит)
 - Shell density: HUD-ячейка 13px/15px, подпись 11px; compact 12px/8px
@@ -91,7 +91,7 @@ Established: 2026-09-26. Source: user-specified brief + existing product pixels 
 - Screen tracks: app shell — только смена состояния; лендинг — reveal по IntersectionObserver, клипы стартуют в зоне видимости, под reduce не стартуют
 - Frequency rules: смена передачи, руль, тормоз — без анимации; hover ≤ .2s
 - Reduced motion: лендинг — `.hero.open` статичен; игра — `@media (prefers-reduced-motion:reduce)` в конце CSS: кольцо онбординга, пульс ячейки и мигание стартера статичны, поворотники остаются (сигнал + цвет)
-- Verified by: 26.09.2026 — `button:active scale(.96)` .1s ease-out, hover под `(hover:hover) and (pointer:fine)`, reduce-блок проверен эмуляцией; `scripts/audit_motion.py` не гонялся
+- Verified by: 26.09.2026 — `button:active scale(.96)` .1s ease-out, hover под `(hover:hover) and (pointer:fine)`, reduce-блок проверен эмуляцией; `scripts/audit_motion.py` не гонялся. Тач-раскладку сторожит `tools/touch-check.mjs` (`mt-check` удалён вместе с МКПП 28.09)
 
 ## Do not
 - Не вводить новые оттенки мимо Base.astro; не использовать indigo/фиолетовые градиенты, glass-на-glass, карточку в карточке
