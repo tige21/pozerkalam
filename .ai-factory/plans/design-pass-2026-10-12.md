@@ -48,7 +48,7 @@ CLAUDE.md главнее style-lock. Новый цвет — только чер
 - [x] Task 5: `/better-typography` → `/better-ui` → `/mobile-native`
 
 ### Фаза 4 — тексты
-- [ ] Task 6: `/better-writing`, затем `deslop-scan.py` по новым строкам; подсказки манёвров и тексты
+- [x] Task 6: `/better-writing`, затем `deslop-scan.py` по новым строкам; подсказки манёвров и тексты
   уровней не трогать без прогона `learner.js`
 
 ### Фаза 5 — анимации (только если аудит нашёл)

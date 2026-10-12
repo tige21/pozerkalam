@@ -9270,7 +9270,7 @@ function examAbortHTML(){
     +'<p>Прогресс попытки не сохранится — маршрут начнётся заново.</p>'
     +'<button data-act="resume" data-focus>Продолжить экзамен</button> '
     +'<button data-act="route" class="ghost">Показать маршрут</button> '
-    +'<button data-act="exam-exit" class="ghost danger">Прервать</button>';
+    +'<button data-act="exam-exit" class="ghost danger">Прервать экзамен</button>';
 }
 /* ---------- провал попытки (строгие уровни) ----------
    Экзамен считает баллы, городские уровни 23–26 — нет: там урок в том, что грубая
@@ -14703,7 +14703,7 @@ function levelPickHTML(tab){
   }
   if(tab==='own'){
     if(!groups.own) s+='<p class="mnote">Своих площадок пока нет. Собери двор в редакторе — он появится здесь.</p>';
-    s+='<button type="button" data-act="editor">Редактор площадок'+(MOB?'':' (K)')+'</button>';
+    s+='<button type="button" data-act="editor">Собрать площадку'+(MOB?'':' (K)')+'</button>';
   }
   if(tab==='yard' && !MOB) s+='<p class="mnote">Первые девять уровней открываются и клавишами 1…9.</p>';
   return s+'</div>';
@@ -14820,10 +14820,10 @@ function winHTML(){
      где тренируется точность, значит толкать игрока торопиться и мазать */
   if(pr){
     const cm=Math.round(Math.abs(precErr())*100);
-    const rec = p ? '<p style="color:#93a7bd;font-size:13px">Упражнение сделано <b>'+p.n+'</b> раз'
+    const rec = p ? '<p style="color:#93a7bd;font-size:13px">Упражнение сделано <b>'+p.n+'</b> '+plural(p.n,'раз','раза','раз')
         +' · лучшая точность <b>'+p.bestErr+' см</b>'
         +(p.bestBlind!==undefined&&p.bestBlind!==null?' · вслепую <b>'+p.bestBlind+' см</b>':'')
-        +(cm<=p.bestErr?' — это твой рекорд!':'')+'</p>' : '';
+        +(p.n>1 && cm<=p.bestErr?' — это твой рекорд':'')+'</p>' : '';
     const blind = opt.refs===0
       ? '<p style="color:#93a7bd;font-size:13px">Сделано с выключенными габаритными ориентирами — '
         +'то есть по-настоящему.</p>'
@@ -14836,10 +14836,10 @@ function winHTML(){
     + winActsHTML();
   }
   if(level.def.strict) return cityWinHTML(p);
-  const rec = p ? '<p style="color:#93a7bd;font-size:13px">Этот уровень пройден <b>'+p.n+'</b> раз'
+  const rec = p ? '<p style="color:#93a7bd;font-size:13px">Этот уровень пройден <b>'+p.n+'</b> '+plural(p.n,'раз','раза','раз')
       +(p.clean?', из них <b>'+p.clean+'</b> без касаний':'')
       +' · лучшее время <b>'+p.best.toFixed(1).replace('.',',')+'&nbsp;с</b>'
-      +(game.t<=p.best?' — это твой рекорд!':'')+'</p>' : '';
+      +(p.n>1 && game.t<=p.best?' — это твой рекорд':'')+'</p>' : '';
   const advice = game.hits>0
     ? '<p style="color:#93a7bd;font-size:13px">Следующая цель — пройти без касаний: '
       +'веди на крипе и останавливайся, когда зазор уходит ниже 0,3 м.</p>'
@@ -14873,8 +14873,8 @@ function cityWinHTML(p){
   const log=attempt ? attempt.log : [], rows=vioRowsHTML(log);
   const clean=!game.hits && !rows;
   const head = clean ? 'Чисто: ни касаний, ни нарушений.'
-    : [rows ? 'нарушения — ниже' : '', game.hits ? 'касаний: <b>'+game.hits+'</b>' : ''].filter(Boolean).join(' · ');
-  const rec = p ? '<p class="sd">Уровень пройден <b>'+p.n+'</b> раз, чисто — <b>'+(p.clean||0)+'</b>.</p>' : '';
+    : [rows ? 'нарушений: <b>'+log.filter(l=>l.code!=='kerb').length+'</b>' : '', game.hits ? 'касаний: <b>'+game.hits+'</b>' : ''].filter(Boolean).join(' · ');
+  const rec = p ? '<p class="sd">Уровень пройден <b>'+p.n+'</b> '+plural(p.n,'раз','раза','раз')+', чисто — <b>'+(p.clean||0)+'</b>.</p>' : '';
   const advice = clean
     ? '<p class="sd">Повтори ещё раз — навык ставится повторением, а не единичным успехом.</p>'
     : '<p class="sd">Чистым считается заезд без нарушений и касаний — к нему и иди.</p>';
@@ -15990,6 +15990,11 @@ function progAdd(name, t, hits, err, blind, vios){
   syncSoon();
   return p;
 }
+/* падеж после числа: 1 раз, 3 раза, 5 раз; «пройден 3 раз» на итогах резало глаз */
+function plural(n, one, few, many){
+  const a=Math.abs(n)%100, b=a%10;
+  return a>10 && a<20 ? many : b===1 ? one : b>=2 && b<=4 ? few : many;
+}
 function progLine(name){
   const p=progOf(name); if(!p) return '';
   /* попытки без единой сдачи — это не «0 из 3 маршрутов», это «ещё не сдан» */
@@ -16010,9 +16015,9 @@ function progLine(name){
   const d=LEVELS.find(l=>l.name===name);
   if(d && d.strict){
     const pr = p.practice ? 'практика: чисто '+p.practice.clean+' из '+p.practice.n : '';
-    return p.n ? 'пройден '+p.n+'× · чисто '+p.clean+'×'+(pr ? ' · '+pr : '') : pr;
+    return p.n ? 'пройден '+p.n+'×'+(p.clean ? ' · чисто '+p.clean+'×' : '')+(pr ? ' · '+pr : '') : pr;
   }
-  return 'пройден '+p.n+'× · чисто '+p.clean+'× · лучшее '+p.best.toFixed(1).replace('.',',')+'&nbsp;с';
+  return 'пройден '+p.n+'×'+(p.clean ? ' · чисто '+p.clean+'×' : '')+' · лучшее '+p.best.toFixed(1).replace('.',',')+'&nbsp;с';
 }
 /* экзаменационная запись: свой тип поверх trainer_progress, старые поля не трогаем */
 function progExam(passed){
