@@ -847,6 +847,38 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -9111,8 +9143,7 @@ function examLogRows(){
   return exam.log.map(l=>'<li><b>'+(l.pts?'+'+l.pts:'0')+'</b> · '+l.txt
     +' <span style="opacity:.55">('+l.t.toFixed(0)+' с)</span>'
     +(EXAM_TRAIN[l.code]!==undefined
-      ? ' <button data-act="train:'+EXAM_TRAIN[l.code]+'" class="ghost" '
-        +'style="margin:0 0 0 6px;padding:2px 10px;font-size:12px">отработать</button>'
+      ? ' <button data-act="train:'+EXAM_TRAIN[l.code]+'" class="ghost minibtn">отработать</button>'
       : '')
     +'</li>').join('')
     || '<li>без штрафных баллов — чистая поездка</li>';
@@ -9130,13 +9161,23 @@ function examSvg(){
   for(let i=0;i<t.length;i+=2) pts+=px(t[i])+','+py(t[i+1])+' ';
   const marks=exam.log.map(l=>'<circle cx="'+px(l.u)+'" cy="'+py(l.v)
     +'" r="1.6" fill="#ff5a66"/>').join('');
+  /* под следом — асфальт, как в брифе: линия в пустом прямоугольнике не говорила, где что случилось */
   return '<svg viewBox="0 0 '+W.toFixed(0)+' '+Hh.toFixed(0)+'" '
     +'style="width:100%;max-height:180px;background:rgba(0,0,0,.28);border-radius:8px;margin:8px 0">'
+    +roadsSvg(px,py)
     +'<polyline points="'+pts+'" fill="none" stroke="#7dd8ff" stroke-width="0.8" '
     +'stroke-linejoin="round" stroke-linecap="round"/>'
     +marks
     +'<circle cx="'+px(t[0])+'" cy="'+py(t[1])+'" r="1.6" fill="#50dc82"/>'
     +'</svg>';
+}
+function roadsSvg(px, py){
+  let s='';
+  for(const d of level.dec){
+    if(d.line || d.fill!==ASPHALT || !d.pts) continue;
+    s+='<polygon points="'+d.pts.map(p=>px(p.u)+','+py(p.v)).join(' ')+'" fill="rgba(122,131,142,.45)"/>';
+  }
+  return s;
 }
 function examFailHTML(){
   return '<h1>Экзамен не сдан</h1>'
@@ -9162,12 +9203,7 @@ function examRouteSvg(){
   if(u0>u1) return '';
   const pad=14, W=(u1-u0)+pad*2, Hh=(v1-v0)+pad*2;
   const px=(u)=>((u-u0)+pad).toFixed(1), py=(v)=>((v1-v)+pad).toFixed(1);
-  let roads='';
-  for(const d of level.dec){
-    if(d.line || d.fill!==ASPHALT || !d.pts) continue;
-    roads+='<polygon points="'+d.pts.map(p=>px(p.u)+','+py(p.v)).join(' ')
-         +'" fill="rgba(122,131,142,.45)"/>';
-  }
+  const roads=roadsSvg(px,py);
   const pts=exam.route.filter(st=>st.at);
   const mp=examMapPath();
   /* линия по улицам, а не по прямой между командами: в брифинге и в углу экрана
@@ -9207,12 +9243,13 @@ function examBriefHTML(){
     + (started?'':examModeBtnHTML())
     +'<button data-act="pick" class="ghost">Выбрать уровень</button>';
 }
+/* главная кнопка — безопасная: «Да, прервать» стояло первым синим, и Enter с фокусом на нём обрывал попытку */
 function examAbortHTML(){
-  return '<h2>Прервать экзамен?</h2>'
+  return '<h1>Прервать экзамен?</h1>'
     +'<p>Прогресс попытки не сохранится — маршрут начнётся заново.</p>'
-    +'<button data-act="exam-exit">Да, прервать</button> '
+    +'<button data-act="resume" data-focus>Продолжить экзамен</button> '
     +'<button data-act="route" class="ghost">Показать маршрут</button> '
-    +'<button data-act="resume" class="ghost">Продолжить экзамен</button>';
+    +'<button data-act="exam-exit" class="ghost danger">Прервать</button>';
 }
 /* ---------- провал попытки (строгие уровни) ----------
    Экзамен считает баллы, городские уровни 23–26 — нет: там урок в том, что грубая
@@ -14554,36 +14591,33 @@ function doAct(a){
   /* практика: тот же вариант с начала — уровень не пересобирается, restart возвращает машину, поток и маршрут */
   else if(a==='retry'){ adsInterstitial('again'); restart(); hideOv(); anLevelStart('again'); }
 }
-function ctrlHTML(){ return ''
-  +'<div class="grid2"><ul>'
-  +'<li><span class="kbd">W</span><span class="kbd">↑</span> газ (в сторону селектора)</li>'
-  +'<li><span class="kbd">S</span><span class="kbd">↓</span> тормоз</li>'
-  +'<li><span class="kbd">A</span><span class="kbd">←</span> крутить руль влево</li>'
-  +'<li><span class="kbd">D</span><span class="kbd">→</span> крутить руль вправо</li>'
-  +'<li><span class="kbd">X</span> быстро вернуть руль в ноль</li>'
-  +'<li><span class="kbd">Space</span> тормоз (как S) — держи при переключении из P</li>'
-  +'<li><span class="kbd">Enter</span> сменить направление <b>D ⇄ R</b> одним нажатием</li>'
-  +'<li><span class="kbd">P</span> в паркинг · <span class="kbd">,</span><span class="kbd">.</span> селектор по одной позиции</li>'
-  +'<li>по буквам <b>P R N D</b> в панели можно просто кликнуть мышью</li>'
-  +'</ul><ul>'
-  +'<li><b>мышь / тачпад: тянуть</b> — осмотреться, <b>колесо</b> — приблизить</li>'
-  +'<li><b>камера сама не поворачивается</b> — держит заданный угол</li>'
-  +'<li><span class="kbd">F</span> развернуть камеру за машину · <span class="kbd">[</span><span class="kbd">]</span> по 20°</li>'
-  +'<li><span class="kbd">Q</span><span class="kbd">E</span> поворотники — включай перед каждым манёвром, как на экзамене</li>'
-  +'<li><span class="kbd">J</span> ручник — держит на уклоне; трогание с затянутым душит разгон</li>'
-  +'<li><span class="kbd">V</span> 3-е лицо ⇄ из салона · <span class="kbd">C</span> цикл камер</li>'
-  +'<li><span class="kbd">Shift</span> (держать) — взгляд назад через плечо</li>'
-  +'<li><span class="kbd">O</span> ориентиры манёвра · <span class="kbd">B</span> габариты (выкл → рамка → с метками)</li>'
-  +'<li><span class="kbd">Z</span> зеркала · <span class="kbd">U</span> настройка зеркал (3 пресета)</li>'
-  +'<li><b>тянуть по самому зеркалу</b> — повернуть его под себя, настройка сохраняется</li>'
-  +'<li><span class="kbd">G</span> траектории · <span class="kbd">T</span> след колёс</li>'
-  +'<li><span class="kbd">L</span> выбрать уровень · <span class="kbd">1</span>…<span class="kbd">9</span> первые девять</li>'
-  +'<li><span class="kbd">K</span> редактор своей площадки</li>'
-  +'<li><span class="kbd">Y</span> завершить уровень, когда стоишь в зоне</li>'
-  +'<li><span class="kbd">R</span> заново · <span class="kbd">M</span> звук · <span class="kbd">H</span> помощь</li>'
-  +'<li><span class="kbd">Ё</span> повторить команду голосом (при включённом звуке)</li>'
-  +'<li><span class="kbd">Esc</span> пауза и меню</li>'
-  +'</ul></div>'; }
+/* одна колонка «клавиша — действие» по группам: в панели 560 px две колонки по 260 px рвали каждую строку на
+   две-три, и пара «клавиша · действие · клавиша · действие» в одной строке не читалась */
+const CTRL_GROUPS=[
+  ['Вождение', [
+    ['W ↑','газ (в сторону селектора)'], ['S ↓','тормоз'], ['Space','тормоз (как S) — держи при переключении из P'],
+    ['A ←','крутить руль влево'], ['D →','крутить руль вправо'], ['X','быстро вернуть руль в ноль'],
+    ['Enter','сменить направление <b>D ⇄ R</b> одним нажатием'], ['P','в паркинг'], [', .','селектор по одной позиции'],
+    ['<b>P R N D</b>','по буквам в панели можно просто кликнуть мышью'],
+    ['Q E','поворотники — включай перед каждым манёвром, как на экзамене'],
+    ['J','ручник — держит на уклоне; трогание с затянутым душит разгон']]],
+  ['Камера', [
+    ['<b>тянуть</b>','мышью или тачпадом — осмотреться; колесо — приблизить. Сама камера не поворачивается — держит заданный угол'],
+    ['F','развернуть камеру за машину'], ['[ ]','повернуть камеру на 20°'], ['V','3-е лицо ⇄ из салона'], ['C','цикл камер'],
+    ['Shift','держать — взгляд назад через плечо']]],
+  ['Подсказки и зеркала', [
+    ['O','ориентиры манёвра'], ['B','габариты (выкл → рамка → с метками)'], ['G','траектории'], ['T','след колёс'],
+    ['Z','зеркала'], ['U','настройка зеркал (3 пресета)'],
+    ['<b>тянуть</b>','по самому зеркалу — повернуть его под себя, настройка сохраняется']]],
+  ['Уровни и меню', [
+    ['L','выбрать уровень'], ['1…9','первые девять уровней'], ['K','редактор своей площадки'],
+    ['Y','завершить уровень, когда стоишь в зоне'], ['R','заново'], ['M','звук'], ['H','помощь'],
+    ['Ё','повторить команду голосом (при включённом звуке)'], ['Esc','пауза и меню']]]];
+function ctrlHTML(){
+  const keys=k=>k.indexOf('<')===0 ? k : k.split(' ').map(x=>x==='1…9' ? '<span class="kbd">1</span>…<span class="kbd">9</span>'
+    : '<span class="kbd">'+x+'</span>').join('');
+  return CTRL_GROUPS.map(([h, rows])=>'<h2>'+h+'</h2><ul class="keys">'
+    +rows.map(([k, d])=>'<li><span class="kk">'+keys(k)+'</span><span>'+d+'</span></li>').join('')+'</ul>').join(''); }
 /* уровни по жанрам: в одной сетке из 32 карточек дриллы на габариты и город терялись среди дворовых
    манёвров. Карточки всех вкладок лежат в разметке, видна одна — гейты и вход по .lvcard[data-lvl]
    находят любую */
@@ -14867,10 +14901,34 @@ function menuGo(scr, tab, from){
   showOv(html, scr==='main' ? 'main' : scr==='pause' ? 'pause' : 'panel');
   menu.scr=scr; menu.tab=tab; menu.from=from; menuSync();
   const nb=ovCard.querySelector('.mbody'); if(nb && top) nb.scrollTop=top;
+  const tb=ovCard.querySelector('.mtabs'); if(tb) mtabsSync(tb);
   /* фокус — для клавиатуры: на телефоне клавиатуры нет, а рамка фокуса после тапа выглядит как залипшая кнопка */
   const f=(focusAct && ovCard.querySelector('[data-act="'+focusAct+'"]')) || ovCard.querySelector('[data-focus]');
   if(f && !MOB) try{ f.focus({preventScroll:true}); }catch(e){}
   if(!same) console.info('[menu] экран', scr+(tab?':'+tab:''), from ? '← '+from : '');
+}
+/* ряд вкладок на таче листается: открытая вкладка ставится в поле зрения (на «Свои ★» ряд показывал начало,
+   и открытой вкладки на экране не было), край гаснет, пока справа есть ещё вкладки */
+function mtabsSync(tb){
+  const more=()=>tb.classList.toggle('more', tb.scrollLeft+tb.clientWidth < tb.scrollWidth-2);
+  const on=tb.querySelector('.on');
+  if(on && tb.scrollWidth>tb.clientWidth){
+    const x=on.getBoundingClientRect().left-tb.getBoundingClientRect().left+tb.scrollLeft;
+    tb.scrollLeft=Math.max(0, x-(tb.clientWidth-on.offsetWidth)/2);
+  }
+  more(); tb.onscroll=more;
+  /* шаблон вкладок APG: в ряд попадает только открытая (tabindex 0), между вкладками — стрелки, Home, End */
+  tb.onkeydown=(e)=>{
+    const bs=[...tb.querySelectorAll('[role="tab"]')], i=bs.indexOf(document.activeElement);
+    if(i<0) return;
+    const j = e.key==='ArrowRight' ? (i+1)%bs.length : e.key==='ArrowLeft' ? (i-1+bs.length)%bs.length
+            : e.key==='Home' ? 0 : e.key==='End' ? bs.length-1 : -1;
+    if(j<0) return;
+    e.preventDefault(); e.stopPropagation();
+    doAct(bs[j].dataset.act);
+  };
+  const nb=ovCard.querySelector('.mbody');
+  if(nb && on){ on.id='mtab-on'; nb.setAttribute('role','tabpanel'); nb.setAttribute('aria-labelledby','mtab-on'); }
 }
 function menuBack(){
   if(menu.scr==='pause'){ doAct('resume'); return; }
@@ -14894,8 +14952,8 @@ function menuHead(title, tabs, cur){
   return '<div class="mhead"><button type="button" class="mback" data-act="back" aria-label="Назад"'
     +(tabs?'':' data-focus')+'>←</button><h1>'+title+'</h1></div>'
     +(tabs ? '<div class="mtabs" role="tablist" aria-label="'+title+'">'+tabs.map(t=>
-      '<button type="button" role="tab" aria-selected="'+(t[0]===cur)+'"'+(t[0]===cur?' class="on" data-focus':'')
-      +' data-act="tab:'+t[0]+'">'+t[1]+'</button>').join('')+'</div>' : '');
+      '<button type="button" role="tab" aria-selected="'+(t[0]===cur)+'" tabindex="'+(t[0]===cur?0:-1)+'"'
+      +(t[0]===cur?' class="on" data-focus':'')+' data-act="tab:'+t[0]+'">'+t[1]+'</button>').join('')+'</div>' : '');
 }
 /* вход в уровень из меню: счётчик запусков (первые три — «почему» в карточке раскрыто само) и цепочка
    первого запуска — туториал кнопок, тур по HUD, гайд трогания. Раньше их запускал только «Поехали» */
@@ -16414,7 +16472,7 @@ $('thand').addEventListener('pointerdown',e=>{ e.preventDefault(); initAudio();
 
 /* однократная подсказка: подписи прямо над блоками управления */
 function closeTouchHelp(){
-  $('thelp').classList.remove('on');
+  $('thelp').classList.remove('on','small');
   paused=false;
   let seenOnb=true;
   try{ localStorage.setItem('trainer_hint','1');
@@ -16424,33 +16482,64 @@ function closeTouchHelp(){
 }
 function showTouchHelp(){
   const layer=$('thelp'); layer.innerHTML=''; layer.classList.add('on');
+  /* на телефоне шесть балунов полного размера не помещаются между кнопками: компактные */
+  layer.classList.toggle('small', innerWidth<700 || innerHeight<450);
   /* подсказка накрывает экран — без паузы таймер уровня накручивался, пока её читают */
   paused=true;
   for(const k in input) input[k]=false;
+  /* кнопки — одним рядом по центру; «Во весь экран» — только где браузер его умеет (на iPhone кнопка
+     ничего не делала) */
+  const act=document.createElement('div'); act.className='thact';
+  if(fullAvail() && !isFull()){
+    const fs=document.createElement('button'); fs.textContent='Во весь экран'; fs.className='ghost';
+    fs.addEventListener('click',()=>{ toggleFull(); });
+    act.appendChild(fs);
+  }
+  const ok=document.createElement('button'); ok.textContent='Понятно';
+  ok.addEventListener('click',closeTouchHelp);
+  act.appendChild(ok);
+  layer.appendChild(act);
+  /* балун не ложится ни на другой балун, ни на кнопки полосы: раньше «⟲ — заново» закрывал D, ▶ и ⟲, а «ГАЗ и
+     ТОРМОЗ» — кнопку ВИД (#182). Места перебираются от ближнего к цели — над ней, под ней, сбоку — со
+     сдвигом по вертикали; если чистого места нет, берётся место с наименьшим перекрытием */
+  const R=(el)=>{ const b=el.getBoundingClientRect(); return {l:b.left-4, t:b.top-4, r:b.right+4, b:b.bottom+4}; };
+  const busy=['.tsteer','.tdrive','#tview','#tgear','#trestart','#pauseBtn','#coach'].map(s=>document.querySelector(s))
+    .filter(el=>el && el.getBoundingClientRect().width>0).map(R).concat([R(act)]);
+  const cross=(a,c)=>Math.max(0,Math.min(a.r,c.r)-Math.max(a.l,c.l))*Math.max(0,Math.min(a.b,c.b)-Math.max(a.t,c.t));
   const mark=(sel,text,below)=>{
-    const el=document.querySelector(sel); if(!el) return;
+    const el=document.querySelector(sel); if(!el || !el.getBoundingClientRect().width) return;
     const b=el.getBoundingClientRect();
     const d=document.createElement('div'); d.className='thl'; d.textContent=text;
     layer.appendChild(d);
-    const w=d.offsetWidth, h=d.offsetHeight;
-    let x=b.left+b.width/2-w/2, y=below? b.bottom+10 : b.top-h-10;
-    d.style.left=Math.max(6,Math.min(innerWidth-w-6,x))+'px';
-    d.style.top =Math.max(6,Math.min(innerHeight-h-6,y))+'px';
+    const w=d.offsetWidth, h=d.offsetHeight, cx=b.left+b.width/2;
+    const xs=[cx-w/2, b.left, b.right-w].map(x=>Math.max(6,Math.min(innerWidth-w-6,x)));
+    const ym=b.top+b.height/2-h/2, cands=[];
+    for(let k=0;k<6;k++){
+      const up=b.top-h-10-k*(h+6), dn=b.bottom+10+k*(h+6);
+      for(const y of (below ? [dn, up] : [up, dn])) for(const x of xs) cands.push([x, y, k]);
+      /* сбоку от цели — сразу после ближнего кольца: у кнопок в углах сверху и снизу места нет */
+      if(!k) for(const x of [b.left-w-10, b.right+10]) for(const y of [ym, b.top, b.bottom-h]) cands.push([x, y, 0.5]);
+    }
+    let best=null;
+    for(const [x, y, k] of cands){
+      if(x<6 || x+w>innerWidth-6 || y<6 || y+h>innerHeight-6) continue;
+      const box={l:x, t:y, r:x+w, b:y+h}, over=busy.reduce((s,c)=>s+cross(box,c),0);
+      /* перекрытие решает, дальность — при равном: чистое место в двух кольцах лучше залезания рядом */
+      const cost=over*12+k*w*h*0.6;
+      if(!best || cost<best.cost) best={x, y, cost};
+      if(!over && !k) break;
+    }
+    if(!best) best={x:xs[0], y:Math.max(6,Math.min(innerHeight-h-6,b.top-h-10))};
+    d.style.left=best.x+'px'; d.style.top=best.y+'px';
+    busy.push({l:best.x-4, t:best.y-4, r:best.x+w+4, b:best.y+h+4});
   };
+  /* сначала нижняя полоса — у её кнопок одно естественное место, над ними; углы подстраиваются после */
   mark('.tsteer','◀ ▶ — крутить руль, 0 — вернуть его в ноль');
-  mark('.tdrive','ГАЗ и ТОРМОЗ');
-  mark('#tview','ВИД — переключить камеру: из салона, сверху, сзади');
   mark('#tgear','Коробка: тапни D — поехали, R — задний ход');
+  mark('#tview','ВИД — переключить камеру: из салона, сверху, сзади');
+  mark('.tdrive','ГАЗ и ТОРМОЗ');
   mark('#pauseBtn','Пауза: задание, настройки, уровни', true);
   mark('#trestart','⟲ — начать уровень заново', true);
-  const fs=document.createElement('button'); fs.textContent='Во весь экран';
-  fs.style.cssText='left:50%;top:calc(50% - 30px);transform:translate(-50%,-50%)'; fs.className='ghost';
-  fs.addEventListener('click',()=>{ toggleFull(); });
-  layer.appendChild(fs);
-  const ok=document.createElement('button'); ok.textContent='Понятно';
-  ok.style.cssText='left:50%;top:calc(50% + 30px);transform:translate(-50%,-50%)';
-  ok.addEventListener('click',closeTouchHelp);
-  layer.appendChild(ok);
 }
 /* ---------- онбординг HUD ---------- */
 /* пошаговый тур по элементам, на которые ссылаются подсказки: без него новичок не знает,

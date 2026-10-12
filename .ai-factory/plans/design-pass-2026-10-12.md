@@ -41,7 +41,7 @@ CLAUDE.md главнее style-lock. Новый цвет — только чер
 - [x] Task 3: style-lock: сверка с CLAUDE.md (backdrop-filter, ≡-меню, счётчик, mt-check)
 
 ### Фаза 2 — каркас
-- [ ] Task 4: `/better-layout` → `/better-colors` → `/better-accessibility` по находкам аудита
+- [x] Task 4: `/better-layout` → `/better-colors` → `/better-accessibility` по находкам аудита
   (экран со сломанной структурой — `/web-design-engineer` вместо трёх)
 
 ### Фаза 3 — детали

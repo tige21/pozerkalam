@@ -2,7 +2,7 @@
 /* Главное меню, пауза и машина на подиуме — коды app-menu в specs/features/app/menu.feature.
    Запуск (playwright-core ставится во временную папку, см. cockpit-shots.mjs):
      PW_DIR=/tmp/pw node tools/menu-check.mjs
-     FAULT=sections|tabs|esc|pausebtn|fit|persist|play|showroom|hud|proflayout PW_DIR=/tmp/pw node tools/menu-check.mjs
+     FAULT=sections|tabs|tabsreach|esc|pausebtn|fit|persist|play|showroom|hud|proflayout PW_DIR=/tmp/pw node tools/menu-check.mjs
    FAULT ломает одно поведение в странице — соответствующая проверка обязана покраснеть, иначе она
    зелёная по построению.
    Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена. */
@@ -48,6 +48,9 @@ const FAULTS = {
   showroom: () => { drawShowroom = function () { ctx.fillStyle = '#0e151f'; ctx.fillRect(0, 0, W, H); }; },
   hud: () => { const s = document.createElement('style'); s.textContent = 'body.menu #bar,body.menu #coach{display:flex!important}'; document.head.appendChild(s); },
   tabs: () => { const s = document.createElement('style'); s.textContent = '.lvgrid[hidden]{display:grid!important}'; document.head.appendChild(s); },
+  /* прежний ряд вкладок: одна строка без переноса, открытая вкладка не прокручивается в поле зрения */
+  tabsreach: () => { const s = document.createElement('style'); s.textContent = '.mtabs{flex-wrap:nowrap!important;overflow-x:auto!important}'; document.head.appendChild(s);
+    mtabsSync = function () {}; },
   /* прежняя вёрстка профиля: плитки автосеткой с сиротой, кнопки входа в две колонки с переносом, чип без предела */
   proflayout: () => { const s = document.createElement('style'); s.textContent = '.ptiles{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))!important}'
     + '.ptile{grid-column:auto!important}body.compact #overlay .acctbtns{grid-template-columns:1fr 1fr!important}#overlay .acctbtns button{white-space:normal!important}'
@@ -302,6 +305,37 @@ await guard('app-menu-fit', async () => {
   }
   check('кнопки главного меню и паузы в окне и не друг на друге, разделы не шире панели — 5 телефонов и 2 экрана ПК (@app-menu-fit)',
     bad.length === 0, bad.slice(0, 8).join(' | ') + (bad.length > 8 ? ` … ещё ${bad.length - 8}` : ''));
+});
+
+/* ---------- вкладки достижимы ---------- */
+/* на ПК мышью ряд не листается — вкладки обязаны стоять в панели целиком; на таче ряд листается, но открытая
+   вкладка обязана быть в поле зрения ряда (на «Свои ★» ряд показывал начало, и открытой вкладки не было) */
+await guard('app-menu-tabs-reach', async () => {
+  const bad = [];
+  const screens = phones.map(([w, h]) => [w, h, true]).concat([[1280, 720, false], [1440, 900, false]]);
+  for (const [w, h, touch] of screens) {
+    const p = await open({ width: w, height: h }, { touch, dpr: touch ? 2 : 1 });
+    const r = await p.evaluate((touch) => {
+      const out = [];
+      const secs = [['levels', LEVEL_TABS.map(t => t[0])], ['settings', SET_TABS.map(t => t[0])], ['help', HELP_TABS.map(t => t[0])]];
+      for (const [sec, tabs] of secs) for (const tab of tabs) {
+        menuGo(sec, tab, 'main');
+        const row = ovCard.querySelector('.mtabs'), rr = row.getBoundingClientRect(), card = ovCard.getBoundingClientRect();
+        const box = touch ? rr : card;
+        const list = touch ? [row.querySelector('.on')] : [...row.querySelectorAll('button')];
+        for (const b of list) {
+          const q = b.getBoundingClientRect();
+          if (q.left < box.left - 0.5 || q.right > box.right + 0.5) out.push(sec + '/' + tab + ': «' + b.textContent.trim() + '» за краем ' + (touch ? 'ряда' : 'панели'));
+        }
+      }
+      menuGo('main');
+      return out;
+    }, touch);
+    for (const x of r) bad.push(`${w}x${h} ${x}`);
+    await p.close();
+  }
+  check('вкладки разделов достижимы: на ПК все в панели, на таче открытая — в поле зрения ряда — 5 телефонов и 2 экрана ПК (@app-menu-tabs-reach)',
+    bad.length === 0, bad.slice(0, 6).join(' | ') + (bad.length > 6 ? ` … ещё ${bad.length - 6}` : ''));
 });
 
 /* ---------- настройки переживают перезагрузку ---------- */
