@@ -480,7 +480,7 @@ body.touch #coach:not(.open){background:none;border:none;box-shadow:none;padding
 body.touch #coach:not(.open) .cm{min-width:0;overflow:hidden;text-overflow:ellipsis}
 /* на 568 px чипы «P · тормоз и D», «через 120 м», «баллы 3» съедали всю строку и команды не было видно вовсе:
    в свёрнутой строке — команда и метры, передача горит на ряду P R N D, баллы — в раскрытой карточке */
-body.touch #coach:not(.open) .ctag.cpre,body.touch #coach:not(.open) .ctag+.ctag{display:none}
+body.touch #coach:not(.open) .ctag.cpre,body.touch #coach:not(.open) .ctag.cs{display:none}
 body.touch #coach:not(.open) .cg,body.touch #coach:not(.open) .ci,body.touch #coach:not(.open) .cgear,
 body.touch #coach:not(.open) .cw,body.touch #coach:not(.open) .cbl{flex:none}
 body.touch #coach.k-stop:not(.open) .cm{color:#ffa3ab}
@@ -13462,7 +13462,7 @@ function coachCard(kind, icon, main, goal, ph){
   if(key===coachKey) return;
   coachKey=key;
   const el=$('coach');
-  el.className='k-'+kind+(why?' haswhy':'')+(coachLineOpen?' open':'')+(!main && !icon && !goal ? ' empty' : '');
+  el.className='k-'+kind+(why?' haswhy':'')+(coachLineOpen?' open':'')+(!main && !icon && !goal && !pre && !post ? ' empty' : '');
   let m=null;
   if(goal && goal.metric){
     m=COACH_METRICS[goal.metric];
@@ -13487,7 +13487,7 @@ function coachCard(kind, icon, main, goal, ph){
   /* main/why — через textContent: сюда попадают имена пользовательских площадок */
   el.querySelector('.cm').textContent=main;
   if(pre||post){ const tg=el.querySelectorAll('.ctag'), all=(pre||[]).concat(post||[]);
-    for(let i=0;i<tg.length;i++) tg[i].textContent=all[i]; }
+    for(let i=0;i<tg.length;i++){ tg[i].textContent=all[i]; tg[i].classList.toggle('cs', /^баллы /.test(all[i])); } }
   if(open) el.querySelector('.cwhy').textContent=why;
   if(goal){
     el.querySelector('.cgt').textContent = m ? '→ цель '+m.fmt(goal.target) : goal.text;
@@ -14380,7 +14380,7 @@ function crashHit(where, e){
   const msg='Что-то сломалось в кадре — перезапусти уровень'+(MOB?' кнопкой ⟲':' (R)');
   toast(msg, 6);
   /* тост рисует сам updateHUD; если упал он — карточку пишем напрямую, иначе игрок не узнает */
-  if(where==='hud'){ try{ const c=$('coach'); if(c) c.textContent='⚠ '+msg; }catch(err){} }
+  if(where==='hud'){ try{ const c=$('coach'); if(c){ c.classList.remove('empty'); c.textContent='⚠ '+msg; } }catch(err){} }
 }
 window.addEventListener('error', ev=>{ crashReport('window', ev.error||ev.message); });
 window.addEventListener('unhandledrejection', ev=>{ crashReport('promise', ev.reason); });
@@ -14570,7 +14570,9 @@ function doAct(a){
     adsRewarded(()=>{ opt.guides=true;
       toast('Путь показа включён — смотри фиолетовую ленту', 3.5); });
     return; }
-  if(a==='exam-abort'){ showOv(examAbortHTML()); return; }
+  if(a==='exam-abort'){ showOv(examAbortHTML());
+    const f=ovCard.querySelector('[data-focus]'); if(f && !MOB) try{ f.focus({preventScroll:true}); }catch(e){}
+    return; }
   if(a==='exam-start'){ const ei=examLevelIdx(); if(ei>=0) openLevel(ei,'pick'); return; }
   if(a.indexOf('auth:')===0){ authStart(a.slice(5)); return; }
   if(a==='auth-cancel'){ const w=authWait; authWaitEnd(); if(w) console.info('[auth] вход отменён игроком'); return; }
@@ -16589,6 +16591,13 @@ function showTouchHelp(){
   mark('#pauseBtn','Пауза: задание, настройки, уровни', true);
   mark('#trestart','⟲ — начать уровень заново', true);
 }
+/* «Во весь экран» и поворот меняют размер окна — балуны туториала раскладываются заново, тур HUD живёт своим */
+let thResizeT=0;
+window.addEventListener('resize',()=>{
+  const l=$('thelp');
+  if(!l.classList.contains('on') || !l.querySelector('.thact')) return;
+  clearTimeout(thResizeT); thResizeT=setTimeout(()=>{ if(l.classList.contains('on') && l.querySelector('.thact')) showTouchHelp(); },200);
+});
 /* ---------- онбординг HUD ---------- */
 /* пошаговый тур по элементам, на которые ссылаются подсказки: без него новичок не знает,
    где искать «угол к цели» и «зазоры», о которых говорит карточка */

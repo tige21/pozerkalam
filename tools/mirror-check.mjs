@@ -106,7 +106,7 @@ const menuItem = await page.evaluate(() => { menuGo('settings', 'mirrors', 'game
   const row = [...document.querySelectorAll('#overlay .srow')].find(r => /Размер зеркал/.test(r.textContent));
   const t = row ? row.textContent.replace(/\s+/g, ' ').trim() : null;
   doAct('back');
-  return t && /\d+%/.test(t) && row.querySelector('[data-act^="set:mirscale:"]') ? t : null; });
+  return t && /\d+\s?%/.test(t) && row.querySelector('[data-act^="set:mirscale:"]') ? t : null; });
 check('в настройках есть строка размера зеркал', !!menuItem, menuItem || 'строки нет');
 
 /* --- телефон --- */
