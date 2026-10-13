@@ -147,6 +147,23 @@ const PROBE = `(() => {
     if ((el.tagName === 'BUTTON' || el.dataset.hold || el.dataset.gear || el.dataset.blink) && (r.width < 40 || r.height < 40)) out.tight.push(name(el) + ' ' + Math.round(r.width) + '×' + Math.round(r.height));
   }
   for (const k in out) out[k] = [...new Set(out[k])].slice(0, 30);
+  /* объём текста: слова в видимых текстовых узлах окна и HUD, и во сколько экранов прокрутка окна —
+     по этим двум числам видно, где текста больше, чем прочитают за один взгляд */
+  const words = { overlay: 0, hud: 0 };
+  const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let n; (n = walk.nextNode());) {
+    const el = n.parentElement, t = n.textContent.trim();
+    if (!t || !el || el.closest('#assets,script,style,template') || !vis(el)) continue;
+    const w = t.split(/\\s+/).filter(x => /[\\p{L}\\d]/u.test(x)).length;
+    words[el.closest('#overlay') ? 'overlay' : 'hud'] += w;
+  }
+  out.words = words;
+  out.scroll = [];
+  for (const el of document.querySelectorAll('#overlay, #overlay *')) {
+    const s = getComputedStyle(el);
+    if (!/(auto|scroll)/.test(s.overflowY) || el.clientHeight < 40) continue;
+    if (el.scrollHeight > el.clientHeight + 4) out.scroll.push(name(el).slice(0, 40) + ' ' + (el.scrollHeight / el.clientHeight).toFixed(2));
+  }
   return out;
 })()`;
 

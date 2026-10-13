@@ -677,7 +677,9 @@ let offerViewA = [], offerClickA = [];
   const r = await page.evaluate((fault) => {
     if (fault === 'premiumsite') window.paySite = () => true;
     doAct('start'); showLevelPick();
-    const card = (i) => { const c = document.querySelector('.lvcard[data-lvl="' + i + '"]'); return { lock: c.classList.contains('locked'), d: c.querySelector('.d').textContent }; };
+    /* у непройденной открытой карточки строки .d нет: под названием только прогресс или замок */
+    const card = (i) => { const c = document.querySelector('.lvcard[data-lvl="' + i + '"]'), d = c.querySelector('.d');
+      return { lock: c.classList.contains('locked'), d: d ? d.textContent : '' }; };
     const out = { l10: card(9), l11: card(10), l32: card(31), path: noviceIdx().every((i) => !levelLocked(i)) };
     openLevel(10, 'pick'); const ov = document.getElementById('overlay');
     out.pay = { shown: !!ov.querySelector('.paywall'), price: /149 ₽ навсегда/.test(ov.textContent), login: ov.querySelectorAll('.acctbtns button').length,
