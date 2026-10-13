@@ -2,7 +2,7 @@
 /* Главное меню, пауза и машина на подиуме — коды app-menu в specs/features/app/menu.feature.
    Запуск (playwright-core ставится во временную папку, см. cockpit-shots.mjs):
      PW_DIR=/tmp/pw node tools/menu-check.mjs
-     FAULT=sections|tabs|tabsreach|esc|pausebtn|fit|persist|play|showroom|hud|proflayout PW_DIR=/tmp/pw node tools/menu-check.mjs
+     FAULT=sections|tabs|tabsreach|esc|pausebtn|fit|persist|play|resexit|showroom|hud|proflayout PW_DIR=/tmp/pw node tools/menu-check.mjs
    FAULT ломает одно поведение в странице — соответствующая проверка обязана покраснеть, иначе она
    зелёная по построению.
    Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена. */
@@ -45,6 +45,8 @@ const FAULTS = {
   fit: () => { const s = document.createElement('style'); s.textContent = '#overlay .mm-item,#overlay .pstack button{padding:40px 18px!important}'; document.head.appendChild(s); },
   persist: () => { setOpt = function (k, v) { opt[k] = !!v; }; setRefs = function (v) { opt.refs = v; }; },
   play: () => { playTarget = function () { return { i: 0, why: 'FAULT' }; }; },
+  /* итоги без выхода в главное меню — заголовок, как был до 13.10.2026 */
+  resexit: () => { resHead = function (t) { return '<h1>' + t + '</h1>'; }; },
   showroom: () => { drawShowroom = function () { ctx.fillStyle = '#0e151f'; ctx.fillRect(0, 0, W, H); }; },
   hud: () => { const s = document.createElement('style'); s.textContent = 'body.menu #bar,body.menu #coach{display:flex!important}'; document.head.appendChild(s); },
   tabs: () => { const s = document.createElement('style'); s.textContent = '.lvgrid[hidden]{display:grid!important}'; document.head.appendChild(s); },
@@ -335,6 +337,55 @@ await guard('app-menu-tabs-reach', async () => {
     await p.close();
   }
   check('вкладки разделов достижимы: на ПК все в панели, на таче открытая — в поле зрения ряда — 5 телефонов и 2 экрана ПК (@app-menu-tabs-reach)',
+    bad.length === 0, bad.slice(0, 6).join(' | ') + (bad.length > 6 ? ` … ещё ${bad.length - 6}` : ''));
+});
+
+/* ---------- с итогов — в главное меню ---------- */
+/* итоги, провал и протоколы держат game.done: Esc их не закрывает, «Выбрать уровень» ведёт только в список.
+   Выход в главное меню — стрелка у заголовка; после него «Играть» обязан начать уровень заново, а не вернуть
+   на замороженный итог */
+const RESULT_SCREENS = [
+  ['итог урока', `openLevel(6,'pick'); game.t = 23.4; win()`],
+  ['итог дрилла', `openLevel(13,'pick'); game.t = 11; win()`],
+  ['итог городского урока', `openLevel(22,'pick'); game.t = 48; win()`],
+  ['провал урока', `openLevel(22,'pick'); failAttempt('redlight', PENALTIES.redlight.txt)`],
+  ['экзамен не сдан', `setExamMode('real'); openLevel(examLevelIdx(),'pick'); doAct('brief'); exam.score = 11; examFail(PENALTIES.yield.txt)`],
+  ['экзамен сдан', `setExamMode('real'); openLevel(examLevelIdx(),'pick'); doAct('brief'); exam.score = 3; game.t = 214; examPass()`],
+  ['итог практики', `openLevel(22,'pick','practice'); doAct('brief'); exam.score = 3; practiceEnd(true)`],
+];
+await guard('app-menu-result-exit', async () => {
+  const bad = [];
+  for (const [w, h, touch] of [[1280, 720, false], [844, 390, true], [568, 320, true]]) {
+    const p = await open({ width: w, height: h }, { touch, dpr: touch ? 2 : 1 });
+    for (const [name, setup] of RESULT_SCREENS) {
+      await p.evaluate(setup);
+      await p.waitForTimeout(150);
+      const b = await p.evaluate(() => {
+        const el = ovCard.querySelector('[data-act="mainmenu"]');
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height,
+          inView: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight, done: game.done };
+      });
+      if (!b) { bad.push(`${w}x${h} ${name}: нет кнопки в главное меню`); continue; }
+      if (!b.done) bad.push(`${w}x${h} ${name}: экран собран не из итога (game.done=false)`);
+      if (!b.inView) bad.push(`${w}x${h} ${name}: кнопка за краем экрана`);
+      if (Math.min(b.w, b.h) < 36) bad.push(`${w}x${h} ${name}: кнопка ${b.w.toFixed(0)}×${b.h.toFixed(0)} px — мельче 36`);
+      if (b.inView) {
+        await p.mouse.click(b.x, b.y);
+        const after = await p.evaluate(() => {
+          const inMain = menu.root === 'main' && menu.scr === 'main' && document.body.classList.contains('menu');
+          doAct('play');
+          return { inMain, done: game.done };
+        });
+        if (!after.inMain) bad.push(`${w}x${h} ${name}: нажатие не привело в главное меню`);
+        if (after.done) bad.push(`${w}x${h} ${name}: «Играть» после выхода вернуло на замороженный итог`);
+      }
+      await p.evaluate(() => { setExamMode('train'); hideOv(); });
+    }
+    await p.close();
+  }
+  check('с итогов, провала и протоколов экзамена и практики стрелка ведёт в главное меню, «Играть» начинает заново — ПК и 2 телефона (@app-menu-result-exit)',
     bad.length === 0, bad.slice(0, 6).join(' | ') + (bad.length > 6 ? ` … ещё ${bad.length - 6}` : ''));
 });
 

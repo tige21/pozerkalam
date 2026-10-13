@@ -902,6 +902,10 @@
 
 
 
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -9203,7 +9207,7 @@ function roadsSvg(px, py){
   return s;
 }
 function examFailHTML(){
-  return '<h1>Экзамен не сдан</h1>'
+  return resHead('Экзамен не сдан')
     +'<p><b>'+(exam.failWhy||'Набрано '+exam.score+' штрафных баллов')+'</b></p>'
     +'<p>Штрафные баллы: <b>'+exam.score+'</b> (допускается до '+(EXAM_FAIL_SUM-1)+')</p>'
     +(exam.failNote ? '<p class="sd">'+exam.failNote+'</p>' : '')
@@ -9340,7 +9344,7 @@ const FAIL_RULE={
 };
 function levelFailHTML(){
   const rule=FAIL_RULE[attempt.code]||'', tr=EXAM_TRAIN[attempt.code];
-  return '<h1>Попытка не засчитана</h1>'
+  return resHead('Попытка не засчитана')
     +'<p><b>'+attempt.why+'</b></p>'
     +(rule?'<p style="color:#93a7bd">'+rule+'</p>':'')
     +'<ul class="loglist">'+attempt.log.map(l=>'<li>'+l.txt
@@ -9906,7 +9910,7 @@ function examNextHTML(){
     +'Маршрут каждый раз новый — сдай три.</p>';
 }
 function examPassHTML(){
-  return '<h1>Экзамен сдан</h1>'
+  return resHead('Экзамен сдан')
     +'<p>Штрафные баллы: <b>'+exam.score+'</b> из допустимых '+(EXAM_FAIL_SUM-1)+'</p>'
     +examSvg()
     +'<ul class="loglist">'+examLogRows()+'</ul>'
@@ -10293,7 +10297,7 @@ function practiceResultHTML(pass){
   const head = !pass ? '<p><b>'+esc(exam.failWhy||'')+'</b></p>'
     : '<p>Штрафные баллы: <b>'+exam.score+'</b> из допустимых '+(EXAM_FAIL_SUM-1)+(clean?' — чисто.':'.')+'</p>';
   const p=progOf(d.name), r=p && p.practice;
-  return '<h1>'+(clean ? 'Практика — чисто' : pass ? 'Практика — зачёт с ошибками' : 'Практика — не засчитано')+'</h1>'
+  return resHead(clean ? 'Практика — чисто' : pass ? 'Практика — зачёт с ошибками' : 'Практика — не засчитано')
     +'<p class="sd">'+esc(d.name)+' · вариант '+((level.pvar&&level.pvar.id)||'')+'</p>'
     +head + examSvg()
     +(rows ? '<ul class="startlist viol">'+rows+'</ul>' : '')
@@ -14726,6 +14730,8 @@ function touchCtrlHTML(){ return ''
 /* замок и телефон — штрихом в цвет текста: цветные эмодзи 🔒 и 📱 рисовались по-своему на каждой системе */
 const ICON_LOCK='<svg class="lk" role="img" aria-label="закрыт" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></svg>';
 const LOGO_SVG='<svg viewBox="0 0 256 128" aria-hidden="true"><g fill="none"><rect x="10.5" y="24.5" width="235" height="79" rx="30" stroke="#fff" stroke-width="13"/><path d="M42 97H72L118 50H110Z" fill="#fff"/><path d="M214 97H184L138 50H146Z" fill="#fff"/><path d="M128 56 151 92 128 80 105 92Z" fill="#ffd63c"/></g></svg>';
+/* стрелка «назад» — штрихом: символ ← системный шрифт рисует с наконечником толще древка и ниже оси */
+const ICON_BACK='<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>';
 const ICON_GEAR='<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
 /* «Играть» ведёт туда, где игрок остановился: последний открытый уровень, пока он не пройден, иначе
    первый непройденный после него. Хранится имя, а не номер — номера съезжают, когда вставляют уровни */
@@ -14831,7 +14837,7 @@ function winHTML(){
       ? '<p style="color:#93a7bd;font-size:13px">Без габаритных ориентиров — как в реальной машине.</p>'
       : '<p style="color:#93a7bd;font-size:13px">Дальше — то же с выключенными габаритами'
         +(MOB ? ': настройки, вкладка «Подсказки».' : ': <b>B</b> до «выкл».')+'</p>';
-    return '<h1>'+level.def.name+' — зачёт</h1>'
+    return resHead(level.def.name+' — зачёт')
     +'<p>Ошибка: <b>'+cm+' см</b> · оценка: <b>'+precGrade()+'</b>'
     +(game.hits?' · касаний: <b>'+game.hits+'</b>':'')+'</p>' + rec + blind
     +(level.def.transfer?'<h2>Запомни для реальной дороги</h2><p>'+level.def.transfer+'</p>':'')
@@ -14845,7 +14851,7 @@ function winHTML(){
       +(p.n>1 && game.t<=p.best?' — это твой рекорд':'')+'</p>' : '';
   const advice = game.hits>0
     ? '<p style="color:#93a7bd;font-size:13px">Дальше — без касаний: веди на крипе, стой, когда зазор меньше 0,3 м.</p>' : '';
-  return '<h1>'+level.def.name+' — зачёт</h1>'
+  return resHead(level.def.name+' — зачёт')
   +'<p>Время: <b>'+game.t.toFixed(1).replace('.',',')+'&nbsp;с</b> · '
   +(game.hits ? 'касаний: <b>'+game.hits+'</b>' : 'без касаний')+'</p>' + rec + advice
   +(level.def.transfer?'<h2>Запомни для реальной дороги</h2><p>'+level.def.transfer+'</p>':'')
@@ -14877,7 +14883,7 @@ function cityWinHTML(p){
   const rec = p ? '<p class="sd">Пройден <b>'+p.n+'</b> '+plural(p.n,'раз','раза','раз')+', чисто — <b>'+(p.clean||0)+'</b>.</p>' : '';
   /* что такое практика — подписью под кнопкой, как имя следующего уровня: абзац «Учёба вела тебя
      подсказками…» и наставление «чистым считается…» пересказывали заголовок и кнопку */
-  return '<h1>'+level.def.name+(clean?' — чисто':' — пройден с ошибками')+'</h1>'
+  return resHead(level.def.name+(clean?' — чисто':' — пройден с ошибками'))
     +'<p>'+head.charAt(0).toUpperCase()+head.slice(1)+'</p>'
     +(rows?'<ul class="startlist viol">'+rows+'</ul>':'')
     +rec
@@ -14980,10 +14986,16 @@ function ovRestore(s){
 }
 function menuHead(title, tabs, cur){
   return '<div class="mhead"><button type="button" class="mback" data-act="back" aria-label="Назад"'
-    +(tabs?'':' data-focus')+'>←</button><h1>'+title+'</h1></div>'
+    +(tabs?'':' data-focus')+'>'+ICON_BACK+'</button><h1>'+title+'</h1></div>'
     +(tabs ? '<div class="mtabs" role="tablist" aria-label="'+title+'">'+tabs.map(t=>
       '<button type="button" role="tab" aria-selected="'+(t[0]===cur)+'" tabindex="'+(t[0]===cur?0:-1)+'"'
       +(t[0]===cur?' class="on" data-focus':'')+' data-act="tab:'+t[0]+'">'+t[1]+'</button>').join('')+'</div>' : '');
+}
+/* заголовок итогов, провала и протоколов: та же стрелка, что в шапке разделов, но ведёт в главное меню.
+   Esc с этих экранов не уходит (game.done держит физику), а «Выбрать уровень» открывает только список */
+function resHead(title){
+  return '<div class="reshead"><button type="button" class="mback" data-act="mainmenu" aria-label="Главное меню"'
+    +' title="Главное меню">'+ICON_BACK+'</button><h1>'+title+'</h1></div>';
 }
 /* вход в уровень из меню: счётчик запусков (первые три — «почему» в карточке раскрыто само) и цепочка
    первого запуска — туториал кнопок, тур по HUD, гайд трогания. Раньше их запускал только «Поехали» */
