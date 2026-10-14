@@ -196,7 +196,10 @@ body.needbrake .tdrive [data-hold="back"]{background:rgba(190,52,52,.8);border-c
 #overlay ul.keys{margin:4px 0 0}
 #overlay ul.keys li{display:grid;grid-template-columns:92px 1fr;gap:10px;align-items:baseline;margin:0 0 6px;line-height:1.45}
 #overlay ul.keys .kk{white-space:nowrap;color:#cfe0f0}
-.lvgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:9px;margin-top:10px}
+/* не больше двух колонок, нечётная последняя карточка — во всю ширину: одна в ряду, она оставляла рядом дыру
+   в полпанели (13 во «Дворе», 31 в практике) — как плитки профиля */
+.lvgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(210px,calc(50% - 5px)),1fr));gap:9px;margin-top:10px}
+.lvgrid>button:last-child:nth-child(odd){grid-column:1/-1}
 /* вкладки «Уровни» прячут чужие сетки атрибутом hidden, а display:grid выше по весу его перебивал */
 .lvgrid[hidden]{display:none}
 /* карточка уровня — настоящая кнопка: div с onclick не попадал в Tab, и уровни 10–32 были
@@ -233,7 +236,7 @@ body.needbrake .tdrive [data-hold="back"]{background:rgba(190,52,52,.8);border-c
    и обрывались на полуслове, а на «Город и экзамен» давали 440 слов на одной панели */
 .lvcard .d{font-size:11.5px;color:#93a7bd;line-height:1.4;text-wrap:pretty;
   display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden}
-body.compact .lvgrid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px}
+body.compact .lvgrid{grid-template-columns:repeat(auto-fill,minmax(max(150px,calc(50% - 3px)),1fr));gap:6px}
 body.compact #overlay button.lvcard{margin:0;padding:6px 8px;font-size:13px}
 body.compact .lvcard .t{font-size:12px}
 body.compact .lvcard .d{display:none}
@@ -251,11 +254,18 @@ button.ghost{background:transparent;border-color:rgba(255,255,255,.16);color:#b9
 #overlay button{margin:18px 8px 0 0}
 /* три хода итогов — один ряд; имя следующего уровня подписано под его кнопкой: сбоку оно
    в карточку 760 px не помещалось и сталкивало главную кнопку на вторую строку */
-#overlay .winacts{display:flex;flex-wrap:wrap;align-items:flex-start;gap:10px 8px;margin-top:18px}
-#overlay .winacts button{margin:0}
-/* четыре хода итога практики — квадратом 2 × 2: в ряд по flex четвёртая кнопка уезжала одна на второй ряд */
-#overlay .winacts.w4{display:grid;grid-template-columns:repeat(2,max-content)}
-#overlay .nextgo{display:flex;flex-direction:column;align-items:stretch;gap:5px;min-width:0;max-width:300px}
+/* ходы делят ширину карточки: по своей ширине они оставляли справа 160 px пустоты, а 2 × 2 итога практики
+   стоял на половине карточки (владелец 15.10.2026 — «кнопки не всё место занимают») */
+#overlay .winacts{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:8px;align-items:start;margin-top:18px}
+#overlay .winacts button{margin:0;width:100%}
+/* четыре хода итога практики — квадратом 2 × 2: третья колонка выкинула бы четвёртую кнопку одну на второй ряд */
+#overlay .winacts.w4{grid-template-columns:1fr 1fr}
+#overlay .nextgo{display:flex;flex-direction:column;align-items:stretch;gap:5px;min-width:0}
+/* остальные ряды ходов карточки — во всю ширину: не влезли в строку — переносятся, и новый ряд снова во всю
+   ширину; прижатые влево, они оставляли справа до 400 px пустоты */
+#overlay .acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+/* поровну, но не уже подписи: строка переносится раньше, чем подпись разломится на две */
+#overlay .acts>button{flex:1 1 0;min-width:max-content;margin:0}
 #overlay .nextname{font-size:12.5px;line-height:1.35;color:#9fd0ff;text-align:center}
 #overlay .nextgo.solo{display:inline-flex;max-width:none;margin-top:6px}
 #overlay .nextgo.solo button{margin:0}
@@ -265,7 +275,8 @@ button.ghost{background:transparent;border-color:rgba(255,255,255,.16);color:#b9
 /* вход: две тихие кнопки под главной — «Поехали» остаётся единственной громкой, гость просто едет */
 #overlay .acct{margin:14px 0 6px}
 #overlay .acctlead{margin:0 0 8px;font-size:13.5px;color:#c3d2e2}
-#overlay .acctbtns{display:flex;flex-wrap:wrap;gap:8px}
+/* пара кнопок входа — во всю ширину карточки или панели; где обе подписи в строку не влезают, столбиком */
+#overlay .acctbtns{display:grid;grid-template-columns:repeat(auto-fit,minmax(212px,1fr));gap:8px}
 #overlay .acctbtns button{margin:0}
 #overlay button.oauth{display:inline-flex;align-items:center;justify-content:center;gap:10px;height:48px;
   padding:0 22px;border:0;border-radius:24px;font-size:15px;font-weight:600;color:#fff}
@@ -306,7 +317,7 @@ body.compact #overlay .gbseg button,body.compact #overlay.lay-card .gbseg button
   font-family:inherit;font-size:14px;line-height:1.5;color:#e6eef7;background:rgba(0,0,0,.32);
   border:1px solid rgba(255,255,255,.16);border-radius:10px}
 #overlay textarea.fbfield{min-height:118px;resize:vertical}
-#overlay .promorow{display:flex;gap:8px;align-items:stretch;max-width:420px}
+#overlay .promorow{display:flex;gap:8px;align-items:stretch}
 #overlay .promorow .fbfield{margin-top:0;flex:1;min-width:0;text-transform:uppercase}
 /* код вводится капсом, а пример в пустом поле — обычным регистром: «НАПРИМЕР, VK2026» кричал */
 #overlay .promorow .fbfield::placeholder{text-transform:none}
@@ -548,16 +559,15 @@ body.compact #overlay li{font-size:12.5px;line-height:1.6}
 body.compact #overlay.lay-card button{width:100%;margin-top:12px;padding:14px;font-size:16px}
 /* на телефоне три хода итогов стоят в один ряд: столбиком во всю ширину «Следующий уровень»
    уезжал за нижний край, и главную кнопку надо было искать прокруткой */
-body.compact #overlay .winacts{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:8px;align-items:start;margin-top:12px}
-/* итог практики — четыре хода: квадратом 2 × 2, третья колонка выкинула бы четвёртую кнопку одну на второй ряд */
-body.compact #overlay .winacts.w4{grid-template-columns:1fr 1fr}
+body.compact #overlay .winacts,body.compact #overlay .acts{margin-top:12px}
 body.compact #overlay .winacts button{margin:0;padding:12px 8px;font-size:14.5px}
-body.compact #overlay .nextgo{gap:4px;max-width:none}
+/* ряд, а не столбик во всю ширину: четыре кнопки провала столбиком уводили последнюю за нижний край */
+body.compact #overlay .acts>button{width:auto;margin:0}
+body.compact #overlay .nextgo{gap:4px}
 body.compact #overlay .nextname{font-size:12px;text-align:center}
 body.compact #overlay button.linkbtn{width:auto;margin:0;padding:5px 0;font-size:12.5px}
 /* на телефоне кнопки входа — пара в один ряд, где обе подписи влезают в строку (столбиком во всю ширину они
    сталкивали подсказку за край); на 568–740 px пара переносила «Войти через VK / ID» на две строки — там столбик */
-body.compact #overlay .acctbtns{display:grid;grid-template-columns:repeat(auto-fit,minmax(212px,1fr));gap:8px}
 body.compact #overlay .acctbtns button{width:auto;margin:0;padding:11px 6px;font-size:14px;white-space:nowrap}
 body.compact #overlay .acctbtns button.oauth{height:44px;padding:0 8px;gap:8px;font-size:14px}
 body.compact #overlay button.oauth svg{width:20px;height:20px}
@@ -643,13 +653,16 @@ body.menu #overlay.lay-card{background:rgba(4,7,11,.62);pointer-events:auto}
    достать — без тача вкладки переносятся. На таче ряд листается пальцем, а гаснущий край (.more, mtabsSync)
    показывает, что справа есть ещё */
 body:not(.touch) .mtabs{flex-wrap:wrap;overflow-x:visible}
+/* шесть вкладок «Уровней» переносились 4 + 2 со 125 и 295 px пустоты справа — сеткой 3 × 2 оба ряда ровные */
+body:not(.touch) .mtabs:has(>button:nth-child(6)){display:grid;grid-template-columns:repeat(3,1fr)}
 .mtabs.more{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 44px),transparent);
   mask-image:linear-gradient(to right,#000 calc(100% - 44px),transparent)}
 /* ряд прокручен к открытой вкладке — левые ушли за край, и левый край гаснет так же */
 .mtabs.less{-webkit-mask-image:linear-gradient(to right,transparent,#000 44px);mask-image:linear-gradient(to right,transparent,#000 44px)}
 .mtabs.less.more{-webkit-mask-image:linear-gradient(to right,transparent,#000 44px,#000 calc(100% - 44px),transparent);
   mask-image:linear-gradient(to right,transparent,#000 44px,#000 calc(100% - 44px),transparent)}
-#overlay .mtabs button{margin:0;flex:none;padding:8px 14px;border-radius:999px;font-size:13.5px;font-weight:500;white-space:nowrap;
+/* вкладки тянутся до края панели; на таче ряд, который не влез, листается — тянуть там нечего */
+#overlay .mtabs button{margin:0;flex:1 0 auto;padding:8px 14px;border-radius:999px;font-size:13.5px;font-weight:500;white-space:nowrap;
   background:transparent;border-color:rgba(255,255,255,.14);color:#b9cadb}
 /* цель касания не меньше 40 px — порог touch-check 36, вкладка была 34 */
 body.touch #overlay .mtabs button{min-height:40px}
@@ -658,13 +671,22 @@ body.touch #overlay .mtabs button{min-height:40px}
   padding:4px 20px max(20px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
 #overlay .mnote{margin:2px 0 10px;font-size:13px;color:#93a7bd}
 #overlay .mok{margin:4px 0 10px;font-size:13.5px;color:#7ee3a4}
-#overlay .mbody > button{margin:14px 0 0}
+/* главная кнопка раздела («Начать экзамен», «Собрать площадку») и ряд кнопок — до края панели, как строки
+   настроек и карточки уровней над ними: по своей ширине они стояли островком слева */
+#overlay .mbody > button{margin:14px 0 0;width:100%}
 .mrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0}
 /* легенда «Что на асфальте»: образец — тот же цвет, которым наложение рисуется в мире */
 ul.ovleg{list-style:none;margin:8px 0 12px;padding:0}
 ul.ovleg li{display:flex;gap:10px;align-items:flex-start;margin:7px 0;font-size:14px;line-height:1.4}
 ul.ovleg i{flex:none;width:30px;height:12px;margin-top:4px;border-radius:3px}
 #overlay .mrow button{margin:0}
+#overlay .mrow>button:not(.linkbtn){flex:1 1 0;min-width:max-content}
+/* список уровней «Сначала отработай» — строками во всю ширину: кнопки по длине названия шли лесенкой */
+.mstack{display:flex;flex-direction:column;gap:8px;margin:10px 0}
+#overlay .mstack button{margin:0;width:100%;text-align:left}
+/* режим экзамена в разделе — две половины во всю ширину; в строке настройки сегмент остаётся по себе */
+#overlay .mbody>.seg{display:flex}
+#overlay .mbody>.seg button{flex:1 1 0;padding:10px 12px;font-size:14px}
 #overlay button.linkbtn.danger,#overlay button.ghost.danger{color:#ff9aa2}
 #overlay button.ghost.danger{border-color:rgba(255,154,162,.32)}
 #overlay button:disabled{opacity:.4;cursor:default}
@@ -737,6 +759,8 @@ body.touch #overlay .seg button{min-height:40px}
   .pstack{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px}
   #overlay .pstack button{padding:8px 14px;font-size:14px}
   #overlay .pstack button:first-child{grid-column:1/-1}
+  /* «Прервать экзамен» оставался один во втором столбце с дырой рядом — последний нечётный во всю ширину */
+  #overlay .pstack button:last-child:nth-child(even){grid-column:1/-1}
   /* на низком телефоне пункты сжимались до 35 px — ниже порога касания touch-check (36). Главное меню — ровно 36:
      при 40 «Написать нам» уходило за нижний край 390 px (menu-check @app-menu-fit) */
   body.touch #overlay .pstack button{min-height:40px}
@@ -9214,9 +9238,9 @@ function examFailHTML(){
     +examSvg()
     +'<ul class="loglist">'+examLogRows()+'</ul>'
     +'<p>На настоящем экзамене после трёх неудач пересдача — через полгода. Здесь — сразу.</p>'
-    +'<button data-act="again">Заново'+(MOB?'':' (R)')+'</button> '
-    +'<button data-act="pick" class="ghost">Выбрать уровень</button> '
-    +'<button data-act="feedback:fail" class="ghost">✉︎ Что-то не так</button>';
+    +'<div class="acts"><button data-act="again">Заново'+(MOB?'':' (R)')+'</button>'
+    +'<button data-act="pick" class="ghost">Выбрать уровень</button></div>'
+    +fbLinkHTML('fail');
 }
 /* брифинг: карта маршрута и список команд ДО старта. На настоящем экзамене инспектор
    тоже сообщает маршрут в общих чертах — молчит он про то, КАК ехать, а не КУДА */
@@ -9269,16 +9293,16 @@ function examBriefHTML(){
     +'<p style="color:#93a7bd">До '+(EXAM_FAIL_SUM-1)+' штрафных баллов, маршрут каждый раз новый.'
     +(started?' Карта в углу открывает этот список.':'')+'</p>'
     +(started?'':examModeBtnHTML())
-    +'<button data-act="brief">'+(started?'Продолжить':'Поехали')+'</button> '
-    +'<button data-act="pick" class="ghost">Выбрать уровень</button>';
+    +'<div class="acts"><button data-act="brief">'+(started?'Продолжить':'Поехали')+'</button>'
+    +'<button data-act="pick" class="ghost">Выбрать уровень</button></div>';
 }
 /* главная кнопка — безопасная: «Да, прервать» стояло первым синим, и Enter с фокусом на нём обрывал попытку */
 function examAbortHTML(){
   return '<h1>Прервать экзамен?</h1>'
     +'<p>Прогресс попытки не сохранится — маршрут начнётся заново.</p>'
-    +'<button data-act="resume" data-focus>Продолжить экзамен</button> '
-    +'<button data-act="route" class="ghost">Показать маршрут</button> '
-    +'<button data-act="exam-exit" class="ghost danger">Прервать экзамен</button>';
+    +'<div class="acts"><button data-act="resume" data-focus>Продолжить экзамен</button>'
+    +'<button data-act="route" class="ghost">Показать маршрут</button>'
+    +'<button data-act="exam-exit" class="ghost danger">Прервать экзамен</button></div>';
 }
 /* ---------- провал попытки (строгие уровни) ----------
    Экзамен считает баллы, городские уровни 23–26 — нет: там урок в том, что грубая
@@ -9349,10 +9373,10 @@ function levelFailHTML(){
     +(rule?'<p style="color:#93a7bd">'+rule+'</p>':'')
     +'<ul class="loglist">'+attempt.log.map(l=>'<li>'+l.txt
       +' <span style="opacity:.55">('+l.t.toFixed(0)+' с)</span></li>').join('')+'</ul>'
-    +'<button data-act="again">Заново'+(MOB?'':' (R)')+'</button> '
-    +(tr!==undefined?'<button data-act="train:'+tr+'" class="ghost">Отработать приём</button> ':'')
-    +'<button data-act="pick" class="ghost">Выбрать уровень</button> '
-    +'<button data-act="feedback:fail" class="ghost">✉︎ Что-то не так</button>';
+    +'<div class="acts"><button data-act="again">Заново'+(MOB?'':' (R)')+'</button>'
+    +(tr!==undefined?'<button data-act="train:'+tr+'" class="ghost">Отработать приём</button>':'')
+    +'<button data-act="pick" class="ghost">Выбрать уровень</button></div>'
+    +fbLinkHTML('fail');
 }
 
 /* начисления, не привязанные к городской геометрии, + ведение маршрута */
@@ -9916,9 +9940,9 @@ function examPassHTML(){
     +'<ul class="loglist">'+examLogRows()+'</ul>'
     +'<p>Время маршрута: <b>'+game.t.toFixed(0)+' с</b> · порядок манёвров в следующий раз может быть другим</p>'
     +examNextHTML()
-    +'<button data-act="again">Ещё маршрут</button> '
-    +'<button data-act="pick" class="ghost">Выбрать уровень</button> '
-    +'<button data-act="feedback:win" class="ghost">✉︎ Что-то не так</button>';
+    +'<div class="acts"><button data-act="again">Ещё маршрут</button>'
+    +'<button data-act="pick" class="ghost">Выбрать уровень</button></div>'
+    +fbLinkHTML('win');
 }
 /* ---------- практика городского урока ----------
    Учёба (фазы, маркеры, показ) отвечает на вопрос «как», практика проверяет, решает ли игрок сам. Тот же
@@ -10288,9 +10312,9 @@ function practiceBriefHTML(){
     +'<p class="sd">Только команды: подсказок, ленты и показа нет. Судят '+pr.judged+'.</p>'
     +examRouteSvg()
     +'<ul class="routelist">'+rows+'</ul>'
-    +'<button data-act="brief">'+(started?'Продолжить':'Поехали')+'</button> '
-    +'<button data-act="learn" class="ghost">Учёба с подсказками</button> '
-    +'<button data-act="pick" class="ghost">Выбрать уровень</button>';
+    +'<div class="acts"><button data-act="brief">'+(started?'Продолжить':'Поехали')+'</button>'
+    +'<button data-act="learn" class="ghost">Учёба с подсказками</button>'
+    +'<button data-act="pick" class="ghost">Выбрать уровень</button></div>';
 }
 function practiceResultHTML(pass){
   const d=level.def, clean=pass && exam.score===0, rows=vioRowsHTML(exam.log, true);
@@ -10308,7 +10332,7 @@ function practiceResultHTML(pass){
     +'<button data-act="again" class="ghost">Новый вариант</button>'
     +'<button data-act="learn" class="ghost">Учёба с подсказками</button>'
     +'<span class="nextgo"><button data-act="next"'+(pass?'':' class="ghost"')+'>Следующий уровень</button></span></div>'
-    +'<p class="winfb"><button data-act="feedback:'+(pass?'win':'fail')+'" class="linkbtn">✉︎ Что-то не так — написать</button></p>';
+    +fbLinkHTML(pass?'win':'fail');
 }
 function practiceEnd(pass){
   game.done=true;
@@ -13885,7 +13909,7 @@ function authWaitHTML(){
     +(w.win ? '<p>Подтверди вход в новой вкладке и вернись сюда.</p>'
             : '<p>Браузер не открыл вкладку. Нажми «Открыть вход», подтверди и вернись сюда.</p>'
               +'<p><a class="authlink" href="'+esc(w.url)+'" target="_blank" rel="noopener">Открыть вход</a></p>')
-    +'<button data-act="auth-cancel" class="ghost">Отмена</button>';
+    +'<div class="acts"><button data-act="auth-cancel" class="ghost">Отмена</button></div>';
 }
 async function authPollTick(){
   const w=authWait; if(!w) return;
@@ -14066,8 +14090,8 @@ function acctNudgeHTML(){
 function acctDeleteHTML(){
   return '<h1>Удалить аккаунт?</h1>'
     +'<p>С сервера удалятся аккаунт и прогресс. На этом устройстве прогресс останется.</p>'
-    +'<button data-act="auth-delete-yes">Удалить</button>'
-    +'<button data-act="auth-delete-no" class="ghost">Назад</button>';
+    +'<div class="acts"><button data-act="auth-delete-yes">Удалить</button>'
+    +'<button data-act="auth-delete-no" class="ghost">Назад</button></div>';
 }
 /* открытый экран показывает состояние входа — перерисовать его, если он сейчас на экране */
 function acctRerender(){
@@ -14139,12 +14163,12 @@ function paywallHTML(i){
     /* про привязку к аккаунту — одна строка: гость читал её дважды, над кнопками входа и в их подписи */
     +(acct ? '<p class="sd">Покупка привязана к аккаунту и откроется на любом устройстве.</p>' : '')+'</div>';
   if(!acct) return s+(AUTH_ON ? acctBtnsHTML('Чтобы купить, войди — покупка привяжется к аккаунту и откроется на любом устройстве.') : '')
-    +'<button data-act="promo-open" class="ghost">Есть промокод</button>'
-    +'<button data-act="pick" class="ghost">Выбрать другой уровень</button>';
-  return s+'<button data-act="pay-buy">Купить за '+PAY.price+'</button>'
+    +'<div class="acts"><button data-act="promo-open" class="ghost">Есть промокод</button>'
+    +'<button data-act="pick" class="ghost">Выбрать другой уровень</button></div>';
+  return s+'<div class="acts"><button data-act="pay-buy">Купить за '+PAY.price+'</button>'
     +'<button data-act="promo-open" class="ghost">Есть промокод</button>'
     +'<button data-act="pay-restore" class="ghost">Восстановить покупку</button>'
-    +'<button data-act="pick" class="ghost">Выбрать другой уровень</button>';
+    +'<button data-act="pick" class="ghost">Выбрать другой уровень</button></div>';
 }
 function paywallShow(i, via){
   paywallLi=i;
@@ -14291,13 +14315,13 @@ function offerHTML(){
     +'<p>Уровни 20–32: эстакада с ручником, задний ход, остановка у тротуара, город с кольцом '
     +'и трамваем, экзамен-маршрут с командами инспектора и протоколом ошибок.</p>'
     +'<p>Один платёж, без подписки — дешевле часа с инструктором. Машина на автомате.</p></div>'
-    +'<button data-act="offer-take">Беру за '+OFFER.price+' ₽</button>'
-    +'<button data-act="offer-skip" class="ghost">Пока бесплатно</button>';
+    +'<div class="acts"><button data-act="offer-take">Беру за '+OFFER.price+' ₽</button>'
+    +'<button data-act="offer-skip" class="ghost">Пока бесплатно</button></div>';
 }
 function offerThanksHTML(){
   return '<div class="offer"><h1>Записали</h1>'
     +'<p>Оплату ещё не подключили, поэтому всё открыто бесплатно. Списаний не будет.</p></div>'
-    +'<button data-act="offer-go">Поехали</button>';
+    +'<div class="acts"><button data-act="offer-go">Поехали</button></div>';
 }
 function offerProps(){ return Object.assign(anLevel(offerLi), {via:offerVia, price:OFFER.price}); }
 function offerShow(i, via){
@@ -14417,8 +14441,8 @@ function fbHTML(){
     +'Приложить снимок экрана</label>':'')
   +'<input class="fbhp" id="fbHp" tabindex="-1" autocomplete="off" aria-hidden="true">'
   +'<div class="fberr" id="fbErr" style="display:none"></div>'
-  +'<button data-act="fb-send" id="fbSend">Отправить</button> '
-  +'<button data-act="fb-close" class="ghost">Отмена</button>';
+  +'<div class="acts"><button data-act="fb-send" id="fbSend">Отправить</button>'
+  +'<button data-act="fb-close" class="ghost">Отмена</button></div>';
 }
 function openFeedback(src){
   fbBack=src||'game';
@@ -14900,7 +14924,11 @@ function winActsHTML(){
     +'<span class="nextgo"><button data-act="next">Следующий уровень'+(MOB?'':' (N)')+'</button>'
     +'<span class="nextname">'+(nx.custom?'★ ':'')+esc(nx.name)+'</span></span></div>'
     +'<div class="acctslot">'+acctNudgeHTML()+'</div>'
-    +'<p class="winfb"><button data-act="feedback:win" class="linkbtn">✉︎ Что-то не так — написать</button></p>'; }
+    +fbLinkHTML('win'); }
+/* отзыв с итогов и протоколов — ссылкой под рядом ходов: кнопкой в ряду он занимал четверть его ширины
+   наравне с «Заново» */
+function fbLinkHTML(k){
+  return '<p class="winfb"><button data-act="feedback:'+k+'" class="linkbtn">✉︎ Что-то не так — написать</button></p>'; }
 /* ---------- меню: главный экран, разделы, пауза ---------- */
 /* Экран меню — HTML-строка в том же #overlay: на showOv и doAct держатся инструменты tools/.
    root='main' — игрок в главном меню (до входа в уровень или после «Главное меню»): за оверлеем тогда
@@ -15028,7 +15056,7 @@ function menuExamHTML(){
       +Math.round((EXAM_SET.length-np)/EXAM_SET.length*100)+'&nbsp;%. <button type="button" class="linkbtn" data-act="promo-open">Премиум</button></p>'; }
   if(er.routes>=3) s+='<p class="mok">Экзамен сдан в настоящем режиме на трёх разных маршрутах — ты готов.</p>';
   else if(er.train) s+='<p class="mnote">Репетиций в тренировочном режиме: '+er.train+'.</p>';
-  if(rd.weak.length) s+='<h2>Сначала отработай</h2><div class="mrow">'
+  if(rd.weak.length) s+='<h2>Сначала отработай</h2><div class="mstack">'
     +rd.weak.slice(0,3).map(i=>'<button type="button" class="ghost" data-act="train:'+i+'">'+LEVELS[i].name+'</button>').join('')+'</div>';
   s+='<h2>Режим</h2><div class="seg" role="group" aria-label="Режим экзамена">'
     +[['train','тренировочный'],['real','настоящий']].map(([k,t])=>{ const on=(k==='real')!==examTrain();
@@ -15068,7 +15096,7 @@ function menuProfileHTML(){
     +'<div class="ptile"><b>'+(st.best===null?'—':st.best+'&nbsp;см')+'</b><span>лучшая точность в габаритах</span></div>'
     +'<div class="ptile"><b>'+er.routes+' из 3</b><span>маршрутов экзамена сдано</span></div></div>';
   if(acct) s+='<div class="mrow"><button type="button" class="ghost" data-act="auth-logout">Выйти</button>'
-    +'<button type="button" class="linkbtn danger" data-act="auth-delete">Удалить аккаунт</button></div>';
+    +'<button type="button" class="ghost danger" data-act="auth-delete">Удалить аккаунт</button></div>';
   if(acct && PAY_ON) s+='<div class="mrow"><button type="button" class="ghost" data-act="pay-restore">Восстановить покупку</button></div>';
   return s+'</div>';
 }
@@ -16510,8 +16538,8 @@ function showTask(){
     +(d.hacks?'<h2>Лайфхаки</h2><ul>'
       + d.hacks.map(x=>'<li>▸ '+x+'</li>').join('')+'</ul>':'')
     +'<p style="margin-top:8px;color:#93a7bd;font-size:12.5px">'+d.tip+'</p>'
-    +(DEMOS[game.li]?'<button data-act="demo">▶ Демонстрация</button>':'')
-    +'<button data-act="resume" class="ghost">Поехали</button>');
+    +'<div class="acts">'+(DEMOS[game.li]?'<button data-act="demo">▶ Демонстрация</button>':'')
+    +'<button data-act="resume" class="ghost">Поехали</button></div>');
 }
 const CAMNAME=['3-е лицо','сверху','салон'];
 $('tview').addEventListener('pointerdown',e=>{ e.preventDefault(); initAudio();

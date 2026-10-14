@@ -158,6 +158,40 @@ const PROBE = `(() => {
     words[el.closest('#overlay') ? 'overlay' : 'hud'] += w;
   }
   out.words = words;
+  /* ряды с кнопками, которые не доходят до края своего блока: пустое место справа, дыры в сетке,
+     раздвинутые промежутки (владелец 15.10.2026 — «кнопки не всё место занимают») */
+  out.slack = [];
+  const parents = new Set();
+  const BTN = 'button:not(.linkbtn):not(.minibtn), [data-act]:not(.linkbtn):not(.minibtn)';
+  for (const b of document.querySelectorAll('#overlay button, #overlay [data-act]'))
+    if (vis(b) && b.parentElement) parents.add(b.parentElement);
+  for (const P of parents) {
+    const ps = getComputedStyle(P), pr = P.getBoundingClientRect();
+    if (ps.display === 'inline' || ps.display === 'contents') continue;
+    const L = pr.left + parseFloat(ps.borderLeftWidth) + parseFloat(ps.paddingLeft);
+    const R = pr.right - parseFloat(ps.borderRightWidth) - parseFloat(ps.paddingRight);
+    const W = R - L;
+    if (W < 120) continue;
+    const kids = [...P.children].filter(vis).map(el => ({ el, r: el.getBoundingClientRect(), btn: el.matches(BTN) || !!el.querySelector(BTN) }))
+      .filter(k => getComputedStyle(k.el).position !== 'absolute' && getComputedStyle(k.el).position !== 'fixed');
+    const rows = [];
+    for (const k of kids.sort((a, b) => a.r.top - b.r.top)) {
+      const row = rows.find(rw => k.r.top < rw.bot - 4 && k.r.bottom > rw.top + 4);
+      if (row) { row.k.push(k); row.bot = Math.max(row.bot, k.r.bottom); } else rows.push({ top: k.r.top, bot: k.r.bottom, k: [k] });
+    }
+    rows.forEach((rw, i) => {
+      /* ряд с заголовком, подписью или одной ссылкой — вёрстка с умыслом, считаются ряды из одних кнопок */
+      if (!rw.k.every(k => k.btn)) return;
+      const ks = rw.k.sort((a, b) => a.r.left - b.r.left);
+      const lo = Math.min(...ks.map(k => k.r.left)), hi = Math.max(...ks.map(k => k.r.right));
+      let gap = 0;
+      for (let j = 1; j < ks.length; j++) gap = Math.max(gap, ks[j].r.left - ks[j - 1].r.right);
+      const free = Math.round(W - (hi - lo)), inner = Math.round(gap);
+      if ((free > 32 && free / W > 0.12) || inner > 40)
+        out.slack.push(name(P).slice(0, 60) + ' ряд ' + (i + 1) + '/' + rows.length + ': ' + ks.length + ' эл., ширина ' + Math.round(W) + ', пусто ' + free
+          + ' (слева ' + Math.round(lo - L) + ', справа ' + Math.round(R - hi) + '), макс. промежуток ' + inner);
+    });
+  }
   out.scroll = [];
   for (const el of document.querySelectorAll('#overlay, #overlay *')) {
     const s = getComputedStyle(el);

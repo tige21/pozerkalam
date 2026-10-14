@@ -906,6 +906,30 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -9214,9 +9238,9 @@ function examFailHTML(){
     +examSvg()
     +'<ul class="loglist">'+examLogRows()+'</ul>'
     +'<p>На настоящем экзамене после трёх неудач пересдача — через полгода. Здесь — сразу.</p>'
-    +'<button data-act="again">Заново'+(MOB?'':' (R)')+'</button> '
-    +'<button data-act="pick" class="ghost">Выбрать уровень</button> '
-    +'<button data-act="feedback:fail" class="ghost">✉︎ Что-то не так</button>';
+    +'<div class="acts"><button data-act="again">Заново'+(MOB?'':' (R)')+'</button>'
+    +'<button data-act="pick" class="ghost">Выбрать уровень</button></div>'
+    +fbLinkHTML('fail');
 }
 /* брифинг: карта маршрута и список команд ДО старта. На настоящем экзамене инспектор
    тоже сообщает маршрут в общих чертах — молчит он про то, КАК ехать, а не КУДА */
@@ -9269,16 +9293,16 @@ function examBriefHTML(){
     +'<p style="color:#93a7bd">До '+(EXAM_FAIL_SUM-1)+' штрафных баллов, маршрут каждый раз новый.'
     +(started?' Карта в углу открывает этот список.':'')+'</p>'
     +(started?'':examModeBtnHTML())
-    +'<button data-act="brief">'+(started?'Продолжить':'Поехали')+'</button> '
-    +'<button data-act="pick" class="ghost">Выбрать уровень</button>';
+    +'<div class="acts"><button data-act="brief">'+(started?'Продолжить':'Поехали')+'</button>'
+    +'<button data-act="pick" class="ghost">Выбрать уровень</button></div>';
 }
 /* главная кнопка — безопасная: «Да, прервать» стояло первым синим, и Enter с фокусом на нём обрывал попытку */
 function examAbortHTML(){
   return '<h1>Прервать экзамен?</h1>'
     +'<p>Прогресс попытки не сохранится — маршрут начнётся заново.</p>'
-    +'<button data-act="resume" data-focus>Продолжить экзамен</button> '
-    +'<button data-act="route" class="ghost">Показать маршрут</button> '
-    +'<button data-act="exam-exit" class="ghost danger">Прервать экзамен</button>';
+    +'<div class="acts"><button data-act="resume" data-focus>Продолжить экзамен</button>'
+    +'<button data-act="route" class="ghost">Показать маршрут</button>'
+    +'<button data-act="exam-exit" class="ghost danger">Прервать экзамен</button></div>';
 }
 /* ---------- провал попытки (строгие уровни) ----------
    Экзамен считает баллы, городские уровни 23–26 — нет: там урок в том, что грубая
@@ -9349,10 +9373,10 @@ function levelFailHTML(){
     +(rule?'<p style="color:#93a7bd">'+rule+'</p>':'')
     +'<ul class="loglist">'+attempt.log.map(l=>'<li>'+l.txt
       +' <span style="opacity:.55">('+l.t.toFixed(0)+' с)</span></li>').join('')+'</ul>'
-    +'<button data-act="again">Заново'+(MOB?'':' (R)')+'</button> '
-    +(tr!==undefined?'<button data-act="train:'+tr+'" class="ghost">Отработать приём</button> ':'')
-    +'<button data-act="pick" class="ghost">Выбрать уровень</button> '
-    +'<button data-act="feedback:fail" class="ghost">✉︎ Что-то не так</button>';
+    +'<div class="acts"><button data-act="again">Заново'+(MOB?'':' (R)')+'</button>'
+    +(tr!==undefined?'<button data-act="train:'+tr+'" class="ghost">Отработать приём</button>':'')
+    +'<button data-act="pick" class="ghost">Выбрать уровень</button></div>'
+    +fbLinkHTML('fail');
 }
 
 /* начисления, не привязанные к городской геометрии, + ведение маршрута */
@@ -9916,9 +9940,9 @@ function examPassHTML(){
     +'<ul class="loglist">'+examLogRows()+'</ul>'
     +'<p>Время маршрута: <b>'+game.t.toFixed(0)+' с</b> · порядок манёвров в следующий раз может быть другим</p>'
     +examNextHTML()
-    +'<button data-act="again">Ещё маршрут</button> '
-    +'<button data-act="pick" class="ghost">Выбрать уровень</button> '
-    +'<button data-act="feedback:win" class="ghost">✉︎ Что-то не так</button>';
+    +'<div class="acts"><button data-act="again">Ещё маршрут</button>'
+    +'<button data-act="pick" class="ghost">Выбрать уровень</button></div>'
+    +fbLinkHTML('win');
 }
 /* ---------- практика городского урока ----------
    Учёба (фазы, маркеры, показ) отвечает на вопрос «как», практика проверяет, решает ли игрок сам. Тот же
@@ -10288,9 +10312,9 @@ function practiceBriefHTML(){
     +'<p class="sd">Только команды: подсказок, ленты и показа нет. Судят '+pr.judged+'.</p>'
     +examRouteSvg()
     +'<ul class="routelist">'+rows+'</ul>'
-    +'<button data-act="brief">'+(started?'Продолжить':'Поехали')+'</button> '
-    +'<button data-act="learn" class="ghost">Учёба с подсказками</button> '
-    +'<button data-act="pick" class="ghost">Выбрать уровень</button>';
+    +'<div class="acts"><button data-act="brief">'+(started?'Продолжить':'Поехали')+'</button>'
+    +'<button data-act="learn" class="ghost">Учёба с подсказками</button>'
+    +'<button data-act="pick" class="ghost">Выбрать уровень</button></div>';
 }
 function practiceResultHTML(pass){
   const d=level.def, clean=pass && exam.score===0, rows=vioRowsHTML(exam.log, true);
@@ -10308,7 +10332,7 @@ function practiceResultHTML(pass){
     +'<button data-act="again" class="ghost">Новый вариант</button>'
     +'<button data-act="learn" class="ghost">Учёба с подсказками</button>'
     +'<span class="nextgo"><button data-act="next"'+(pass?'':' class="ghost"')+'>Следующий уровень</button></span></div>'
-    +'<p class="winfb"><button data-act="feedback:'+(pass?'win':'fail')+'" class="linkbtn">✉︎ Что-то не так — написать</button></p>';
+    +fbLinkHTML(pass?'win':'fail');
 }
 function practiceEnd(pass){
   game.done=true;
@@ -13885,7 +13909,7 @@ function authWaitHTML(){
     +(w.win ? '<p>Подтверди вход в новой вкладке и вернись сюда.</p>'
             : '<p>Браузер не открыл вкладку. Нажми «Открыть вход», подтверди и вернись сюда.</p>'
               +'<p><a class="authlink" href="'+esc(w.url)+'" target="_blank" rel="noopener">Открыть вход</a></p>')
-    +'<button data-act="auth-cancel" class="ghost">Отмена</button>';
+    +'<div class="acts"><button data-act="auth-cancel" class="ghost">Отмена</button></div>';
 }
 async function authPollTick(){
   const w=authWait; if(!w) return;
@@ -14066,8 +14090,8 @@ function acctNudgeHTML(){
 function acctDeleteHTML(){
   return '<h1>Удалить аккаунт?</h1>'
     +'<p>С сервера удалятся аккаунт и прогресс. На этом устройстве прогресс останется.</p>'
-    +'<button data-act="auth-delete-yes">Удалить</button>'
-    +'<button data-act="auth-delete-no" class="ghost">Назад</button>';
+    +'<div class="acts"><button data-act="auth-delete-yes">Удалить</button>'
+    +'<button data-act="auth-delete-no" class="ghost">Назад</button></div>';
 }
 /* открытый экран показывает состояние входа — перерисовать его, если он сейчас на экране */
 function acctRerender(){
@@ -14139,12 +14163,12 @@ function paywallHTML(i){
     /* про привязку к аккаунту — одна строка: гость читал её дважды, над кнопками входа и в их подписи */
     +(acct ? '<p class="sd">Покупка привязана к аккаунту и откроется на любом устройстве.</p>' : '')+'</div>';
   if(!acct) return s+(AUTH_ON ? acctBtnsHTML('Чтобы купить, войди — покупка привяжется к аккаунту и откроется на любом устройстве.') : '')
-    +'<button data-act="promo-open" class="ghost">Есть промокод</button>'
-    +'<button data-act="pick" class="ghost">Выбрать другой уровень</button>';
-  return s+'<button data-act="pay-buy">Купить за '+PAY.price+'</button>'
+    +'<div class="acts"><button data-act="promo-open" class="ghost">Есть промокод</button>'
+    +'<button data-act="pick" class="ghost">Выбрать другой уровень</button></div>';
+  return s+'<div class="acts"><button data-act="pay-buy">Купить за '+PAY.price+'</button>'
     +'<button data-act="promo-open" class="ghost">Есть промокод</button>'
     +'<button data-act="pay-restore" class="ghost">Восстановить покупку</button>'
-    +'<button data-act="pick" class="ghost">Выбрать другой уровень</button>';
+    +'<button data-act="pick" class="ghost">Выбрать другой уровень</button></div>';
 }
 function paywallShow(i, via){
   paywallLi=i;
@@ -14291,13 +14315,13 @@ function offerHTML(){
     +'<p>Уровни 20–32: эстакада с ручником, задний ход, остановка у тротуара, город с кольцом '
     +'и трамваем, экзамен-маршрут с командами инспектора и протоколом ошибок.</p>'
     +'<p>Один платёж, без подписки — дешевле часа с инструктором. Машина на автомате.</p></div>'
-    +'<button data-act="offer-take">Беру за '+OFFER.price+' ₽</button>'
-    +'<button data-act="offer-skip" class="ghost">Пока бесплатно</button>';
+    +'<div class="acts"><button data-act="offer-take">Беру за '+OFFER.price+' ₽</button>'
+    +'<button data-act="offer-skip" class="ghost">Пока бесплатно</button></div>';
 }
 function offerThanksHTML(){
   return '<div class="offer"><h1>Записали</h1>'
     +'<p>Оплату ещё не подключили, поэтому всё открыто бесплатно. Списаний не будет.</p></div>'
-    +'<button data-act="offer-go">Поехали</button>';
+    +'<div class="acts"><button data-act="offer-go">Поехали</button></div>';
 }
 function offerProps(){ return Object.assign(anLevel(offerLi), {via:offerVia, price:OFFER.price}); }
 function offerShow(i, via){
@@ -14417,8 +14441,8 @@ function fbHTML(){
     +'Приложить снимок экрана</label>':'')
   +'<input class="fbhp" id="fbHp" tabindex="-1" autocomplete="off" aria-hidden="true">'
   +'<div class="fberr" id="fbErr" style="display:none"></div>'
-  +'<button data-act="fb-send" id="fbSend">Отправить</button> '
-  +'<button data-act="fb-close" class="ghost">Отмена</button>';
+  +'<div class="acts"><button data-act="fb-send" id="fbSend">Отправить</button>'
+  +'<button data-act="fb-close" class="ghost">Отмена</button></div>';
 }
 function openFeedback(src){
   fbBack=src||'game';
@@ -14900,7 +14924,11 @@ function winActsHTML(){
     +'<span class="nextgo"><button data-act="next">Следующий уровень'+(MOB?'':' (N)')+'</button>'
     +'<span class="nextname">'+(nx.custom?'★ ':'')+esc(nx.name)+'</span></span></div>'
     +'<div class="acctslot">'+acctNudgeHTML()+'</div>'
-    +'<p class="winfb"><button data-act="feedback:win" class="linkbtn">✉︎ Что-то не так — написать</button></p>'; }
+    +fbLinkHTML('win'); }
+/* отзыв с итогов и протоколов — ссылкой под рядом ходов: кнопкой в ряду он занимал четверть его ширины
+   наравне с «Заново» */
+function fbLinkHTML(k){
+  return '<p class="winfb"><button data-act="feedback:'+k+'" class="linkbtn">✉︎ Что-то не так — написать</button></p>'; }
 /* ---------- меню: главный экран, разделы, пауза ---------- */
 /* Экран меню — HTML-строка в том же #overlay: на showOv и doAct держатся инструменты tools/.
    root='main' — игрок в главном меню (до входа в уровень или после «Главное меню»): за оверлеем тогда
@@ -15028,7 +15056,7 @@ function menuExamHTML(){
       +Math.round((EXAM_SET.length-np)/EXAM_SET.length*100)+'&nbsp;%. <button type="button" class="linkbtn" data-act="promo-open">Премиум</button></p>'; }
   if(er.routes>=3) s+='<p class="mok">Экзамен сдан в настоящем режиме на трёх разных маршрутах — ты готов.</p>';
   else if(er.train) s+='<p class="mnote">Репетиций в тренировочном режиме: '+er.train+'.</p>';
-  if(rd.weak.length) s+='<h2>Сначала отработай</h2><div class="mrow">'
+  if(rd.weak.length) s+='<h2>Сначала отработай</h2><div class="mstack">'
     +rd.weak.slice(0,3).map(i=>'<button type="button" class="ghost" data-act="train:'+i+'">'+LEVELS[i].name+'</button>').join('')+'</div>';
   s+='<h2>Режим</h2><div class="seg" role="group" aria-label="Режим экзамена">'
     +[['train','тренировочный'],['real','настоящий']].map(([k,t])=>{ const on=(k==='real')!==examTrain();
@@ -15068,7 +15096,7 @@ function menuProfileHTML(){
     +'<div class="ptile"><b>'+(st.best===null?'—':st.best+'&nbsp;см')+'</b><span>лучшая точность в габаритах</span></div>'
     +'<div class="ptile"><b>'+er.routes+' из 3</b><span>маршрутов экзамена сдано</span></div></div>';
   if(acct) s+='<div class="mrow"><button type="button" class="ghost" data-act="auth-logout">Выйти</button>'
-    +'<button type="button" class="linkbtn danger" data-act="auth-delete">Удалить аккаунт</button></div>';
+    +'<button type="button" class="ghost danger" data-act="auth-delete">Удалить аккаунт</button></div>';
   if(acct && PAY_ON) s+='<div class="mrow"><button type="button" class="ghost" data-act="pay-restore">Восстановить покупку</button></div>';
   return s+'</div>';
 }
@@ -16510,8 +16538,8 @@ function showTask(){
     +(d.hacks?'<h2>Лайфхаки</h2><ul>'
       + d.hacks.map(x=>'<li>▸ '+x+'</li>').join('')+'</ul>':'')
     +'<p style="margin-top:8px;color:#93a7bd;font-size:12.5px">'+d.tip+'</p>'
-    +(DEMOS[game.li]?'<button data-act="demo">▶ Демонстрация</button>':'')
-    +'<button data-act="resume" class="ghost">Поехали</button>');
+    +'<div class="acts">'+(DEMOS[game.li]?'<button data-act="demo">▶ Демонстрация</button>':'')
+    +'<button data-act="resume" class="ghost">Поехали</button></div>');
 }
 const CAMNAME=['3-е лицо','сверху','салон'];
 $('tview').addEventListener('pointerdown',e=>{ e.preventDefault(); initAudio();

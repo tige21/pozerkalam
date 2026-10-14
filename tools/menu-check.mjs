@@ -2,7 +2,7 @@
 /* Главное меню, пауза и машина на подиуме — коды app-menu в specs/features/app/menu.feature.
    Запуск (playwright-core ставится во временную папку, см. cockpit-shots.mjs):
      PW_DIR=/tmp/pw node tools/menu-check.mjs
-     FAULT=sections|tabs|tabsreach|esc|pausebtn|fit|persist|play|resexit|showroom|hud|proflayout PW_DIR=/tmp/pw node tools/menu-check.mjs
+     FAULT=sections|tabs|tabsreach|esc|pausebtn|fit|persist|play|resexit|rowfill|showroom|hud|proflayout PW_DIR=/tmp/pw node tools/menu-check.mjs
    FAULT ломает одно поведение в странице — соответствующая проверка обязана покраснеть, иначе она
    зелёная по построению.
    Вывод: строка на проверку (ok/ПРОВАЛ) и итоговый JSON; код 1, если хоть одна провалена. */
@@ -47,6 +47,12 @@ const FAULTS = {
   play: () => { playTarget = function () { return { i: 0, why: 'FAULT' }; }; },
   /* итоги без выхода в главное меню — заголовок, как был до 13.10.2026 */
   resexit: () => { resHead = function (t) { return '<h1>' + t + '</h1>'; }; },
+  /* прежние ряды: ходы карточки строкой по своей ширине, сетки с сиротой, кнопки раздела островком слева */
+  rowfill: () => { const s = document.createElement('style'); s.textContent = '#overlay .acts{display:block!important}#overlay .acts>button{margin:18px 8px 0 0!important}'
+    + '#overlay .winacts{display:flex!important}#overlay .winacts button{width:auto!important}.lvgrid>button{grid-column:auto!important}'
+    + '#overlay .pstack button{grid-column:auto!important}#overlay .pstack button:first-child{grid-column:1/-1!important}#overlay .mbody>button{width:auto!important}'
+    + '#overlay .mstack{align-items:flex-start!important}#overlay .mstack button{width:auto!important}#overlay .mtabs button{flex:none!important}'
+    + 'body:not(.touch) .mtabs{display:flex!important}'; document.head.appendChild(s); },
   showroom: () => { drawShowroom = function () { ctx.fillStyle = '#0e151f'; ctx.fillRect(0, 0, W, H); }; },
   hud: () => { const s = document.createElement('style'); s.textContent = 'body.menu #bar,body.menu #coach{display:flex!important}'; document.head.appendChild(s); },
   tabs: () => { const s = document.createElement('style'); s.textContent = '.lvgrid[hidden]{display:grid!important}'; document.head.appendChild(s); },
@@ -387,6 +393,67 @@ await guard('app-menu-result-exit', async () => {
   }
   check('с итогов, провала и протоколов экзамена и практики стрелка ведёт в главное меню, «Играть» начинает заново — ПК и 2 телефона (@app-menu-result-exit)',
     bad.length === 0, bad.slice(0, 6).join(' | ') + (bad.length > 6 ? ` … ещё ${bad.length - 6}` : ''));
+});
+
+/* ---------- ряды кнопок до края ---------- */
+/* владелец 15.10.2026: «кнопки не всё место занимают, остаётся много свободного пространства». Ряд из одних
+   кнопок — ходы карточки, сетка уровней, пауза, вкладки, кнопки раздела — доходит до края своего блока: прижатые
+   влево ходы оставляли справа до 400 px, сирота в сетке — дыру в полпанели. Ряды с заголовком, подписью или
+   ссылкой — вёрстка с умыслом, их не меряем */
+const FILL_SCREENS = RESULT_SCREENS.concat([
+  ['бриф экзамена', `openLevel(examLevelIdx(),'pick')`],
+  ['бриф практики', `openLevel(22,'pick','practice')`],
+  ['прервать экзамен?', `openLevel(examLevelIdx(),'pick'); doAct('brief'); showOv(examAbortHTML())`],
+  ['задание уровня', `openLevel(0,'pick'); showTask()`],
+  ['отзыв', `openFeedback('start')`],
+  ['пауза урока', `openLevel(1,'pick'); menuGo('pause')`],
+  ['пауза экзамена', `openLevel(examLevelIdx(),'pick'); doAct('brief'); menuGo('pause')`],
+  ['раздел «Экзамен»', `menuGo('exam',null,'main')`],
+  ['уровни: двор', `menuGo('levels','yard','main')`],
+  ['уровни: площадка', `menuGo('levels','pad','main')`],
+  ['уровни: город', `menuGo('levels','city','main')`],
+  ['уровни: свои', `menuGo('levels','own','main')`],
+  ['настройки: зеркала', `menuGo('settings','mirrors','main')`],
+  ['помощь', `menuGo('help','ctrl','main')`],
+]);
+await guard('app-menu-rows-fill', async () => {
+  const bad = [];
+  for (const [w, h, touch] of [[1280, 720, false], [1440, 900, false], [844, 390, true], [568, 320, true]]) {
+    const p = await open({ width: w, height: h }, { touch, dpr: touch ? 2 : 1 });
+    for (const [name, setup] of FILL_SCREENS) {
+      await p.evaluate(setup);
+      await p.waitForTimeout(80);
+      const r = await p.evaluate(() => {
+        const out = [], BTN = 'button:not(.linkbtn):not(.minibtn)';
+        const vis = (el) => { const s = getComputedStyle(el); if (s.display === 'none' || s.visibility === 'hidden') return null;
+          const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 ? r : null; };
+        const parents = new Set([...ovCard.querySelectorAll(BTN)].filter(vis).map(b => b.parentElement));
+        for (const P of parents) {
+          const ps = getComputedStyle(P), pr = P.getBoundingClientRect();
+          if (/inline/.test(ps.display)) continue;
+          const L = pr.left + parseFloat(ps.borderLeftWidth) + parseFloat(ps.paddingLeft), R = pr.right - parseFloat(ps.borderRightWidth) - parseFloat(ps.paddingRight);
+          const kids = [...P.children].map(el => ({ el, r: vis(el) })).filter(k => k.r && !/absolute|fixed/.test(getComputedStyle(k.el).position));
+          const rows = [];
+          for (const k of kids.sort((a, b) => a.r.top - b.r.top)) {
+            const row = rows.find(rw => k.r.top < rw.bot - 4 && k.r.bottom > rw.top + 4);
+            if (row) { row.k.push(k); row.bot = Math.max(row.bot, k.r.bottom); } else rows.push({ top: k.r.top, bot: k.r.bottom, k: [k] });
+          }
+          for (const rw of rows) {
+            if (!rw.k.every(k => k.el.matches(BTN) || k.el.querySelector(BTN))) continue;
+            const lo = Math.min(...rw.k.map(k => k.r.left)), hi = Math.max(...rw.k.map(k => k.r.right));
+            const free = (lo - L) + (R - hi);
+            if (free > 24) out.push((P.className || P.id || P.tagName).toString().split(' ')[0] + ' «' + rw.k[0].el.textContent.trim().slice(0, 16) + '…» пусто ' + Math.round(free) + ' px');
+          }
+        }
+        return out;
+      });
+      for (const x of r) bad.push(`${w}x${h} ${name}: ${x}`);
+      await p.evaluate(() => { setExamMode('train'); hideOv(); });
+    }
+    await p.close();
+  }
+  check('ряды кнопок доходят до края блока: ходы итогов, брифов и паузы, сетки уровней, вкладки, кнопки разделов — 2 экрана ПК и 2 телефона (@app-menu-rows-fill)',
+    bad.length === 0, bad.slice(0, 8).join(' | ') + (bad.length > 8 ? ` … ещё ${bad.length - 8}` : ''));
 });
 
 /* ---------- настройки переживают перезагрузку ---------- */
