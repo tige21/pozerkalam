@@ -6,7 +6,12 @@
    на красный, наложении двух машин, застрявшей без причины и пустом потоке там, где он объявлен.
      PW_DIR=/tmp/pw node tools/traffic-check.mjs            # все уровни с traffic
      PW_DIR=/tmp/pw node tools/traffic-check.mjs 29 31      # индексы уровней, 0-based
-     FAULT=kerbflow — поребрик поперёк пути первой машины: @city-kerb-flow-clear обязан покраснеть */
+     FAULT=kerbflow — поребрик поперёк пути первой машины: @city-kerb-flow-clear обязан покраснеть
+     FAULT=noboxrule — поток без правила коробок (п. 13.2, 14.4): @traffic-flow-box-clear на уроке пробки красный
+     FAULT=honkheld — гудок без проверки «игрок стоит по делу»: @traffic-honk-held красный
+     FAULT=noring — въезжающий на кольцо не уступает круговому: на «часе пик» @traffic-flow-no-gridlock красный
+   Главный прогон идёт без игрока на дороге: стоящая у старта машина игрока держала бы очередь потока весь
+   прогон, и проверка мёртвой пробки (@traffic-flow-no-gridlock) читала бы это как сцепку */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -34,6 +39,8 @@ await page.waitForTimeout(400);
    а ступень «час пик» появилась бы слепой (пробки и наложения живут именно там) */
 const TRAFFIC = process.env.TRAFFIC || '';
 if (TRAFFIC) await page.evaluate(k => { if (!TRAF_SPACING[k]) throw new Error('нет ступени ' + k); opt.traffic = k; }, TRAFFIC);
+const FAULT = process.env.FAULT || '';
+await page.evaluate(f => { if (f === 'noboxrule') TRAF_BOX = false; if (f === 'noring') TRAF_RING = false; if (f === 'honkheld') playerHeld = () => false; }, FAULT);
 
 const asked = process.argv.slice(2).map(Number);
 const levels = asked.length ? asked
@@ -71,25 +78,58 @@ let bad = 0;
   const r = await page.evaluate(() => {
     loadLevel(LEVELS.findIndex(d => d.traffic)); hideOv(); paused = true;
     const a = level.actors.find(x => x.act && x.act.flow && x.act.rt); if (!a) return null;
-    const p = trafPose(a.act.rt, a.act.s + 20, { u: 0, v: 0, yaw: 0 });
+    /* впереди игрока пусто: гудок — тому, кто держит пустую дорогу; на уровне 26 в 11 м по петле стоит
+       статист урока, и игрок за ним стоит по делу (@traffic-honk-held) */
+    let at = 20;
+    for (const d of [20, 26, 32, 40, 50]) { const q = trafPose(a.act.rt, a.act.s + d, { u: 0, v: 0, yaw: 0 });
+      setBody(q.u, q.v, q.yaw); if (!playerHeld()) { at = d; break; } }
+    const p = trafPose(a.act.rt, a.act.s + at, { u: 0, v: 0, yaw: 0 });
     setBody(p.u, p.v, p.yaw); car.vel = 0; car.sel = 'D';
     let n = 0; const H = honk; honk = () => { n++; };
     const step = (secs) => { const dt = 1 / 30; for (let k = 0; k < Math.round(secs / dt); k++) { game.t += dt; actorsTick(dt); } };
     /* машина сначала тормозит с 8,3 м/с (≈3,3 с), ожидание считается со стоянки: гудок в 7–8 с */
-    try { step(3); const at3 = n; step(5); const at6 = n; step(3); const at9 = n; return { at3, at6, at9, v: +a.act.v.toFixed(2), waitT: +(a.act.waitT || 0).toFixed(1) }; }
+    /* ожидание считается со стоянки машины потока: точка постановки игрока зависит от того, где впереди
+       пусто, и время подъезда меняется — гудок мерим от остановки: через 3 с тишина, через 5 — один, через 8 — всё ещё один */
+    try { for (let k = 0; k < 15 * 30 && !(a.act.v < 0.3 && a.act.waitT > 0); k++) { game.t += 1 / 30; actorsTick(1 / 30); }
+      step(3); const at3 = n; step(2); const at6 = n; step(3); const at9 = n; return { at3, at6, at9, v: +a.act.v.toFixed(2), waitT: +(a.act.waitT || 0).toFixed(1) }; }
     finally { honk = H; }
   });
   const ok = r && r.at3 === 0 && r.at6 === 1 && r.at9 === 1;
   if (!ok) bad++;
   console.log((ok ? 'OK   ' : 'FAIL ') + 'машина потока гудит игроку, стоящему в её полосе (@traffic-honk-wait)'
-    + (r ? ' · гудков через 3/8/11 с: ' + r.at3 + '/' + r.at6 + '/' + r.at9 + ' · скорость ' + r.v + ' · ожидание ' + r.waitT + ' с' : ' · машина потока не найдена'));
+    + (r ? ' · гудков через 3/5/8 с после остановки: ' + r.at3 + '/' + r.at6 + '/' + r.at9 + ' · скорость ' + r.v + ' · ожидание ' + r.waitT + ' с' : ' · машина потока не найдена'));
+  if (pageErr) { console.log('     PAGEERR ' + pageErr); pageErr = null; }
+}
+/* гудок не для очереди: игрок стоит в 2 м за стоящей машиной, сзади подъезжает поток — 12 с тишины.
+   Без проверки «игрок стоит по делу» машина сзади сигналила каждые 7 с за честное ожидание в пробке */
+{
+  const r = await page.evaluate(() => {
+    loadLevel(LEVELS.findIndex(d => d.traffic)); hideOv(); paused = true;
+    const a = level.actors.find(x => x.act && x.act.flow && x.act.rt); if (!a) return null;
+    const p = trafPose(a.act.rt, a.act.s + 20, { u: 0, v: 0, yaw: 0 });
+    setBody(p.u, p.v, p.yaw); car.vel = 0; car.sel = 'D';
+    const q = trafPose(a.act.rt, a.act.s + 20 + 2 * HALF_L + 2, { u: 0, v: 0, yaw: 0 });
+    const o = pcar(q.u, q.v, 0, PALETTE[2]); o.yaw = q.yaw; o.hw = o.w / 2; o.hl = o.l / 2;
+    o.act = { started: false, done: false, flow: false, v: 0, s: 0, sp: 0, trig: () => false };
+    level.actors.push(o);
+    let n = 0; const H = honk; honk = () => { n++; };
+    try { for (let k = 0; k < 12 * 30; k++) { game.t += 1 / 30; actorsTick(1 / 30); }
+      return { n, gap: +demoTrafficGap(8).toFixed(1), waitT: +(a.act.waitT || 0).toFixed(1) }; }
+    finally { honk = H; level.actors.pop(); }
+  });
+  const ok = r && r.n === 0;
+  if (!ok) bad++;
+  console.log((ok ? 'OK   ' : 'FAIL ') + 'игроку в очереди не гудят (@traffic-honk-held)'
+    + (r ? ' · гудков за 12 с: ' + r.n + ' · до машины впереди ' + r.gap + ' м' : ' · машина потока не найдена'));
   if (pageErr) { console.log('     PAGEERR ' + pageErr); pageErr = null; }
 }
 for (const li of levels) {
   const r = await page.evaluate(({ li, secs, fault }) => {
     loadLevel(li); hideOv(); paused = true;
+    setBody(1e4, 1e4, 0); car.vel = 0;
     const flow = level.actors.filter(a => a.act.flow);
     if (!flow.length) return { name: level.def.name, err: ['поток объявлен, но машин нет'] };
+    const BX = jamBoxes() || [], boxT = new Map(), sHist = [];
     const err = [], seen = {};
     /* одна строка на вид дефекта с худшим замером: иначе одно наложение печатается
        сотнями строк и прячет остальные проверки */
@@ -106,6 +146,14 @@ for (const li of levels) {
     for (let k = 0; k < n; k++) {
       game.t += dt;
       actorsTick(dt);
+      /* мёртвая пробка: каждая машина за любые 90 с проезжает хотя бы 3 м. Светофор держит не дольше
+         цикла (24 с), очередь за ним сдвигается каждый зелёный — стоять 90 с может только сцепка */
+      if (k % 900 === 0) {
+        sHist.push(flow.map(a => a.act.done ? null : a.act.s));
+        if (sHist.length > 3) { const was = sHist[sHist.length - 4], now = sHist[sHist.length - 1];
+          for (let i = 0; i < flow.length; i++) if (was[i] !== null && now[i] !== null && now[i] - was[i] < 3)
+            note('машина потока стоит 90 с — сцепка (@traffic-flow-no-gridlock), м за 90 с', +(now[i] - was[i]).toFixed(1)); }
+      }
       if (k % 3) continue;
       for (let i = 0; i < flow.length; i++) {
         const a = flow[i];
@@ -177,8 +225,21 @@ for (const li of levels) {
           if (m && m.depth > 0.02) { note('машина потока на поребрике, м (@city-kerb-flow-clear)', +m.depth.toFixed(2));
             if (!kerbHit) kerbHit = { t: +(k * dt).toFixed(1), u: +a.u.toFixed(1), v: +a.v.toFixed(1), yaw: Math.round(deg(a.yaw)), kerb: [+q.o.u.toFixed(1), +q.o.v.toFixed(1)] }; }
         }
+        /* п. 13.2 и 14.4: стоять внутри перекрёстка или на зебре за очередью нельзя. Узел у светофора поток
+           ждёт у стоп-линии, а не внутри; за машиной, которая сама ждёт въезда, — тоже снаружи */
+        if (a.act.v < 0.25) {
+          const bx = BX.find(b => inBox(b, a.u, a.v));
+          let q = false;
+          if (bx) { const f = fuv(a.yaw), rr = ruv(a.yaw);
+            q = flow.some(o => o !== a && Math.abs(angNorm(o.yaw - a.yaw)) < rad(45)
+              && ((du, dv) => { const lon = du * f.u + dv * f.v; return lon > 0 && lon - 2 * HALF_L < 4 && Math.abs(du * rr.u + dv * rr.v) < 1.6; })(o.u - a.u, o.v - a.v)); }
+          const t = q ? (boxT.get(i) || 0) + dt * 3 : 0;
+          boxT.set(i, t);
+          if (t > 1) note('машина потока стоит в перекрёстке или на зебре за очередью, с (@traffic-flow-box-clear) ' + bx.id, +t.toFixed(1));
+        } else boxT.set(i, 0);
         /* застряла без причины */
-        const blocked = trafBlock(a, level.actors.indexOf(a)) < TRAF.see || trafLight(a) < TRAF.see;
+        const blocked = trafBlock(a, level.actors.indexOf(a)) < TRAF.see || trafLight(a) < TRAF.see
+          || trafBoxBlock(a) < TRAF.see || trafRingYield(a) < TRAF.see || ruleBlock(a) < TRAF.see;
         const st = (a.act.v < 0.2 && !blocked) ? (stuck.get(i) || 0) + dt * 3 : 0;
         stuck.set(i, st);
         if (st > 20) note('машина стоит без помехи, с (@traffic-flow-stuck)', Math.round(st));

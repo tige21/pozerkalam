@@ -5523,6 +5523,8 @@ function emitTram(o){
 const TRAF={ sp:8.3, acc:1.3, dec:2.9, gap:6.2, see:28, lat:1.8, lon:2.6, cap:30, step:2.4 };
 /* метров дороги на одну машину: чем меньше, тем гуще поток */
 const TRAF_SPACING={off:Infinity, calm:115, normal:74, dense:48, heavy:30};
+/* дальше по своему пути позади — уже не «следом за мной»: на петле в 240 м машина в 200 м позади — впереди */
+const TRAF_FOLLOW=40;
 const TRAF_NAMES={off:'без машин', calm:'спокойный', normal:'обычный', dense:'плотный', heavy:'час пик'};
 /* за этой дальностью машина потока рисуется коробкой, а тень ей не рисуется вовсе.
    Замер на кольце (CPU×4): девять машин добавляли 402 грани к 754 и 2,5 мс к кадру —
@@ -5728,8 +5730,13 @@ function trafficInit(){
        ровно на следующую — на «час пик» три уровня стартовали с наложением 1,8 м. Уже
        расставленные позиции петли держат дистанцию: не ближе половины spacing и 9 м */
     const placed=[];
+    /* и по месту, а не только по длине пути: петля B проходит юго-западную дугу кольца дважды, и на «плотном»
+       две машины, разведённые на 70 м по пути, рождались одна в другой (уровни 28, 30) */
     const tooClose=(s)=>{ const min=Math.max(9, spacing*0.5);
       for(const p of placed){ let d=Math.abs(((s-p)%rt.len+rt.len)%rt.len); d=Math.min(d, rt.len-d); if(d<min) return true; }
+      const q=trafPose(rt, s, _tq);
+      for(const o of level.actors)
+        if(o.act && o.act.flow && Math.hypot(o.u-q.u, o.v-q.v)<9 && Math.abs(angNorm(o.yaw-q.yaw))<rad(45)) return true;
       return false; };
     for(let i=0;i<k;i++){
       /* стартовая поза игрока на уровнях 30 и 31 стоит ровно в полосе потока: машина,
@@ -5791,6 +5798,13 @@ function trafBlock(a, ai){
       if(j===ai) continue;
       const o=level.actors[j], os=o.act;
       if(!os.started || os.done) continue;
+      /* кто едет за мной по моему же пути — не помеха впереди. На въезде на кольцо путь загибается, и задняя
+         машина очереди оказывалась в широком ближнем коридоре первой пробы: голова ждала собственный хвост,
+         и «час пик» на уровнях 27–31 вставал намертво (#355) */
+      if(rt && os.rt===rt){
+        const bh=rt.open ? s.s-os.s : ((s.s-os.s)%rt.len+rt.len)%rt.len;
+        if(bh>0 && bh<TRAF_FOLLOW) continue;
+      }
       const ov=Math.abs(os.v), stopped=ov<0.25;
       du=o.u-p.u; dv=o.v-p.v;
       const lonC=du*f.u+dv*f.v, latC=du*r.u+dv*r.v;
@@ -5895,6 +5909,202 @@ function trafNodeBusy(a, s){
   }
   return false;
 }
+/* ---------- коробки п. 13.2 и 14.4 ----------
+   Перекрёсток (не кольцо и не изгиб улицы) и пешеходный переход: въезжать в них можно, только если за
+   выездом есть место для всего кузова, — иначе машина встаёт поперёк пути тем, кому дадут зелёный, или
+   на зебре. Поток этого не знал: машина въезжала в узел за стоящей очередью и стояла в нём, а при
+   плотном потоке петли сцеплялись насмерть (совет ECC 15.10.2026, доска #355) */
+const JAM_ROOM=2*HALF_L+1.0;    /* место за выездом: кузов и метр, м */
+const JAM_SLOW=3.0;             /* машина за выездом едет быстрее — место освободится, ждать не надо, м/с */
+const JAM_FAR=30;
+function jamBoxes(){
+  if(!level || !level.city) return null;
+  if(level._boxes) return level._boxes;
+  const c=level.city, g=c.graph, out=[];
+  if(g) for(const id in g.V){
+    if(id[0]==='@') continue;
+    const n=g.V[id];
+    if(n.round || !n.r || (g.adj[id]||[]).length<3) continue;
+    out.push({kind:'node', id, u:n.u, v:n.v, r:n.r});
+  }
+  for(const z of (c.zebras||[]))
+    out.push({kind:'zebra', id:z.id||'зебра', u:z.u, v:z.v, f:fuv(z.yaw), rr:ruv(z.yaw), hl:z.halfLen, hw:z.w/2});
+  return (level._boxes=out);
+}
+function inBox(bx, u, v){
+  const du=u-bx.u, dv=v-bx.v;
+  if(bx.kind==='node') return du*du+dv*dv < bx.r*bx.r;
+  return Math.abs(du*bx.f.u+dv*bx.f.v)<bx.hl && Math.abs(du*bx.rr.u+dv*bx.rr.v)<bx.hw;
+}
+/* свободно ли за точкой выезда по курсу yaw: задний бампер ближайшей попутной машины (и игрока, если
+   спрашивает поток) от точки выезда. Ползущая или стоящая очередь места не обещает, едущая — обещает */
+function roomBeyond(eu, ev, yaw, self){
+  const f=fuv(yaw), r=ruv(yaw);
+  let room=JAM_FAR, moving=true;
+  const test=(u, v, oyaw, hl, sp)=>{
+    if(Math.abs(angNorm(oyaw-yaw))>rad(45)) return;
+    const du=u-eu, dv=v-ev, lon=du*f.u+dv*f.v;
+    if(Math.abs(du*r.u+dv*r.v)>1.6 || lon<-hl || lon>JAM_FAR+hl) return;
+    const free=Math.max(0, lon-hl);
+    if(free<room){ room=free; moving=Math.abs(sp)>=JAM_SLOW; }
+  };
+  for(const a of level.actors){
+    const s=a.act;
+    if(a===self || !s || s.ped || !s.started || s.done) continue;
+    test(a.u, a.v, a.yaw, a.hl||HALF_L, s.v);
+  }
+  if(self){ const b=bodyPos(); test(b.u, b.v, car.th, HALF_L, car.vel); }
+  return {room, moving};
+}
+/* интервалы коробок вдоль пути машины потока — один раз на путь: точки пути после постройки не меняются */
+function rtBoxes(rt){
+  if(rt._bx) return rt._bx;
+  const B=jamBoxes()||[], out=[], STEP=0.5, n=Math.ceil(rt.len/STEP), p={u:0, v:0, yaw:0};
+  let cur=null, s0=0;
+  for(let i=0;i<=n;i++){
+    const s=Math.min(rt.len-1e-6, i*STEP);
+    trafPose(rt, s, p);
+    let hit=null;
+    for(const bx of B) if(inBox(bx, p.u, p.v)){ hit=bx; break; }
+    if(hit!==cur){ if(cur) out.push({s0, s1:s, bx:cur}); cur=hit; s0=s; }
+  }
+  if(cur) out.push({s0, s1:rt.len, bx:cur});
+  return (rt._bx=out);
+}
+/* машина потока не въезжает в коробку, за которой нет места: возвращает расстояние в смысле trafBlock
+   (стоп носом в 0,8 м до въезда). Нос уже в коробке — едет дальше: стоять внутри хуже, чем освободить */
+function trafBoxBlock(a){
+  const s=a.act, rt=s.rt;
+  if(!s.flow || !rt) return TRAF.see;
+  const B=rtBoxes(rt);
+  if(!B.length) return TRAF.see;
+  const L=rt.len, nose=s.s+HALF_L;
+  for(const iv of B){
+    const span=iv.s1-iv.s0;
+    let ahead;
+    if(rt.open){ if(nose>=iv.s0) continue; ahead=iv.s0-nose; }
+    else { if(((nose-iv.s0)%L+L)%L<span) continue; ahead=((iv.s0-nose)%L+L)%L; }
+    if(ahead>24) continue;
+    const ex=trafPose(rt, rt.open ? iv.s1 : s.s+HALF_L+ahead+span, _tq);
+    const R=roomBeyond(ex.u, ex.v, ex.yaw, a);
+    if(R.room>=JAM_ROOM || R.moving) continue;
+    return Math.max(0, ahead-0.8)+TRAF.gap;
+  }
+  return TRAF.see;
+}
+/* въезды пути на кольцо: где нос встаёт перед кромкой (радиус round + 1,5) и под каким углом путь
+   сливается с круговой полосой (радиус round − 3,5, как у ringArc). Один раз на путь */
+function rtRings(rt){
+  if(rt._rg) return rt._rg;
+  const g=cityGraph(), out=[];
+  if(g) for(const id in g.V){
+    const N=g.V[id]; if(!N.round) continue;
+    const Ry=N.round+1.5, Rm=N.round-2.5, STEP=0.5, n=Math.ceil(rt.len/STEP), p={u:0, v:0, yaw:0};
+    let was=null, sy=-1;
+    for(let i=0;i<=n;i++){
+      const s=Math.min(rt.len-1e-6, i*STEP);
+      trafPose(rt, s, p);
+      const d=Math.hypot(p.u-N.u, p.v-N.v);
+      if(was!==null && was>Ry && d<=Ry) sy=s;
+      if(sy>=0 && d<=Rm){ out.push({N, sy, sm:s, phi:Math.atan2(p.v-N.v, p.u-N.u)}); sy=-1; }
+      was=d;
+    }
+  }
+  return (rt._rg=out);
+}
+/* п. 13.11.1 и знаки 4.3 + 2.4: на кольце главнее тот, кто уже на нём. Машина потока перед въездом ждёт,
+   пока круговая полоса у точки слияния свободна: никто на кольце не подъедет к ней за 3,5 с и не стоит на
+   ней. Без этого въезжающий высовывал нос в кольцо, круговая вставала за ним, и обе ждали друг друга —
+   петля B проходит кольцо полтора раза и сходится сама с собой на западном въезде (#355) */
+const RING_YIELD_T=3.5;
+let TRAF_RING=true;
+function trafRingYield(a){
+  const s=a.act, rt=s.rt;
+  if(!s.flow || !rt) return TRAF.see;
+  const E=rtRings(rt);
+  if(!E.length) return TRAF.see;
+  const L=rt.len, nose=s.s+HALF_L;
+  for(const e of E){
+    /* со знаком: нос чуть за точкой ожидания ещё может встать — разгон в просвет без запаса проскакивал её на
+       0,1 м и считался въехавшим. Глубже 1,5 м нельзя: стоящий центр ближе 15,6 м к центру кольца попадает в
+       коридор круговой (полоса R 11,5 + её ворота 4,1 м), круговая встаёт перед ним, и обе ждут (экзамен) */
+    let ahead = rt.open ? e.sy-nose : ((e.sy-nose)%L+L)%L;
+    if(!rt.open && ahead>L/2) ahead-=L;
+    if(ahead<-1.5 || ahead>18) continue;
+    /* окно — время, за которое я доеду до слияния и освобожу его (кузов и 4 м), плюс секунда. Скорость — не
+       нынешняя, а та, с которой путь позволяет пройти изгиб въезда (trafCurveSpeed): на 30 км/ч машина
+       считала, что проскочит за 2 с, а в изгибе сбрасывала до 2 м/с, и круговая на 30 км/ч въезжала ей в борт */
+    const D=Math.max(0, ahead)+2*HALF_L+4;
+    const vIn=Math.max(1, Math.min(Math.max(s.v, TRAF.acc), trafCurveSpeed(rt, e.sy)));
+    const tMe=D/vIn+1-RING_YIELD_T;
+    const N=e.N, R=N.round-3.5;
+    for(const o of level.actors){
+      const os=o.act;
+      if(o===a || !os || os.ped || !os.started || os.done) continue;
+      const du=o.u-N.u, dv=o.v-N.v, dist=Math.hypot(du, dv);
+      if(dist<N.round-6 || dist>N.round+0.2) continue;
+      /* направление обхода по самой машине: против часовой стрелки угол растёт */
+      const of=fuv(o.yaw), dir=(du*of.v-dv*of.u)>=0 ? 1 : -1;
+      const arc=angNorm((e.phi-Math.atan2(dv, du))*dir)*R;
+      if(arc>-2*HALF_L && arc<Math.max(8, Math.abs(os.v)*Math.max(RING_YIELD_T, RING_YIELD_T+tMe))+HALF_L)
+        return Math.max(0, ahead-0.5)+TRAF.gap;
+    }
+    /* п. 13.2 и на кольце: за точкой слияния нужно место для кузова, иначе въехавший встаёт поперёк круговой */
+    if(!pathFree(rt, e.sm, JAM_ROOM, a)) return Math.max(0, ahead-0.5)+TRAF.gap;
+  }
+  return TRAF.see;
+}
+/* свободен ли собственный путь машины на len метров от s0: ни одной стоящей или ползущей машины ближе 1,8 м
+   к точкам пути. По точкам, а не по прямой: на кольце R 11,5 передняя в 6 м уходит вбок на 1,6 м */
+function pathFree(rt, s0, len, self){
+  const p=_tq;
+  for(let d=0; d<=len+HALF_L; d+=1.5){
+    trafPose(rt, s0+d, p);
+    for(const o of level.actors){
+      const os=o.act;
+      if(o===self || !os || os.ped || !os.started || os.done || Math.abs(os.v)>=JAM_SLOW) continue;
+      if((o.u-p.u)*(o.u-p.u)+(o.v-p.v)*(o.v-p.v)<1.8*1.8) return false;
+    }
+  }
+  return true;
+}
+/* ближайшая коробка впереди игрока по курсу: от носа до въезда и сколько места за выездом.
+   Нос уже в коробке — null: решение «въезжать или нет» принято */
+function jamRoomAhead(maxD){
+  const B=jamBoxes();
+  if(!B || !B.length) return null;
+  const c=bodyPos(), f=fuv(car.th), M=maxD||JAM_FAR;
+  let box=null, entry=0;
+  for(let d=0; d<=M; d+=0.5){
+    const pu=c.u+f.u*(HALF_L+d), pv=c.v+f.v*(HALF_L+d);
+    if(!box){
+      for(const bx of B) if(inBox(bx, pu, pv)){ box=bx; entry=d; break; }
+      if(box && d===0) return null;
+      continue;
+    }
+    if(!inBox(box, pu, pv)){ const R=roomBeyond(pu, pv, car.th, null); return {box, entry, exit:d, room:R.room, moving:R.moving}; }
+  }
+  return box ? {box, entry, exit:M, room:JAM_FAR, moving:true} : null;
+}
+/* стоит ли игрок по делу: впереди машина ближе 8 м, запрещающий сигнал у его линии, пешеход на переходе
+   или нет места за коробкой. Гудок — только тому, кто держит пустую дорогу: в пробке машина за спиной
+   сигналила бы каждые 7 с за честное ожидание, и новичок учился бы подкатывать вплотную */
+function playerHeld(){
+  if(demoTrafficGap(8)<8) return true;
+  const c=level.city;
+  if(!c) return false;
+  const b=bodyPos(), f=fuv(car.th), nu=b.u+f.u*HALF_L, nv=b.v+f.v*HALF_L;
+  for(const sl of (c.stoplines||[])){
+    if(!sl.light || lightLets(sl)) continue;
+    const lf=fuv(sl.yaw), lr=ruv(sl.yaw);
+    if(f.u*lf.u+f.v*lf.v<0.6) continue;
+    const s=(nu-sl.u)*lf.u+(nv-sl.v)*lf.v;
+    if(s<0.5 && s>-6 && Math.abs((nu-sl.u)*lr.u+(nv-sl.v)*lr.v)<sl.w/2+0.6) return true;
+  }
+  if(pedAhead()==='yield') return true;
+  const j=jamRoomAhead(8);
+  return !!(j && j.room<JAM_ROOM && !j.moving);
+}
 /* поток соблюдает ограничения: на 2 км/ч ниже знака там, где машина стоит, и в 12 м впереди по её пути —
    иначе в «20» она въезжала бы на 30 и тормозила уже в зоне. До 11.10.2026 поток шёл 22 км/ч везде, а
    машина игрока ездила до 19: обгоняли все, и знаку «20» было нечего ограничивать */
@@ -5911,14 +6121,18 @@ function trafCurveSpeed(rt, s0){
   }
   return Math.max(TRAF_V_MIN, vmax);
 }
+/* выключатель правила коробок — для гейта (FAULT=noboxrule), в игре всегда включён */
+let TRAF_BOX=true;
 function actorsTick(dt){
+  let held=null;
   for(let i=0;i<level.actors.length;i++){
     const a=level.actors[i], s=a.act;
     if(s.done) continue;
     if(!s.started){ if(s.trig && s.trig(curS)) s.started=true; else continue; }
     if(s.ped){ pedTick(a, s, dt); continue; }
     const blk=trafBlock(a,i), byPlayer=trafBlockBy==='player';
-    const block=Math.min(blk, trafConflict(a,i), s.rt && s.flow ? trafLight(a) : TRAF.see, ruleBlock(a));
+    const block=Math.min(blk, trafConflict(a,i), s.rt && s.flow ? trafLight(a) : TRAF.see, ruleBlock(a),
+                         TRAF_BOX ? trafBoxBlock(a) : TRAF.see, TRAF_RING ? trafRingYield(a) : TRAF.see);
     let want=Math.min(s.sp, trafSpeed(block));
     if(s.rt) want=Math.min(want, trafCurveSpeed(s.rt, s.s), trafLimitSpeed(a, s));
     if(s.flow && s.rt && trafNodeBusy(a, s)) want=0;
@@ -5926,7 +6140,10 @@ function actorsTick(dt){
     if(s.v<0.01) s.v=0;
     /* гудок: машина стоит за игроком, игрок стоит — через HONK_WAIT с двойной сигнал, повтор не
        раньше HONK_REST; в показе и в headless-проигрыше молчит (honk сам проверяет) */
-    if(byPlayer && s.v<0.3 && Math.abs(car.vel)<0.3){ s.waitT=(s.waitT||0)+dt; }
+    if(byPlayer && s.v<0.3 && Math.abs(car.vel)<0.3){
+      if(held===null) held=playerHeld();
+      s.waitT = held ? 0 : (s.waitT||0)+dt;
+    }
     else s.waitT=0;
     if(s.honkT>0) s.honkT-=dt;
     if(s.waitT>=HONK_WAIT && !(s.honkT>0)){ honk(blk, a); s.honkT=HONK_REST; }
@@ -15896,13 +16113,14 @@ function demoStep(dt){
    Одна правда для линии на земле и для проигрывателя — расхождений не бывает */
 /* зазор до ближайшей машины (статиста или потока) пятью прямыми лучами из передней кромки —
    без диагоналей и без бордюров, знаков и стен: только то, во что показ может въехать сзади */
-function demoTrafficGap(){
-  if(!level.actors.length) return SENS_MAX;
+function demoTrafficGap(maxD){
+  const M=maxD||SENS_MAX;
+  if(!level.actors.length) return M;
   const c=bodyPos(), f=fuv(car.th), r=ruv(car.th);
-  let m=SENS_MAX;
+  let m=M;
   for(const k of [-HALF_W,-0.78,0,0.78,HALF_W]){
     const pu=c.u+f.u*HALF_L+r.u*k, pv=c.v+f.v*HALF_L+r.v*k;
-    m=Math.min(m, castMin(pu+f.u*0.01, pv+f.v*0.01, f.u, f.v, SENS_MAX, 0, level.actors));
+    m=Math.min(m, castMin(pu+f.u*0.01, pv+f.v*0.01, f.u, f.v, M, 0, level.actors));
   }
   return m;
 }
