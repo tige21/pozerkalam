@@ -325,6 +325,40 @@ function unitCheck() {
   level.actors = [flow(0, 0, 0, 6), flow(60, 10, -90, 6)];
   ok('далёкий поперечный никого не тормозит', trafBlock(level.actors[0], 0) >= TRAF.see
     && trafBlock(level.actors[1], 1) >= TRAF.see);
+  /* машина на своём пути: s — длина вдоль него, курс — касательная */
+  const onRt = (r, s, sp) => { const q = trafPose(r, s, {}), a = pcar(q.u, q.v, 0, PALETTE[2]); a.yaw = q.yaw;
+    a.act = { rt: r, s, s0: s, sp, v: sp, trig: null, i: 0, started: true, done: false, flow: true, u0: q.u, v0: q.v, yaw0: q.yaw };
+    return a; };
+  const line = (u, v, deg) => { const f = fuv(rad(deg)); return actorPath(u - f.u * 10, v - f.v * 10, [{ u: u + f.u * 30, v: v + f.v * 30 }]); };
+  /* шпилька шириной 2 м: задняя машина того же пути стоит сбоку в 2 м от коридора передней — не помеха; та же
+     машина на чужом пути — помеха (так голова очереди ждала хвост на въезде на кольцо) */
+  const pin = () => actorPath(0, -20, [{ u: 0, v: 0 }, { u: 2, v: 0 }, { u: 2, v: -20 }]);
+  const rtP = pin(), sLead = rtNearest(rtP, 2, -5), sFol = rtNearest(rtP, 0, -6);
+  level.actors = [onRt(rtP, sFol, 0), onRt(rtP, sLead, 0)];
+  ok('машина за мной по моему пути не держит меня', trafBlock(level.actors[1], 1) >= TRAF.see);
+  level.actors = [onRt(pin(), sFol, 0), onRt(rtP, sLead, 0)];
+  ok('та же машина на чужом пути — помеха', trafBlock(level.actors[1], 1) < TRAF.see);
+  /* за мной по пути дальше TRAF_FOLLOW — уже не «за мной»: на петле она может быть впереди */
+  const rtL = actorPath(0, -60, [{ u: 0, v: 0 }, { u: 2, v: 0 }, { u: 2, v: -20 }]);
+  level.actors = [onRt(rtL, rtNearest(rtL, 0, -6) - TRAF_FOLLOW, 0), onRt(rtL, rtNearest(rtL, 2, -5), 0)];
+  ok('пустой путь впереди', trafBlock(level.actors[1], 1) >= TRAF.see);
+  /* а впереди по моему же пути — очередь: держит, до её центра 6 м */
+  const rtQ = line(0, 0, 0);
+  level.actors = [onRt(rtQ, 16, 0), onRt(rtQ, 10, 0)];
+  near('попутная впереди на моём пути — помеха в 6 м', trafBlock(level.actors[1], 1), 6, 0.05);
+  /* колонны пробки: попутная (курс 25°) соседней полосы в 2,8 м сбоку не держит; не из колонны или под 40° — держит */
+  const col = (u, v, deg, jam) => { const a = onRt(line(u, v, deg), 10, 0); a.act.jam = jam; return a; };
+  level.actors = [col(2.8, 4, 25, true), col(0, 0, 0, true)];
+  ok('попутная колонна соседней полосы не держит', trafBlock(level.actors[1], 1) >= TRAF.see);
+  level.actors = [col(-2.8, 4, -25, true), col(0, 0, 0, true)];
+  ok('и слева — тоже не держит', trafBlock(level.actors[1], 1) >= TRAF.see);
+  level.actors = [col(2.8, 4, 25, false), col(0, 0, 0, true)];
+  ok('та же машина не из колонны — помеха', trafBlock(level.actors[1], 1) < TRAF.see);
+  level.actors = [col(2.8, 4, 40, true), col(0, 0, 0, true)];
+  ok('колонна под 40° — не попутная, помеха', trafBlock(level.actors[1], 1) < TRAF.see);
+  level.actors = [col(2.2, 4, 25, true), col(0, 0, 0, true)];
+  /* trafBlock меряет до центра помехи вдоль моего пути: она стоит в 4 м впереди */
+  near('колонна ближе 2,6 м сбоку — помеха в 4 м впереди', trafBlock(level.actors[1], 1), 4, 0.05);
   level.actors = [];
 
   g('маршрут по городу');
