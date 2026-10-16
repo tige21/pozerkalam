@@ -9,6 +9,7 @@
      FAULT=kerbflow — поребрик поперёк пути первой машины: @city-kerb-flow-clear обязан покраснеть
      FAULT=noboxrule — поток без правила коробок (п. 13.2, 14.4): @traffic-flow-box-clear на уроке пробки красный
      FAULT=honkheld — гудок без проверки «игрок стоит по делу»: @traffic-honk-held красный
+     FAULT=nojam — урок пробки без колонны: @traffic-jam-column красный
      FAULT=noring — въезжающий на кольцо не уступает круговому: на «часе пик» @traffic-flow-no-gridlock красный
    Главный прогон идёт без игрока на дороге: стоящая у старта машина игрока держала бы очередь потока весь
    прогон, и проверка мёртвой пробки (@traffic-flow-no-gridlock) читала бы это как сцепку */
@@ -123,6 +124,32 @@ let bad = 0;
     + (r ? ' · гудков за 12 с: ' + r.n + ' · до машины впереди ' + r.gap + ' м' : ' · машина потока не найдена'));
   if (pageErr) { console.log('     PAGEERR ' + pageErr); pageErr = null; }
 }
+/* урок пробки: на старте квартал N1–N2 стоит колонной в обе полосы, а за 3 минуты вся колонна впереди проходит N2 и
+   уходит со сцены — затор живой, а не вечный. FAULT=nojam — урок без колонны */
+{
+  const r = await page.evaluate((fault) => {
+    const li = LEVELS.findIndex(d => /^33 ·/.test(d.name)); if (li < 0) return null;
+    if (fault === 'nojam') { const B = LEVELS[li].build; LEVELS[li].build = function () { const b = B.call(this); b.jam = null; return b; }; loadLevel(li); LEVELS[li].build = B; }
+    else loadLevel(li);
+    hideOv(); paused = true;
+    const jam = level.actors.filter(a => a.act && a.act.jam);
+    const block = jam.filter(a => a.v > -60 && a.v < -12 && a.u > 3 && a.u < 10).length;
+    const ahead = jam.filter(a => a.v > -60);
+    setBody(1e4, 1e4, 0); car.vel = 0;
+    /* «ушла» — проехала последний узел своего пути (дальше exitS) или ушла со сцены */
+    const passed = new Set();
+    const dt = 1 / 30; for (let k = 0; k < 180 * 30; k++) { game.t += dt; actorsTick(dt);
+      for (const a of ahead) if (a.act.done || a.act.s >= a.act.exitS) passed.add(a); }
+    return { block, ahead: ahead.length, left: passed.size };
+  }, FAULT);
+  if (r) {
+    const ok = r.block >= 12 && r.ahead > 0 && r.left === r.ahead;
+    if (!ok) bad++;
+    console.log((ok ? 'OK   ' : 'FAIL ') + 'урок пробки: колонна в квартале N1–N2 и уходит за 3 мин (@traffic-jam-column) · в квартале '
+      + r.block + ' · впереди ' + r.ahead + ' · ушли ' + r.left);
+  }
+  if (pageErr) { console.log('     PAGEERR ' + pageErr); pageErr = null; bad++; }
+}
 for (const li of levels) {
   const r = await page.evaluate(({ li, secs, fault }) => {
     loadLevel(li); hideOv(); paused = true;
@@ -137,7 +164,7 @@ for (const li of levels) {
       /* отрицательное значение — «чем меньше, тем хуже»: храним худший замер */
       if (p === undefined || (val < 0 ? val > p : val > p)) seen[k] = val;
       if (p !== undefined && val < 0 && val < p) seen[k] = p; };
-    const stuck = new Map(), crossed = new Map(), prevYaw = new Map(); let maxJump = 0, firstHit = null, kerbHit = null;
+    const stuck = new Map(), crossed = new Map(), ycross = new Map(), prevYaw = new Map(), prevPos = new Map(); let maxJump = 0, firstHit = null, kerbHit = null, firstGrid = null, firstRed = null;
     /* поребрик: поток едет по своей линии и о бордюр не тормозит — наезд был бы виден только глазом */
     const KB = level.obs.filter(o => o.kind === 'kerb').map(o => ({ o, r: Math.hypot(o.w, o.l) / 2 + 2.6 }));
     if (fault === 'kerbflow' && flow.length) { const a = flow[0], o = { kind: 'kerb', u: a.u, v: a.v, w: 0.5, l: 3, yaw: a.yaw + Math.PI / 2, hw: 0.25, hl: 1.5 }; KB.push({ o, r: 4.1 }); }
@@ -149,18 +176,29 @@ for (const li of levels) {
       /* мёртвая пробка: каждая машина за любые 90 с проезжает хотя бы 3 м. Светофор держит не дольше
          цикла (24 с), очередь за ним сдвигается каждый зелёный — стоять 90 с может только сцепка */
       if (k % 900 === 0) {
-        sHist.push(flow.map(a => a.act.done ? null : a.act.s));
+        sHist.push(flow.map(a => a.act.done ? null : [a.act.rt, a.act.s]));
         if (sHist.length > 3) { const was = sHist[sHist.length - 4], now = sHist[sHist.length - 1];
-          for (let i = 0; i < flow.length; i++) if (was[i] !== null && now[i] !== null && now[i] - was[i] < 3)
-            note('машина потока стоит 90 с — сцепка (@traffic-flow-no-gridlock), м за 90 с', +(now[i] - was[i]).toFixed(1)); }
+          for (let i = 0; i < flow.length; i++) {
+            if (!was[i] || !now[i] || was[i][0] !== now[i][0] || now[i][1] < was[i][1]) continue;
+            if (now[i][1] - was[i][1] < 3) {
+              note('машина потока стоит 90 с — сцепка (@traffic-flow-no-gridlock), м за 90 с', +(now[i][1] - was[i][1]).toFixed(1));
+              const a = flow[i];
+              if (!firstGrid) firstGrid = { t: +(k * dt).toFixed(0), i: level.actors.indexOf(a), jam: !!a.act.jam, u: +a.u.toFixed(1), v: +a.v.toFixed(1), yaw: Math.round(deg(a.yaw)) };
+            }
+          } }
       }
       if (k % 3) continue;
       for (let i = 0; i < flow.length; i++) {
         const a = flow[i];
+        /* машина колонны пробки ушла со сцены (лежит в 10 км): ни дороги, ни соседей у неё больше нет */
+        if (a.act.done) continue;
         vsum += a.act.v; vn++;
         /* курс по касательной: скачок курса за 0,1 с не больше 8° — поворот 90° на 6 м/с честно
            даёт до 6°, а со ступенчатым курсом с сегмента на кольце было 12° и на стыке петли 77° */
-        if (prevYaw.has(i)) { const j = Math.abs(deg(angNorm(a.yaw - prevYaw.get(i)))); if (j > maxJump) maxJump = j; }
+        /* скачок дальше 5 м за 0,1 с — не поворот, а перенос (машина колонны ушла со сцены): курс не сравниваем */
+        const pp = prevPos.get(i), tele = pp && Math.hypot(a.u - pp[0], a.v - pp[1]) > 5;
+        prevPos.set(i, [a.u, a.v]);
+        if (prevYaw.has(i) && !tele) { const j = Math.abs(deg(angNorm(a.yaw - prevYaw.get(i)))); if (j > maxJump) maxJump = j; }
         prevYaw.set(i, a.yaw);
         /* на проезжей части и в своей половине. Внутри перекрёстка полос нет — там линию
            ведёт дуга, и привязка к соседнему лучу дала бы ложный «выезд на встречную» */
@@ -199,8 +237,16 @@ for (const li of levels) {
           if (Math.abs((a.u - sl.u) * lr.u + (a.v - sl.v) * lr.v) > sl.w / 2) continue;
           const key = i + '@' + sl.u + ',' + sl.v;
           const was = crossed.get(key);
-          if (was !== undefined && was < -0.3 && s > 0.3 && lightStops(sl.light))
+          /* п. 6.14 и для потока: кто в миг смены зелёного на жёлтый был ближе своего тормозного пути (замедление
+             TRAF.dec), проезжает законно — то же правило, что у игрока */
+          const ph = lightPhase(sl.light), phWas = ycross.get(key + 'ph');
+          if (phWas === 'G' && ph === 'Y') ycross.set(key + 'ok', -s < a.act.v * a.act.v / (2 * TRAF.dec) + 0.5);
+          if (ph === 'G') ycross.delete(key + 'ok');
+          ycross.set(key + 'ph', ph);
+          if (was !== undefined && was < -0.3 && s > 0.3 && lightStops(sl.light) && !(ph === 'Y' && ycross.get(key + 'ok'))) {
             note('проезд на красный (@traffic-flow-red)', 1);
+            if (!firstRed) firstRed = { t: +(k * dt).toFixed(1), i: level.actors.indexOf(a), jam: !!a.act.jam, u: +a.u.toFixed(1), v: +a.v.toFixed(1), yaw: Math.round(deg(a.yaw)), sp: +a.act.v.toFixed(2), ph: lightPhase(sl.light), line: [sl.u, sl.v] };
+          }
           crossed.set(key, s);
         }
         /* наложение кузовов считаем тем же satMTV, что и игроку: встречные расходятся в
@@ -208,6 +254,7 @@ for (const li of levels) {
            и наоборот — две машины под 120° касаются углами задолго до 4,4 м */
         for (let j = i + 1; j < flow.length; j++) {
           const b = flow[j];
+          if (b.act.done) continue;
           const d = Math.hypot(b.u - a.u, b.v - a.v);
           if (d < minGap) minGap = d;
           const m = satMTV({ u: a.u, v: a.v, hw: HALF_W, hl: HALF_L, yaw: a.yaw },
@@ -251,7 +298,9 @@ for (const li of levels) {
     return { name: level.def.name, cars: flow.length,
       err: err.concat(Object.keys(seen).map(k => k + ': ' + Math.abs(seen[k])))
         .concat(firstHit ? ['первое наложение: ' + JSON.stringify(firstHit)] : [])
-        .concat(kerbHit ? ['первый наезд на поребрик: ' + JSON.stringify(kerbHit)] : []),
+        .concat(kerbHit ? ['первый наезд на поребрик: ' + JSON.stringify(kerbHit)] : [])
+        .concat(firstGrid ? ['первая сцепка: ' + JSON.stringify(firstGrid)] : [])
+        .concat(firstRed ? ['первый проезд на красный: ' + JSON.stringify(firstRed)] : []),
       vavg: +(vsum / vn).toFixed(2), minGap: +minGap.toFixed(1), windows };
   }, { li, secs: SECS, fault: process.env.FAULT || '' });
 
@@ -268,15 +317,21 @@ for (const li of levels) {
 for (const li of levels) {
   const r = await page.evaluate(({ li, back }) => {
     if (LEVELS[li].examRoute) return null;
-    const at = (k, mul) => { opt.traffic = k; LEVELS[li].trafMul = mul; loadLevel(li); hideOv(); paused = true; return trafCount(); };
-    const dense = at('dense'), heavy = at('heavy'), mul2 = at('heavy', 2);
+    /* только петли: колонна урока пробки ставится сверх ступени и потолка */
+    const at = (k, mul) => { opt.traffic = k; LEVELS[li].trafMul = mul; loadLevel(li); hideOv(); paused = true;
+      return level.actors.filter(a => a.act && a.act.flow && !a.act.jam).length; };
+    const dense = at('dense');
+    /* урок пробки: колонна занимает места, где рождались бы машины петель, — удвоение там меряет не множитель */
+    if (level.jam) { opt.traffic = back; loadLevel(li); hideOv(); paused = true; return null; }
+    const heavy = at('heavy'), mul2 = at('heavy', 2);
     delete LEVELS[li].trafMul; opt.traffic = back; loadLevel(li); hideOv(); paused = true;
     return { name: level.def.name, dense, heavy, mul2, cap: TRAF.cap };
   }, { li, back: TRAFFIC || 'normal' });
   if (!r) continue;
   const okHeavy = r.heavy >= r.dense * 1.4 && r.heavy <= r.cap;
-  /* две машины могут выпасть у стартовой позы игрока (TRAF_START_CLEAR) — это не дефект множителя */
-  const okMul = r.mul2 >= Math.min(r.cap, Math.round(r.heavy * 1.8)) - 2;
+  /* машины выпадают у стартовой позы игрока (TRAF_START_CLEAR) и в перекрёстках — там расстановка их не кладёт:
+     это не дефект множителя */
+  const okMul = r.mul2 >= Math.min(r.cap, Math.round(r.heavy * 1.8)) - 3;
   if (!okHeavy || !okMul) bad++;
   console.log((okHeavy ? 'OK   ' : 'FAIL ') + r.name + ' · «час пик» гуще «плотного» (@traffic-density-heavy) · ' + r.dense + ' → ' + r.heavy + ' из ' + r.cap);
   console.log((okMul ? 'OK   ' : 'FAIL ') + r.name + ' · trafMul 2 удваивает поток до потолка (@traffic-density-mul) · ' + r.heavy + ' → ' + r.mul2);

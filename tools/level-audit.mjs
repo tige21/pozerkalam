@@ -148,7 +148,11 @@ const report = await page.evaluate(() => {
         gap: [1, 4.9, 5.1, 99],
         /* пешеход на ближайшем переходе впереди (pedState): без этой оси фазы «стой, пешеход» уровня 25
            выглядели мёртвыми */
-        ped: [null, 'kerb', 'yield', 'far'] };
+        ped: [null, 'kerb', 'yield', 'far'],
+        /* урок пробки: что впереди (перекрёсток, зебра, ничего), место за ним (около JAM_ROOM 5,4 м), до въезда,
+           зазор в очереди и свет своей линии. Без этих осей карточки «нет места» и «зебру не занимай» выглядели мёртвыми */
+        box: [null, 'node', 'zebra'], room: [0, 3, 5, 6, 30], boxIn: [1, 5, 7, 99],
+        queue: [1, 3, 5, 8], light: [true, false] };
       const b = level.bounds, used = new Set(), nums = new Set();
       for (const p of ph) if (p.when) {
         const src = String(p.when);
@@ -173,7 +177,8 @@ const report = await page.evaluate(() => {
       build();
       while (total > 4e6 && (nUV > 4 || nTh > 8)) { nUV = Math.max(4, nUV - 2); nTh = Math.max(8, nTh - 4); build(); }
       const wins = new Array(ph.length).fill(0);
-      const st = { u: 0, v: 0, th: 0, gear: 0, vel: 0, steer: 0, front: 3, rear: 3, left: 3, right: 3, blink: null, roll: 0, hand: false, gap: 99, ped: null };
+      const st = { u: 0, v: 0, th: 0, gear: 0, vel: 0, steer: 0, front: 3, rear: 3, left: 3, right: 3, blink: null, roll: 0, hand: false, gap: 99, ped: null,
+        box: null, boxIn: 99, room: 30, queue: 8, light: true };
       const idx = new Array(axes.length).fill(0);
       const N = axes.length;
       for (let done = false; !done;) {

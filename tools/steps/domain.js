@@ -228,6 +228,13 @@
       violationsTick(1 / 60);
       ctx.vio = vioEvents.map((e) => e.code);
     }],
+    /* стоянка во времени: правило п. 13.2 судит не кадр, а «встал» — дольше секунды */
+    [new RegExp('^машина стоит ' + N + ' с, детекторы нарушений работают$'), (sec) => {
+      vioEvents.length = 0;
+      const dt = 1 / 60, n = Math.round(+sec / dt);
+      for (let i = 0; i < n; i++) { car.vel = 0; game.t += dt; violationsTick(dt); }
+      ctx.vio = vioEvents.map((e) => e.code);
+    }],
     /* нарушение во время заезда — тем же путём, что у детектора: vio() → попытка строгого уровня */
     [new RegExp('^игрок нарушает правило ' + S + '$'), (code) => {
       if (!PENALTIES[code]) throw new Error('нет кода нарушения «' + code + '»');
