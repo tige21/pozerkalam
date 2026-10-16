@@ -7,7 +7,7 @@
 
      PW_DIR=/tmp/pw node tools/practice-check.mjs
      PW_DIR=/tmp/pw URL=https://pozerkalam.space/play/ node tools/practice-check.mjs
-     FAULT=noblink|startstop|noyield|nocatch|hints|noretry PW_DIR=/tmp/pw node tools/practice-check.mjs   # каждая проверка обязана покраснеть
+     FAULT=noblink|startstop|noyield|nocatch|nojamcatch|hints|noretry PW_DIR=/tmp/pw node tools/practice-check.mjs   # каждая проверка обязана покраснеть
 
    Код 1 — хоть одна проверка не прошла. */
 import { createRequire } from 'node:module';
@@ -103,6 +103,23 @@ const check = (name, ok, info) => { results.push({ name, ok, info }); console.lo
   check('плохой проезд ловится: без поворотника, налево из правой полосы, под пешехода (@city-practice-catches)',
     has(r.noblink, 'no-blinker') && has(r.rightlane, 'turn-pos') && has(r.ped, 'ped'),
     'без поворотника [' + r.noblink.join(' ') + '], из правой [' + r.rightlane.join(' ') + '], пешеход [' + r.ped.join(' ') + ']');
+}
+
+/* 3а. Пробка на варианте 27e: бот-нарушитель въезжает в перекрёсток, за которым стоит колонна, — п. 13.2 засчитан.
+   Колонна в тесте не трогается (предел скорости 0, а не «стоп» для логики: соседи и бот её видят) — место за N1 не
+   появляется, пока бот ждёт своего зелёного; с живой колонной исход зависел от того, успеет ли N2 её увести */
+{
+  const r = await page.evaluate((fault) => {
+    if (fault === 'nojamcatch') { const v0 = window.vio; window.vio = (code, msg) => { if (code !== 'jam-box') v0(code, msg); }; }
+    const li = LEVELS.findIndex((d) => d.name.startsWith('27 ')), vi = LEVELS[li].practice.variants.findIndex((V) => V.jam);
+    const x = practiceDrive(li, vi, { misbehave: 'jamenter', setup: () => {
+      for (const a of level.actors) if (a.act && a.act.jam) a.act.sp = 0;
+    } });
+    return { vi, log: x.log, jam: level.actors.filter((a) => a.act && a.act.jam).length };
+  }, FAULT);
+  check('пробка ловится: въезд в перекрёсток, за которым колонна, — выезд при заторе (@city-practice-jam-catch)',
+    r.vi >= 0 && r.jam > 0 && r.log.some((l) => l.startsWith('jam-box@')),
+    'вариант ' + r.vi + ' · колонна ' + r.jam + ' · [' + r.log.join(' ') + ']');
 }
 
 /* 4. Практика без подсказок: нет фаз, маркеров, линии на асфальте, зоны и показа; команды называют улицы */

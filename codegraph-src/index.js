@@ -6279,6 +6279,8 @@ function jamInit(){
     for(const iv of B) if(iv.bx.kind==='node') exitS=iv.s1+JAM_EXIT;
     let k=0;
     for(const c of ln.cars){
+      /* на месте игрока колонну не ставим: старт практики 27e стоит там, где у урока 33 машина за его спиной */
+      if(Math.hypot(c[0]-level.start.u, c[1]-level.start.v)<2*HALF_L+1) continue;
       const o=trafCar(rt, rtNearest(rt, c[0], c[1]), PALETTE[TRAF_COLS[(made+3)%TRAF_COLS.length]]);
       o.act.v=0; o.act.jam=true; o.act.vanish=true; o.act.exitS=exitS; o.act.seenT=-9;
       o.act.react=0.4+((made*0.37)%1)*0.6; o.act.reactT=0;
@@ -8115,15 +8117,17 @@ const LEVELS = [
 { name:'27 · Светофор: стоп на красный', traffic:'city',
   strict:true,
   practice:{ title:'светофоры',
-    intro:'Регулируемые перекрёстки общего города: фаза выпадает каждый раз другая. Жёлтый у самой линии — решай по п. 6.14; налево на зелёный — пропусти встречных.',
-    judged:'проезд на запрещающий, стоп-линия, пропуск встречных при повороте налево, крайнее положение',
+    intro:'Регулируемые перекрёстки общего города: фаза выпадает каждый раз другая. Жёлтый у самой линии — решай по п. 6.14; налево на зелёный — пропусти встречных; за перекрёстком пробка — жди места у линии.',
+    judged:'проезд на запрещающий, стоп-линия, пропуск встречных при повороте налево, крайнее положение, выезд на перекрёсток при заторе',
     variants:[
       {id:'a', start:['N1',180,28], moves:[['N1',0],['N2',0]], stop:['N2',0,34]},
       {id:'b', start:['N1',0,44], moves:[['N1',90]], stop:['N1',90,30],
        actors:[{from:[8.15,-104], to:[8.15,-20], sp:7, node:'N1', d:[30,46]}]},
       {id:'c', start:['N2',270,54], moves:[['N2',90]], stop:['N2',90,26]},
       {id:'d', start:['N1',90,32],  moves:[['N1',180]], stop:['N1',180,22],
-       actors:[{from:[-56,-71.65], to:[40,-71.65], sp:6, node:'N1', d:[24,38]}]} ] },
+       actors:[{from:[-56,-71.65], to:[40,-71.65], sp:6, node:'N1', d:[24,38]}]},
+      /* пробка урока 33 на Ленина: за N1 квартал стоит колонной — ждать места у линии, ползти в очереди */
+      {id:'e', start:['N1',180,28], moves:[['N1',0],['N2',0]], stop:['N2',0,34], jam:'lenina'} ] },
   task:'Подъехать к регулируемому перекрёстку, остановиться ДО стоп-линии на запрещающий сигнал, тронуться на зелёный и встать в зоне. Грубая ошибка (запрещающий сигнал, встречная, столкновение) — попытка не засчитана.',
   tip:'Жёлтый запрещает въезд, если можешь остановиться без резкого торможения. Загорелся у самой линии на скорости — проезжай, это разрешает п. 6.14. Линия — граница переднего бампера.',
   steps:[
@@ -10832,9 +10836,12 @@ function practiceBuild(def){
     prZebras(b, V);
     prActors(b, V);
     prTram(b, V);
+    /* затор варианта: та же колонна, что у урока 33, но не вся — каждая машина остаётся с вероятностью 0,85 */
+    const jam=V.jam && JAM_SPECS[V.jam] ? JAM_SPECS[V.jam].map(ln=>Object.assign({}, ln, {cars:ln.cars.filter(()=>prRand()>0.15)})) : null;
     const st=laneStart(V.start[0], V.start[1], V.start[2]);
     console.info('[practice] '+def.name+' · вариант '+V.id);
-    return {obs:b.obs, dec:b.dec, city:b.city, start:st, goal:null, pvar:V, lightShift:prRand()*LIGHT_CYCLE};
+    if(jam) console.info('[practice] '+def.name+' · вариант '+V.id+' · затор '+jam.reduce((n,ln)=>n+ln.cars.length, 0)+' машин');
+    return {obs:b.obs, dec:b.dec, city:b.city, start:st, goal:null, pvar:V, lightShift:prRand()*LIGHT_CYCLE, jam};
   } finally { graphOvr=null; }
 }
 /* встречная половина общего города для практики: центр кузова за осевой больше чем на 0,3 м вне узла и вне

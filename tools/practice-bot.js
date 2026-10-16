@@ -300,6 +300,13 @@
       }
       const sa = stopAhead();
       if (sa < 1e8) want = Math.min(want, Math.sqrt(2 * 2.4 * Math.max(0, sa)));
+      /* пробка: попутная машина впереди — 2 м стоя и около 1,2 с на ходу; перед перекрёстком и зеброй, за которыми
+         нет места для кузова, стоим (п. 13.2, 14.4). Бот объезжал только стоящие машины без act и на варианте 27e
+         догонял колонну потока. botMode 'jamenter' — нарушитель для гейта: въезжает в занятый перекрёсток */
+      const qg = queueGapAhead();
+      if (qg < 30) want = Math.min(want, qg < 2 ? 0 : Math.min(Math.sqrt(2 * 2.4 * (qg - 2)), (qg - 2) / 1.2 + 0.5));
+      if (botMode !== 'jamenter') { const jr = jamRoomAhead(12);
+        if (jr && jr.room < JAM_ROOM && jr.entry < 12) want = Math.min(want, Math.sqrt(2 * 2.4 * Math.max(0, jr.entry - 0.6))); }
       if (!opts.misbehave) {
         const mw = mustWait(st);
         if (mw !== null) want = Math.min(want, Math.sqrt(2 * 2.4 * Math.max(0, mw)));
