@@ -5,5 +5,17 @@ set -e
 DB=/var/lib/pozerkalam-account/account.db
 [ -f "$DB" ] || exit 0
 mkdir -p /root/backups
-sqlite3 "$DB" ".backup /root/backups/pz-account-$(date +%F).db"
-find /root/backups -name 'pz-account-*.db' -mtime +14 -delete
+F=/root/backups/pz-account-$(date +%F).db
+sqlite3 "$DB" ".backup $F"
+[ "$(sqlite3 "$F" 'PRAGMA integrity_check')" = ok ]
+# Ключи VK, Яндекса, Robokassa и JWT_SECRET вписаны на боксе руками, в git и в .deploy.env их нет.
+(umask 077; tar czf "/root/backups/pz-config-$(date +%F).tar.gz" -C / \
+  etc/pozerkalam-account.env etc/pozerkalam-feedback.env etc/nginx/sites-available/pozerkalam.space)
+# Вне бокса: бэкап-сервер spark-backup (Москва, docs/BACKUP_BOX.md в репо spark), шифрует rclone crypt
+# здесь же. Залитый файл сервер через 15 минут замораживает и старое чистит сам: перезаписать или
+# удалить его отсюда нельзя, поэтому --ignore-existing и без удаления на той стороне. База идёт
+# последней: сервер следит за свежестью только её папки, и сбой любого шага выше тоже поднимет алерт.
+RC="rclone --config /root/.config/rclone/rclone.conf copy --ignore-existing"
+$RC --include 'pz-config-*.tar.gz' /root/backups sparkbackup-crypt:pozerkalam-config
+$RC --include 'pz-account-*.db' /root/backups sparkbackup-crypt:pozerkalam-account
+find /root/backups \( -name 'pz-account-*.db' -o -name 'pz-config-*.tar.gz' \) -mtime +14 -delete

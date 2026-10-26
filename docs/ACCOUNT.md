@@ -26,7 +26,8 @@ pozerkalam-account.service — server/account.py (Python 3.11 stdlib + SQLite)
    ├─ id.vk.ru            обмен кода (PKCE), профиль     ← напрямую, без прокси
    ├─ oauth.yandex.ru     обмен кода (client_secret)      ← напрямую
    └─ login.yandex.ru     профиль                         ← напрямую
-база: /var/lib/pozerkalam-account/account.db (WAL), копия раз в сутки в /root/backups
+база: /var/lib/pozerkalam-account/account.db (WAL), копия раз в сутки в /root/backups (14 дней)
+      и зашифрованная — на бэкап-сервер spark-backup 157.228.144.159 (Москва)
 ```
 
 ## Флоу входа
@@ -224,6 +225,22 @@ cp /root/backups/pz-account-2026-10-02.db /var/lib/pozerkalam-account/account.db
 rm -f /var/lib/pozerkalam-account/account.db-wal /var/lib/pozerkalam-account/account.db-shm
 chown www-data:www-data /var/lib/pozerkalam-account/account.db
 systemctl start pozerkalam-account
+```
+
+Копии вне бокса. `server/pozerkalam-account-backup` после `.backup` проверяет копию
+(`PRAGMA integrity_check`), пакует секреты (`/etc/pozerkalam-account.env`, `/etc/pozerkalam-feedback.env`,
+nginx-vhost — в `pz-config-<дата>.tar.gz`, папка `pozerkalam-config`) и заливает оба через `rclone crypt`
+на бэкап-сервер spark-backup (Москва,
+устройство — `docs/BACKUP_BOX.md` в репо spark). Сервер через 15 минут замораживает файл, удалить или
+перезаписать его с vdsina нельзя, старое он чистит сам: последние 7 копий, всё за 35 дней, копии 1-го
+числа — 400 дней. Если копия не приходит 36 часов, бэкап-сервер шлёт алерт в Telegram. Пароль crypt
+общий с бэкапами spark (`SPARK_BACKUP_CRYPT_PASS` в `.deploy-secrets.sh` репо spark).
+Если `/root/backups` пропал, взять копию оттуда и дальше — по шагам выше:
+
+```bash
+rclone lsl sparkbackup-crypt:pozerkalam-account | sort -k4 | tail -n 5
+rclone copy sparkbackup-crypt:pozerkalam-account/pz-account-2026-10-26.db /root/backups/
+sqlite3 /root/backups/pz-account-2026-10-26.db 'PRAGMA integrity_check'   # ok
 ```
 
 ## Проверки
