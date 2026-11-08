@@ -59,10 +59,11 @@ check('страница игры на проде заменяется атома
   nextUp > 0 && mv > nextUp && at('"$HOST:$DOCROOT/play/"') < 0, JSON.stringify({ '.next': nextUp, mv }));
 
 const privateFile = at('scpr build/premium/levels.js "$HOST:/opt/pozerkalam-account/premium/');
+const approvedList = at("cutoff_action='--apply --approved-accounts /opt/pozerkalam-account/premium/approved-accounts.json'");
 const cutoff = at('sshr "pz-account grandfather /opt/pozerkalam-account/premium/');
 check('платные данные и отсечка готовы на основном сервере до публикации HTML (@dist-premium-before-files)',
-  order(privateFile, cutoff, pReload, pFiles) && at('mirror_scp build/premium/') < 0,
-  JSON.stringify({ privateFile, cutoff, pReload, pFiles }));
+  order(approvedList, privateFile, cutoff, pReload, pFiles) && at('mirror_scp build/premium/') < 0,
+  JSON.stringify({ approvedList, privateFile, cutoff, pReload, pFiles }));
 
 /* хэш скрипта считается так же, как браузер: sha256 тела между тегами, base64 */
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pz-csp-'));

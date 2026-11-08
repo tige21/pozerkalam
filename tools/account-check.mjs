@@ -204,6 +204,7 @@ function mockApi(st) {
       return { json: { url: 'https://auth.robokassa.ru/Merchant/Index.aspx?MerchantLogin=pozerkalam&InvId=777&IsTest=1', inv: 777, test: true } };
     }
     if (c.path === '/premium/levels/test') {
+      await st.protectedWait;
       if (!c.auth) return { status: 401, json: { error: 'auth' } };
       if (!(st.ent || []).some(e => e.product === 'premium')) return { status: 403, json: { error: 'premium-required' } };
       return { json: { script: st.protectedScript } };
@@ -773,6 +774,24 @@ let offerViewA = [], offerClickA = [];
   const st = { ent: [{ product: 'premium' }], protectedScript: protectedBuild.script };
   const { ctx, page, apiCalls, errors } = await openGame({ auth, protectedBuild, api: mockApi(st), storage: LOGGED });
   await page.waitForFunction(() => entitled('premium'));
+  let release;
+  st.protectedWait = new Promise(resolve => { release = resolve; });
+  await page.evaluate(() => {
+    const open = openPremiumLevel;
+    openPremiumLevel = (...args) => { window.pendingPremiumOpen = open(...args); };
+    menuGo('main');
+    menuGo('levels', levelTab(10));
+  });
+  const requested = page.waitForRequest(r => r.url().endsWith('/premium/levels/test'));
+  await page.locator('.lvcard[data-lvl="10"]').click();
+  await requested;
+  await page.keyboard.press('Escape');
+  release();
+  await page.evaluate(() => window.pendingPremiumOpen);
+  const afterBack = await page.evaluate(() => ({ screen: menu.scr, li: game.li, stub: LEVELS[10].premiumStub }));
+  check('поздний ответ на загрузку платного уровня не возвращает игрока из меню (@acct-premium-cancel-open)',
+    afterBack.screen === 'main' && afterBack.li === 0 && afterBack.stub, JSON.stringify(afterBack));
+  const requestsAfterBack = apiCalls.length;
   await page.evaluate(() => openLevel(10, 'pick'));
   await page.waitForFunction(() => game.li === 10);
   const paid = await page.evaluate(() => ({ build: typeof LEVELS[10].build, demo: !!DEMOS[10], canBuy: canBuyPremium() }));
@@ -783,7 +802,7 @@ let offerViewA = [], offerClickA = [];
   st.ent = [];
   await page.evaluate(() => openLevel(10, 'pick'));
   await page.waitForFunction(() => game.li === 0 && LEVELS[10].premiumStub && !!document.querySelector('#overlay .paywall'));
-  const paidCalls = apiCalls.filter(c => c.path === '/premium/levels/test');
+  const paidCalls = apiCalls.slice(requestsAfterBack).filter(c => c.path === '/premium/levels/test');
   check('платные уровни отсутствуют в публичном HTML, запуск и отзыв права проходят через API под CSP (@acct-premium-server-content)',
     guestState.li === 0 && guestState.locked && guestState.stub && !guestState.demo && guestRequests === 0
       && paid.build === 'function' && paid.demo && !paid.canBuy && paidCalls.length === 4

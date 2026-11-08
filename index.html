@@ -15203,7 +15203,7 @@ function fbSend(){
    panel (раздел меню панелью слева), pause. Вызов без lay — не экран меню */
 function showOv(html, lay){ ovCard.innerHTML=html; ovEl.style.display='flex'; paused=true;
   ovEl.className='lay-'+(lay||'card');
-  if(!lay) menu.scr=null;
+  if(!lay){ menu.scr=null; premiumOpenSeq++; }
   document.body.classList.add('ov');
   for(const k in input) input[k]=false;
   ovCard.querySelectorAll('button').forEach(b=> b.onclick=()=>doAct(b.dataset.act));
@@ -15236,6 +15236,7 @@ function startLevel(i,via,mode){
   anLevelStart(via);
 }
 function hideOv(){ ovEl.style.display='none'; paused=false;
+  premiumOpenSeq++;
   menu.scr=null; menu.root=null;
   document.body.classList.remove('ov'); menuSync(); }
 function doAct(a){
@@ -15637,6 +15638,7 @@ function menuGo(scr, tab, from){
   if(scr!==menu.scr) menu.note='';
   /* перерисовка того же экрана (переключатель, вкладка входа) не должна сбрасывать прокрутку и фокус */
   const same = scr===menu.scr && tab===menu.tab, body=ovCard.querySelector('.mbody');
+  if(!same) premiumOpenSeq++;
   const top = same && body ? body.scrollTop : 0;
   const ae=document.activeElement, focusAct = same && ae && ovCard.contains(ae) ? ae.dataset.act : null;
   const html = scr==='main' ? startHTML() : scr==='pause' ? pauseHTML()

@@ -85,7 +85,7 @@ scpr(){
 }
 
 echo "==> лендинг: билд"
-(cd landing && npm run build >/dev/null 2>&1)
+(cd landing && npm ci --include=dev && npm run build)
 [ -f landing/dist/index.html ] || { echo "лендинг не собрался"; exit 1; }
 
 echo "==> игра: минификация"
@@ -95,6 +95,11 @@ PREMIUM_HASH=''
 case "$PREMIUM_WEB_PROTECTED" in
   1)
     [ "${SKIP_MIRROR:-0}" != 1 ] || { echo 'Защищённую сборку нужно выложить на оба узла'; exit 1; }
+    case "$PREMIUM_CAPTURE_CUTOFF" in
+      1) cutoff_action='--apply --approved-accounts /opt/pozerkalam-account/premium/approved-accounts.json' ;;
+      0) cutoff_action=--check ;;
+      *) echo 'PREMIUM_CAPTURE_CUTOFF: ожидается 0 или 1'; exit 1 ;;
+    esac
     mkdir -p build/premium
     python3 tools/premium-web-build.py index.html build/premium/public.html \
       build/premium/levels.js build/premium/level-names.json
@@ -300,11 +305,6 @@ sshr "sleep 1; systemctl is-active pozerkalam-account"
 sshr "journalctl -u pozerkalam-account -n 30 --no-pager -o cat | grep -E 'CONFIG' | tail -2 || true"
 
 if [ -n "$PREMIUM_HASH" ]; then
-  case "$PREMIUM_CAPTURE_CUTOFF" in
-    1) cutoff_action=--apply ;;
-    0) cutoff_action=--check ;;
-    *) echo 'PREMIUM_CAPTURE_CUTOFF: ожидается 0 или 1'; exit 1 ;;
-  esac
   sshr "pz-account grandfather /opt/pozerkalam-account/premium/$BUILD_SHA.json $cutoff_action"
 fi
 

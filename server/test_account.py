@@ -903,14 +903,16 @@ class AccountTest(unittest.TestCase):
         self.go_live()
         self.assertEqual(self.call('GET', path, token=tok)[0], 403)
 
-    def test_grandfather_captures_server_progress_once(self):
+    def test_grandfather_rejects_forged_progress_and_captures_once(self):
+        self.go_live()
         vk, ya = self.login('vk'), self.login('yandex')
         a, b = vk['access'], ya['access']
         names = ['11 · Карман', '12 · Разъезд']
         levels = os.path.join(self.tmp.name, 'level-names.json')
         with open(levels, 'w', encoding='utf-8') as f:
             json.dump(names, f)
-        args = argparse.Namespace(levels=levels, apply=False, check=False)
+        approved = os.path.join(self.tmp.name, 'approved-accounts.json')
+        args = argparse.Namespace(levels=levels, approved_accounts=None, apply=False, check=False)
         self.assertEqual(self.call('PUT', '/progress', {'data': {names[0]: {'n': 1}}}, a)[0], 200)
         self.assertEqual(self.call('PUT', '/progress', {'data': {
             names[0]: {'n': 0, 'practice': {'n': 1, 'passed': 0}},
@@ -923,10 +925,30 @@ class AccountTest(unittest.TestCase):
         account.cli_grandfather(self.app, args)
         self.assertEqual(self.premium(a), [])
         args.apply = True
+        with self.assertRaisesRegex(SystemExit, '--approved-accounts'):
+            account.cli_grandfather(self.app, args)
+        self.assertEqual(self.premium(a), [])
+        args.approved_accounts = approved
+        with open(approved, 'w', encoding='utf-8') as f:
+            json.dump([vk['account']['id'], ya['account']['id']], f)
+        with self.assertRaisesRegex(SystemExit, 'нет подходящего зачёта'):
+            account.cli_grandfather(self.app, args)
+        self.assertEqual(self.premium(a), [])
+        with open(approved, 'w', encoding='utf-8') as f:
+            json.dump([vk['account']['id']], f)
+        self.assertEqual(self.call('PUT', '/progress', {'data': {names[0]: {'n': 2}}}, b)[0], 200)
         account.cli_grandfather(self.app, args)
         self.assertEqual(len(self.premium(a)), 1)
         self.assertEqual(self.premium(b), [])
-        self.assertEqual(self.call('PUT', '/progress', {'data': {names[0]: {'n': 2}}}, b)[0], 200)
+        self.app.cfg.premium_bundle_dir = self.tmp.name
+        build = '2' * 16
+        with open(os.path.join(self.tmp.name, build + '.js'), 'w', encoding='utf-8') as f:
+            f.write('installPremiumLevels([], {});')
+        path = '/api/v1/premium/levels/' + build
+        self.assertEqual(self.call('GET', path, token=a)[0], 200)
+        self.assertEqual(self.call('GET', path, token=b)[:2], (403, {'error': 'premium-required'}))
+        with open(approved, 'w', encoding='utf-8') as f:
+            json.dump([vk['account']['id'], ya['account']['id']], f)
         account.cli_grandfather(self.app, args)
         self.assertEqual(self.premium(b), [])
         args.apply, args.check = False, True

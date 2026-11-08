@@ -1221,13 +1221,30 @@ def cli_grandfather(app, a):
             return
         if a.check:
             raise SystemExit('отсечка ещё не зафиксирована')
+        approved = None
+        if a.apply:
+            if not a.approved_accounts:
+                raise SystemExit('для отсечки нужен --approved-accounts с проверенными ID аккаунтов')
+            try:
+                with open(a.approved_accounts, encoding='utf-8') as f:
+                    ids = json.load(f)
+            except (OSError, ValueError) as e:
+                raise SystemExit('не удалось прочитать список проверенных аккаунтов: %s' % e)
+            if not isinstance(ids, list) or any(
+                    not isinstance(i, str) or not re.fullmatch(r'[0-9a-f]{32}', i) for i in ids):
+                raise SystemExit('ожидался JSON-массив ID проверенных аккаунтов')
+            approved = set(ids)
         cutoff = now()
         grants = []
         for r in c.execute('SELECT account_id, data FROM progress WHERE updated_at<=?', (cutoff,)):
+            if approved is not None and r['account_id'] not in approved:
+                continue
             data = json.loads(r['data'])
             if isinstance(data, dict) and any(premium_passed(data, name) for name in names):
                 grants.append((r['account_id'], PREMIUM, 'grandfather', 'cutoff:%d' % cutoff, cutoff))
         if a.apply:
+            if len(grants) != len(approved):
+                raise SystemExit('у части проверенных аккаунтов нет подходящего зачёта; отсечка не зафиксирована')
             c.executemany('INSERT INTO entitlements(account_id, product, source, ref, granted_at) VALUES (?,?,?,?,?)',
                           grants)
             c.execute('INSERT INTO premium_cutoff(id, captured_at, grants) VALUES (1,?,?)', (cutoff, len(grants)))
@@ -1328,8 +1345,9 @@ def main(argv=None):
     g.add_argument('product')
     g.add_argument('--days', type=int, default=0, help='срок; 0 — навсегда')
     g.add_argument('--ref', default='', help='метка гранта: номер заказа, имя пилота')
-    gf = sub.add_parser('grandfather', help='однократно сохранить доступ по текущему серверному прогрессу')
+    gf = sub.add_parser('grandfather', help='однократно сохранить доступ проверенным аккаунтам')
     gf.add_argument('levels', help='JSON со списком имён уровней из защищённой сборки')
+    gf.add_argument('--approved-accounts', help='JSON-массив ID аккаунтов, проверенных оператором')
     cutoff_action = gf.add_mutually_exclusive_group()
     cutoff_action.add_argument('--apply', action='store_true', help='зафиксировать отсечку и выдать доступ')
     cutoff_action.add_argument('--check', action='store_true', help='проверить, что отсечка уже зафиксирована')
