@@ -808,6 +808,19 @@ let offerViewA = [], offerClickA = [];
       && paid.build === 'function' && paid.demo && !paid.canBuy && paidCalls.length === 4
       && paidCalls.every(c => /^Bearer /.test(c.auth)) && !errors.some(e => /Content Security Policy|pageerror:/.test(e)),
     JSON.stringify({ guestState, guestRequests, paid, paidCalls: paidCalls.length, errors }));
+  st.paymentAccess = 'public';
+  await page.evaluate(async () => {
+    await authMe();
+    openLevel(10, 'pick');
+  });
+  const buy = page.locator('#overlay [data-act="pay-buy"]');
+  const canBuy = await buy.isVisible();
+  if (canBuy) {
+    await Promise.all([page.waitForURL(/auth\.robokassa\.ru/), buy.click()]);
+  }
+  const creates = apiCalls.filter(c => c.path === '/pay/create');
+  check('в защищённой сборке публичный режим сервера открывает форму оплаты (@acct-premium-public-checkout)',
+    canBuy && creates.length === 1 && creates[0].body.product === 'premium' && /auth\.robokassa\.ru/.test(page.url()));
   await ctx.close();
 }
 

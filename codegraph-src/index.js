@@ -14745,7 +14745,7 @@ function paySite(){ return String(window.BUILD||'').indexOf('ya-')!==0 && !anFra
 function premiumOn(){ return AUTH_ON && paySite() && (PAY_ON || !!window.PREMIUM_WEB || acctPaymentAccess==='owner' || !!window.PREMIUM_FORCE); }
 function canBuyPremium(){
   return !!acct && AUTH_ON && paySite() && (acctPaymentAccess==='owner'
-    || (PAY_ON || !!window.PREMIUM_FORCE) && acctPaymentAccess==='public');
+    || (PAY_ON || !!window.PREMIUM_WEB || !!window.PREMIUM_FORCE) && acctPaymentAccess==='public');
 }
 function clearPremiumLevels(){
   premiumOpenSeq++;
