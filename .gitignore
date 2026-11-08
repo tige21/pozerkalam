@@ -4,6 +4,8 @@
 # работает с репозиторием, а не только машине, на которой их написали
 !.claude/skills/
 .deploy.env
+.env
+.env.local
 build/
 .codegraph/
 __pycache__/
