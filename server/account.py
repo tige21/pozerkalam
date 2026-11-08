@@ -79,11 +79,19 @@ class Config:
         self.pay_test = e.get('ROBOKASSA_IS_TEST', 'false').strip().lower() in ('1', 'true', 'yes')
         # в тестовом режиме платить могут только эти аккаунты (владелец): форма принимает тестовые карты
         self.pay_test_accounts = {x.strip() for x in e.get('ROBOKASSA_TEST_ACCOUNTS', '').split(',') if x.strip()}
+        self.pay_owner_accounts = {x.strip() for x in e.get('PAY_OWNER_ACCOUNTS', '').split(',') if x.strip()}
+        mode = e.get('PAY_CREATE_MODE', 'closed').strip()
+        if mode not in ('closed', 'owner', 'public') or (mode == 'owner' and not self.pay_owner_accounts):
+            log.warning('CONFIG WARNING: неверный PAY_CREATE_MODE или пустой PAY_OWNER_ACCOUNTS — создание счетов закрыто')
+            mode = 'closed'
+        self.pay_create_mode = mode
         keys = ('ROBOKASSA_TEST_PASSWORD_1', 'ROBOKASSA_TEST_PASSWORD_2') if self.pay_test \
             else ('ROBOKASSA_PASSWORD_1', 'ROBOKASSA_PASSWORD_2')
         self.rk_pass1, self.rk_pass2 = e.get(keys[0], '').strip(), e.get(keys[1], '').strip()
         self.rk_pay_url = e.get('ROBOKASSA_PAY_URL', RK_PAY_URL)
         self.rk_service_url = e.get('ROBOKASSA_SERVICE_URL', RK_SERVICE_URL).rstrip('/')
+        self.premium_bundle_dir = e.get('PREMIUM_BUNDLE_DIR') or os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), 'premium')
         self.premium_price = int(e.get('PREMIUM_PRICE_KOPECKS', '14900'))
         self.premium_title = e.get('PREMIUM_TITLE', 'Премиум «По зеркалам»: уровни 11–32 навсегда')[:128]
 
@@ -98,6 +106,15 @@ class Config:
     @property
     def pay_on(self):
         return bool(self.rk_login and self.rk_pass1 and self.rk_pass2)
+
+    def pay_create_denial(self, acc_id):
+        if not self.pay_on or self.pay_create_mode == 'closed':
+            return 503, 'pay-off'
+        if self.pay_create_mode == 'owner' and acc_id not in self.pay_owner_accounts:
+            return 403, 'pay-owner-only'
+        if self.pay_test and acc_id not in self.pay_test_accounts:
+            return 503, 'pay-test-only'
+        return None
 
     def enabled(self, provider):
         return self.vk_on if provider == 'vk' else self.ya_on if provider == 'yandex' else False
@@ -266,6 +283,10 @@ MIGRATIONS = [
         expires_at INTEGER, created_at INTEGER NOT NULL, disabled_at INTEGER);
     CREATE TABLE promo_redemptions(code TEXT NOT NULL, account_id TEXT NOT NULL,
         redeemed_at INTEGER NOT NULL, PRIMARY KEY(code, account_id));
+    """,
+    """
+    CREATE TABLE premium_cutoff(id INTEGER PRIMARY KEY CHECK(id=1),
+        captured_at INTEGER NOT NULL, grants INTEGER NOT NULL);
     """,
 ]
 
@@ -543,7 +564,8 @@ class App:
         self.rate = Rate()
         if cfg.ya_id and not cfg.ya_secret:
             log.warning('CONFIG WARNING: YANDEX_CLIENT_ID задан без YANDEX_CLIENT_SECRET — вход через Яндекс выключен')
-        log.info('CONFIG: vk=%s yandex=%s db=%s callback=%s', cfg.vk_on, cfg.ya_on, cfg.db, cfg.callback)
+        log.info('CONFIG: vk=%s yandex=%s db=%s callback=%s pay_create=%s pay_test=%s',
+                 cfg.vk_on, cfg.ya_on, cfg.db, cfg.callback, cfg.pay_create_mode, cfg.pay_test)
 
 
     def account_json(self, c, acc_id):
@@ -552,7 +574,9 @@ class App:
             return None
         provs = [r['provider'] for r in c.execute(
             'SELECT provider FROM identities WHERE account_id=? ORDER BY created_at', (acc_id,))]
-        return {'id': a['id'], 'name': a['name'], 'avatar': a['avatar'], 'providers': provs}
+        payment_access = 'closed' if self.cfg.pay_create_denial(acc_id) else self.cfg.pay_create_mode
+        return {'id': a['id'], 'name': a['name'], 'avatar': a['avatar'], 'providers': provs,
+                'payment_access': payment_access}
 
     def entitlements(self, c, acc_id):
         # покупка из тестового платежа живёт только в тестовом режиме: до активации магазина форма
@@ -759,42 +783,59 @@ class App:
         cfg = self.cfg
         if product != PREMIUM:
             return 400, {'error': 'product'}
-        if not cfg.pay_on:
-            return 503, {'error': 'pay-off'}
-        if cfg.pay_test and acc_id not in cfg.pay_test_accounts:
-            log.warning('pay create: тестовый режим, acct=%s не в списке', mask(acc_id))
-            return 503, {'error': 'pay-test-only'}
-        # свежий неоплаченный счёт отдаётся снова: второй счёт поверх первого — путь к двойному списанию
-        fresh = self.store.conn().execute(
-            "SELECT inv_id FROM payments WHERE account_id=? AND product=? AND status='pending' AND test=? "
-            "AND created_at>? ORDER BY created_at DESC LIMIT 1",
-            (acc_id, product, int(cfg.pay_test), now() - PAY_REUSE_S)).fetchone()
-        if fresh:
-            if any(e['product'] == PREMIUM for e in self.entitlements(self.store.conn(), acc_id)):
+        denial = cfg.pay_create_denial(acc_id)
+        if denial:
+            status, reason = denial
+            log.info('pay create: acct=%s отказ=%s', mask(acc_id), reason)
+            return status, {'error': reason}
+        with self.store.tx() as c:
+            if any(e['product'] == PREMIUM for e in self.entitlements(c, acc_id)):
                 return 409, {'error': 'owned'}
-            inv = fresh['inv_id']
+            created_at = now()
+            # Поиск и создание под одной блокировкой, иначе два запроса успеют выписать разные счета.
+            fresh = c.execute(
+                "SELECT inv_id, amount FROM payments WHERE account_id=? AND product=? AND status='pending' AND test=? "
+                "AND created_at>? ORDER BY created_at DESC, inv_id DESC LIMIT 1",
+                (acc_id, product, int(cfg.pay_test), created_at - PAY_REUSE_S)).fetchone()
+            if fresh:
+                inv, amount = fresh['inv_id'], fresh['amount']
+            else:
+                amount = cfg.premium_price
+                for _ in range(RK_INV_TRIES):
+                    inv = secrets.randbelow(RK_INV_MAX) + 1
+                    inserted = c.execute(
+                        'INSERT INTO payments(inv_id, account_id, product, amount, test, created_at) '
+                        'VALUES (?,?,?,?,?,?) ON CONFLICT(inv_id) DO NOTHING',
+                        (inv, acc_id, product, amount, int(cfg.pay_test), created_at)).rowcount
+                    if inserted:
+                        break
+                    log.warning('pay create: InvId %d занят, новая попытка', inv)
+                else:
+                    log.error('pay create: не нашли свободный InvId за %d попыток', RK_INV_TRIES)
+                    return 500, {'error': 'internal'}
+        if fresh:
             log.info('pay create: acct=%s тот же счёт inv=%d', mask(acc_id), inv)
-            return 200, {'url': robokassa_pay_url(cfg, inv, cfg.premium_price, cfg.premium_title, product),
-                         'inv': inv, 'test': cfg.pay_test}
-        inv = None
-        for _ in range(RK_INV_TRIES):
-            cand = secrets.randbelow(RK_INV_MAX) + 1
-            try:
-                with self.store.tx() as c:
-                    if any(e['product'] == PREMIUM for e in self.entitlements(c, acc_id)):
-                        return 409, {'error': 'owned'}
-                    c.execute('INSERT INTO payments(inv_id, account_id, product, amount, test, created_at) '
-                              'VALUES (?,?,?,?,?,?)', (cand, acc_id, product, cfg.premium_price, int(cfg.pay_test), now()))
-                inv = cand
-                break
-            except sqlite3.IntegrityError:
-                log.warning('pay create: InvId %d занят, новая попытка', cand)
-        if inv is None:
-            log.error('pay create: не нашли свободный InvId за %d попыток', RK_INV_TRIES)
-            return 500, {'error': 'internal'}
-        url = robokassa_pay_url(cfg, inv, cfg.premium_price, cfg.premium_title, product)
-        log.info('pay create: acct=%s inv=%d сумма %s test=%s', mask(acc_id), inv, money(cfg.premium_price), cfg.pay_test)
+        else:
+            log.info('pay create: acct=%s inv=%d сумма %s test=%s', mask(acc_id), inv, money(amount), cfg.pay_test)
+        url = robokassa_pay_url(cfg, inv, amount, cfg.premium_title, product)
         return 200, {'url': url, 'inv': inv, 'test': cfg.pay_test}
+
+    def premium_bundle(self, acc_id, build):
+        if not any(e['product'] == PREMIUM for e in self.entitlements(self.store.conn(), acc_id)):
+            log.info('premium: отказ acct=%s', mask(acc_id))
+            return 403, {'error': 'premium-required'}
+        if not re.fullmatch(r'[0-9a-f]{16}', build):
+            return 404, {'error': 'not-found'}
+        try:
+            with open(os.path.join(self.cfg.premium_bundle_dir, build + '.js'), encoding='utf-8', newline='') as f:
+                script = f.read()
+        except FileNotFoundError:
+            return 404, {'error': 'not-found'}
+        except (OSError, UnicodeError):
+            log.error('premium: сборка %s недоступна', build)
+            return 503, {'error': 'premium-unavailable'}
+        log.debug('premium: acct=%s build=%s', mask(acc_id), build)
+        return 200, {'script': script}
 
     def pay_status(self, acc_id, inv):
         r = self.store.conn().execute('SELECT status FROM payments WHERE inv_id=? AND account_id=?',
@@ -1031,6 +1072,13 @@ def make_handler(app):
                     return self.send_text(413, 'too big')
                 form = urllib.parse.parse_qsl(self.rfile.read(n).decode(errors='replace'), keep_blank_values=True) if n else []
                 return self.send_text(*app.robokassa_result(form + list(q.items())))
+            if method == 'GET' and path.startswith('/premium/levels/'):
+                if self.limited('any'):
+                    return
+                acc = self.bearer()
+                if not acc:
+                    return self.send_json(401, {'error': 'auth'})
+                return self.send_json(*app.premium_bundle(acc, path.removeprefix('/premium/levels/')))
             if path == '/promo/redeem' and method == 'POST':
                 if self.limited('promo'):
                     return
@@ -1150,6 +1198,61 @@ def cli_grant(app, a):
     print('выдано: %s → %s%s' % (a.account, a.product, ' на %d дн.' % a.days if a.days else ' навсегда'))
 
 
+def premium_passed(data, name):
+    p = data.get(name)
+    if not isinstance(p, dict):
+        return False
+    practice = p.get('practice')
+    passed = p.get('passed', p.get('n')) if not name.startswith('32 · ') else p.get('passed')
+    return any(type(n) is int and n > 0 for n in (
+        passed, practice.get('passed') if isinstance(practice, dict) else None))
+
+
+def cli_grandfather(app, a):
+    with open(a.levels, encoding='utf-8') as f:
+        names = json.load(f)
+    if not isinstance(names, list) or not names or any(
+            not isinstance(n, str) or not n.startswith('%d · ' % i) for i, n in enumerate(names, 11)):
+        raise SystemExit('ожидался список имён уровней из защищённой сборки')
+    with app.store.tx() as c:
+        existing = c.execute('SELECT captured_at, grants FROM premium_cutoff WHERE id=1').fetchone()
+        if existing:
+            print('отсечка уже зафиксирована: %d UTC, выдано %d' % (existing['captured_at'], existing['grants']))
+            return
+        if a.check:
+            raise SystemExit('отсечка ещё не зафиксирована')
+        approved = None
+        if a.apply:
+            if not a.approved_accounts:
+                raise SystemExit('для отсечки нужен --approved-accounts с проверенными ID аккаунтов')
+            try:
+                with open(a.approved_accounts, encoding='utf-8') as f:
+                    ids = json.load(f)
+            except (OSError, ValueError) as e:
+                raise SystemExit('не удалось прочитать список проверенных аккаунтов: %s' % e)
+            if not isinstance(ids, list) or any(
+                    not isinstance(i, str) or not re.fullmatch(r'[0-9a-f]{32}', i) for i in ids):
+                raise SystemExit('ожидался JSON-массив ID проверенных аккаунтов')
+            approved = set(ids)
+        cutoff = now()
+        grants = []
+        for r in c.execute('SELECT account_id, data FROM progress WHERE updated_at<=?', (cutoff,)):
+            if approved is not None and r['account_id'] not in approved:
+                continue
+            data = json.loads(r['data'])
+            if isinstance(data, dict) and any(premium_passed(data, name) for name in names):
+                grants.append((r['account_id'], PREMIUM, 'grandfather', 'cutoff:%d' % cutoff, cutoff))
+        if a.apply:
+            if len(grants) != len(approved):
+                raise SystemExit('у части проверенных аккаунтов нет подходящего зачёта; отсечка не зафиксирована')
+            c.executemany('INSERT INTO entitlements(account_id, product, source, ref, granted_at) VALUES (?,?,?,?,?)',
+                          grants)
+            c.execute('INSERT INTO premium_cutoff(id, captured_at, grants) VALUES (1,?,?)', (cutoff, len(grants)))
+    if a.apply:
+        log.info('premium cutoff: epoch=%d grants=%d', cutoff, len(grants))
+    print('%s: %d аккаунтов, отсечка %d UTC' % ('выдано' if a.apply else 'предпросмотр', len(grants), cutoff))
+
+
 def cli_revoke(app, a):
     with app.store.tx() as c:
         n = c.execute('UPDATE entitlements SET revoked_at=? WHERE account_id=? AND product=? AND revoked_at IS NULL',
@@ -1242,6 +1345,12 @@ def main(argv=None):
     g.add_argument('product')
     g.add_argument('--days', type=int, default=0, help='срок; 0 — навсегда')
     g.add_argument('--ref', default='', help='метка гранта: номер заказа, имя пилота')
+    gf = sub.add_parser('grandfather', help='однократно сохранить доступ проверенным аккаунтам')
+    gf.add_argument('levels', help='JSON со списком имён уровней из защищённой сборки')
+    gf.add_argument('--approved-accounts', help='JSON-массив ID аккаунтов, проверенных оператором')
+    cutoff_action = gf.add_mutually_exclusive_group()
+    cutoff_action.add_argument('--apply', action='store_true', help='зафиксировать отсечку и выдать доступ')
+    cutoff_action.add_argument('--check', action='store_true', help='проверить, что отсечка уже зафиксирована')
     r = sub.add_parser('revoke', help='отозвать покупку')
     r.add_argument('account')
     r.add_argument('product')
@@ -1273,7 +1382,7 @@ def main(argv=None):
         srv.serve_forever()
     else:
         {'grant': cli_grant, 'revoke': cli_revoke, 'list': cli_list, 'stats': cli_stats,
-         'promo': cli_promo}[a.cmd](app, a)
+         'promo': cli_promo, 'grandfather': cli_grandfather}[a.cmd](app, a)
 
 
 if __name__ == '__main__':

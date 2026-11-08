@@ -13,24 +13,24 @@ cd "$(dirname "$0")"
 # Аварийный обход: SKIP_GIT_GUARD=1 (в логе останется предупреждение).
 git_guard() {
   if ! git rev-parse --git-dir >/dev/null 2>&1; then
-    echo "ВНИМАНИЕ: каталог не является git-репозиторием, проверка пропущена" >&2
-    return 0
+    echo "ДЕПЛОЙ ОСТАНОВЛЕН: запускать из git-репозитория." >&2
+    exit 1
   fi
   if [ -n "$(git status --porcelain)" ]; then
     echo "ДЕПЛОЙ ОСТАНОВЛЕН: есть незакоммиченные изменения — сначала коммит, потом деплой." >&2
     git status --short >&2
     exit 1
   fi
-  local upstream ahead
+  local branch upstream
+  branch=$(git branch --show-current)
   upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
-  if [ -z "$upstream" ]; then
-    echo "ВНИМАНИЕ: у ветки нет upstream — пушить некуда, деплой пойдёт из локальных коммитов" >&2
-    return 0
+  if [ -z "$branch" ] || [ "$upstream" != "origin/$branch" ]; then
+    echo "ДЕПЛОЙ ОСТАНОВЛЕН: нужна рабочая ветка с одноимённой веткой в origin." >&2
+    exit 1
   fi
-  git fetch -q origin 2>/dev/null || true
-  ahead=$(git rev-list --count "$upstream"..HEAD 2>/dev/null || echo 0)
-  if [ "$ahead" != "0" ]; then
-    echo "ДЕПЛОЙ ОСТАНОВЛЕН: $ahead коммит(ов) не отправлено в $upstream — сначала push, потом деплой." >&2
+  git fetch -q origin
+  if [ "$(git rev-parse HEAD)" != "$(git rev-parse "$upstream")" ]; then
+    echo "ДЕПЛОЙ ОСТАНОВЛЕН: локальный коммит расходится с $upstream." >&2
     exit 1
   fi
   echo "==> git: дерево чисто, всё отправлено в $upstream"
@@ -54,6 +54,8 @@ MIRROR_IP="${MIRROR_IP:-194.5.65.182}"
 : "${METRIKA_ID:=}"
 : "${RYBBIT_SITE_ID:=}"
 : "${AUTH_PROVIDERS:=}"
+: "${PREMIUM_WEB_PROTECTED:=0}"
+: "${PREMIUM_CAPTURE_CUTOFF:=0}"
 
 # При включённом VPN (Happ) маршрут по умолчанию уходит в utun, и ssh к серверу
 # виснет на banner exchange, а curl не доходит до сайта. Привязываем к физическому
@@ -83,23 +85,44 @@ scpr(){
 }
 
 echo "==> лендинг: билд"
-(cd landing && npm run build >/dev/null 2>&1)
+(cd landing && npm ci --include=dev && npm run build)
 [ -f landing/dist/index.html ] || { echo "лендинг не собрался"; exit 1; }
 
 echo "==> игра: минификация"
 mkdir -p build/play
-npx --yes html-minifier-terser index.html -o build/play/index.html \
+PLAY_SOURCE=index.html
+PREMIUM_HASH=''
+case "$PREMIUM_WEB_PROTECTED" in
+  1)
+    [ "${SKIP_MIRROR:-0}" != 1 ] || { echo 'Защищённую сборку нужно выложить на оба узла'; exit 1; }
+    case "$PREMIUM_CAPTURE_CUTOFF" in
+      1) cutoff_action='--apply --approved-accounts /opt/pozerkalam-account/premium/approved-accounts.json' ;;
+      0) cutoff_action=--check ;;
+      *) echo 'PREMIUM_CAPTURE_CUTOFF: ожидается 0 или 1'; exit 1 ;;
+    esac
+    mkdir -p build/premium
+    python3 tools/premium-web-build.py index.html build/premium/public.html \
+      build/premium/levels.js build/premium/level-names.json
+    PLAY_SOURCE=build/premium/public.html
+    PREMIUM_HASH=$(openssl dgst -sha256 -binary build/premium/levels.js | openssl base64 -A)
+    ;;
+  0)
+    grep -q '^const PAY_ON=false;$' index.html || { echo 'PAY_ON требует защищённую сборку'; exit 1; }
+    ;;
+  *) echo 'PREMIUM_WEB_PROTECTED: ожидается 0 или 1'; exit 1 ;;
+esac
+npx --yes html-minifier-terser "$PLAY_SOURCE" -o build/play/index.html \
   --collapse-whitespace --remove-comments --minify-css true --minify-js true
 
 # Версию считаем от чистого минифицированного файла, до вставок: она попадает и в SW,
 # и в window.BUILD. Без версии в отчёте об ошибке «у меня баг» неотличимо от «у меня
 # старый кэш SW».
-BUILD_SHA=$(shasum -a 256 build/play/index.html | cut -c1-16)
+BUILD_SHA=$({ cat build/play/index.html; printf '%s' "$PREMIUM_HASH"; } | shasum -a 256 | cut -c1-16)
 
 echo "==> игра: пути /play/ + версия сборки + Метрика + Rybbit + вход"
-python3 - "$METRIKA_ID" "$BUILD_SHA" "$RYBBIT_SITE_ID" "$AUTH_PROVIDERS" <<'PYEOF'
+python3 - "$METRIKA_ID" "$BUILD_SHA" "$RYBBIT_SITE_ID" "$AUTH_PROVIDERS" "$PREMIUM_HASH" <<'PYEOF'
 import json, re, sys
-mid, build, rb, auth = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+mid, build, rb, auth, premium_hash = sys.argv[1:]
 s = open('build/play/index.html').read()
 for a, b in [('href="/manifest.webmanifest"', 'href="/play/manifest.webmanifest"'),
              ('href="/icon-192.png"', 'href="/play/icon-192.png"'),
@@ -112,6 +135,10 @@ prov = [x for x in auth.replace(' ', '').split(',') if x in ('vk', 'yandex')]
 boot = 'window.BUILD="%s"' % build
 if prov:
     boot += ';window.AUTH_PROVIDERS=%s' % json.dumps(prov)
+if premium_hash:
+    assert prov, 'защищённая сборка требует AUTH_PROVIDERS'
+    boot += ';window.PREMIUM_WEB=true'
+    s = s.replace('</head>', '<meta name="pz-premium-sha256" content="%s"></head>' % premium_hash, 1)
 s = s.replace('</head>', '<script>%s</script></head>' % boot, 1)
 print('    вход: ' + (', '.join(prov) if prov else 'выключен (AUTH_PROVIDERS пуст)'))
 # Rybbit spark: тег со своего домена — скрипт шлёт события туда, откуда загружен (/rb/ → nginx)
@@ -255,6 +282,12 @@ else
 fi
 
 echo "==> сервис аккаунтов"
+if [ -n "$PREMIUM_HASH" ]; then
+  sshr "install -d -o root -g www-data -m 0750 /opt/pozerkalam-account/premium"
+  scpr build/premium/levels.js "$HOST:/opt/pozerkalam-account/premium/.$BUILD_SHA.js.next"
+  scpr build/premium/level-names.json "$HOST:/opt/pozerkalam-account/premium/.$BUILD_SHA.json.next"
+  sshr "cd /opt/pozerkalam-account/premium && chown root:www-data .$BUILD_SHA.js.next .$BUILD_SHA.json.next && chmod 0640 .$BUILD_SHA.js.next .$BUILD_SHA.json.next && mv -f .$BUILD_SHA.js.next $BUILD_SHA.js && mv -f .$BUILD_SHA.json.next $BUILD_SHA.json"
+fi
 scpr server/account.py "$HOST:/tmp/account.py"
 scpr server/pozerkalam-account.service "$HOST:/etc/systemd/system/pozerkalam-account.service"
 scpr server/nginx-account.conf "$HOST:/etc/nginx/snippets/pozerkalam-account.conf"
@@ -270,6 +303,10 @@ sshr 'grep -q "pozerkalam-account.conf" /etc/nginx/sites-available/pozerkalam.sp
 sshr "systemctl daemon-reload && systemctl enable pozerkalam-account >/dev/null 2>&1; systemctl restart pozerkalam-account && echo '    сервис перезапущен'"
 sshr "sleep 1; systemctl is-active pozerkalam-account"
 sshr "journalctl -u pozerkalam-account -n 30 --no-pager -o cat | grep -E 'CONFIG' | tail -2 || true"
+
+if [ -n "$PREMIUM_HASH" ]; then
+  sshr "pz-account grandfather /opt/pozerkalam-account/premium/$BUILD_SHA.json $cutoff_action"
+fi
 
 echo "==> nginx: новый CSP раньше файлов"
 sshr "nginx -t >/dev/null 2>&1 && systemctl reload nginx && echo RELOADED"
@@ -393,6 +430,11 @@ acct_smoke(){ # $1 — IP, $2 — подпись. Сервис жив и отв�
        -X POST https://pozerkalam.space/api/v1/auth/start -H 'Content-Type: application/json' -d '{"provider":"none"}' || echo 000)
   echo "    $2 /api/v1/auth/start (провайдер none) -> ${st}"
   [ "$st" = "400" ] || { echo "СМОУК ПРОВАЛЕН: $2 /api/v1/auth/start"; exit 1; }
+  if [ -n "$PREMIUM_HASH" ]; then
+    st=$(curl -s -m 15 ${CURL_BIND[@]+"${CURL_BIND[@]}"} --resolve "pozerkalam.space:443:$1" -o /dev/null -w "%{http_code}" \
+         "https://pozerkalam.space/api/v1/premium/levels/$BUILD_SHA" || echo 000)
+    [ "$st" = "401" ] || { echo "СМОУК ПРОВАЛЕН: $2 платная выдача без входа -> $st"; exit 1; }
+  fi
   if [ -n "${AUTH_PROVIDERS:-}" ]; then
     for pv in $(echo "$AUTH_PROVIDERS" | tr ',' ' '); do
       case "$h" in *"\"$pv\": true"*|*"\"$pv\":true"*) ;; *) echo "СМОУК ПРОВАЛЕН: в странице включён $pv, а на сервисе нет ключей"; exit 1;; esac

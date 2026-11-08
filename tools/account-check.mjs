@@ -14,6 +14,8 @@
    обновлении политики нет — @acct-policy-note; FAULT=consent — нет согласия в форме отзывов — @acct-feedback-consent; FAULT=premiumsite — замок вне сайта —
    @acct-premium-site-only; FAULT=premiumlogin — гость с покупкой — @acct-premium-login-first; FAULT=promo — промокод не
    применяется — @acct-promo-redeem. */
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -56,11 +58,13 @@ const SRC = FAULTS[FAULT] ? SRC0.replace(FAULTS[FAULT][0], FAULTS[FAULT][1]) : S
 if (FAULTS[FAULT] && SRC === SRC0) { console.error(`FAULT=${FAULT}: заменяемая строка не найдена в index.html`); process.exit(2); }
 
 /* те же вставки, что делает деплой; rybbit — тег как в деплое, auth — список провайдеров */
-function pageHtml({ rybbit = true, auth = null } = {}) {
+function pageHtml({ rybbit = true, auth = null, premium = false, protectedBuild = null } = {}) {
   let head = '<script>window.BUILD="test"</script>';
+  if (protectedBuild) head += '<script>window.PREMIUM_WEB=true</script>';
+  if (premium) head += '<script>window.PREMIUM_FORCE=true</script>';
   if (auth) head += '<script>window.AUTH_PROVIDERS=' + JSON.stringify(auth) + '</script>';
   if (rybbit) head += '<script defer src="/rb/script.js" data-site-id="9"></script>';
-  return SRC.replace('</head>', head + '</head>');
+  return (protectedBuild?.html || SRC).replace('</head>', head + '</head>');
 }
 
 /* мок трекера: тот же интерфейс, что у настоящего window.rybbit; вызовы — в window.__rb */
@@ -75,7 +79,7 @@ const check = (name, ok, detail) => { results.push({ name, ok: !!ok, detail }); 
 const browser = await chromium.launch({ executablePath: findChrome(), headless: true });
 
 /* одна страница = один сценарий: свои вставки, свой мок API, своя задержка скрипта трекера */
-async function openGame({ rybbit = true, auth = null, rbDelay = 0, api = null, storage = {}, files = {} } = {}) {
+async function openGame({ rybbit = true, auth = null, rbDelay = 0, api = null, storage = {}, files = {}, premium = false, protectedBuild = null } = {}) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await ctx.newPage();
   const errors = [], apiCalls = [];
@@ -83,8 +87,17 @@ async function openGame({ rybbit = true, auth = null, rbDelay = 0, api = null, s
   page.on('pageerror', e => errors.push('pageerror: ' + e.message));
   await ctx.route('**/*', async route => {
     const url = route.request().url();
-    if (url.split('#')[0].split('?')[0] === PAGE)
-      return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: pageHtml({ rybbit, auth }) });
+    if (url.split('#')[0].split('?')[0] === PAGE) {
+      const body = pageHtml({ rybbit, auth, premium, protectedBuild });
+      const headers = {};
+      if (protectedBuild) {
+        const scripts = [...body.matchAll(/<script(?![^>]*\bsrc=)[^>]*>(.*?)<\/script>/gs)].map(m => m[1]);
+        scripts.push(protectedBuild.script);
+        const hashes = scripts.map(code => "'sha256-" + createHash('sha256').update(code).digest('base64') + "'");
+        headers['Content-Security-Policy'] = "script-src 'self' " + hashes.join(' ');
+      }
+      return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body, headers });
+    }
     if (url === ORIGIN + '/rb/script.js') {
       if (rbDelay) await new Promise(r => setTimeout(r, rbDelay));
       return route.fulfill({ status: 200, contentType: 'application/javascript', body: RYBBIT_MOCK });
@@ -162,7 +175,8 @@ const rbEvents = (page, name) => page.evaluate(n => (window.__rb || []).filter(e
 function mockApi(st) {
   st.n = st.n || 0;
   const tokens = () => { st.n++; return { access: 'h.' + Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url') + '.s' + st.n, refresh: 'R' + st.n }; };
-  const account = { id: 'acc123456789', name: 'Егор Т.', avatar: st.avatar || null, providers: ['vk'] };
+  const account = () => ({ id: 'acc123456789', name: 'Егор Т.', avatar: st.avatar || null, providers: ['vk'],
+    payment_access: st.paymentAccess || 'closed' });
   return async (c) => {
     if (c.path === '/auth/start') {
       st.nonce = c.body.nonce; st.mode = c.body.mode;
@@ -172,15 +186,15 @@ function mockApi(st) {
       if (st.nonce && c.body.nonce !== st.nonce) return { status: 403, json: { status: 'forbidden' } };
       if (st.pending > 0) { st.pending--; return { json: { status: 'pending' } }; }
       if (st.fail) return { json: { status: 'failed', reason: st.fail } };
-      return { json: Object.assign({ status: 'ok', provider: 'vk', is_new: true, account, entitlements: st.ent || [] }, tokens()) };
+      return { json: Object.assign({ status: 'ok', provider: 'vk', is_new: true, account: account(), entitlements: st.ent || [] }, tokens()) };
     }
     if (c.path === '/auth/refresh') {
       if (st.refreshDead) return { status: 401, json: { error: 'invalid' } };
-      return { json: Object.assign({ account, entitlements: st.ent || [] }, tokens()) };
+      return { json: Object.assign({ account: account(), entitlements: st.ent || [] }, tokens()) };
     }
     if (c.path === '/me' && c.method === 'GET') {
       if (st.me401 > 0) { st.me401--; return { status: 401, json: { error: 'auth' } }; }
-      return { json: { account, entitlements: st.ent || [] } };
+      return { json: { account: account(), entitlements: st.ent || [] } };
     }
     if (c.path === '/me' && c.method === 'DELETE') return { json: { ok: true } };
     if (c.path === '/auth/logout') return { json: { ok: true } };
@@ -188,6 +202,12 @@ function mockApi(st) {
       st.creates = (st.creates || 0) + 1;
       if ((st.ent || []).some((e) => e.product === 'premium')) return { status: 409, json: { error: 'owned' } };
       return { json: { url: 'https://auth.robokassa.ru/Merchant/Index.aspx?MerchantLogin=pozerkalam&InvId=777&IsTest=1', inv: 777, test: true } };
+    }
+    if (c.path === '/premium/levels/test') {
+      await st.protectedWait;
+      if (!c.auth) return { status: 401, json: { error: 'auth' } };
+      if (!(st.ent || []).some(e => e.product === 'premium')) return { status: 403, json: { error: 'premium-required' } };
+      return { json: { script: st.protectedScript } };
     }
     if (c.path.startsWith('/pay/status')) return { json: { status: st.paid ? 'paid' : 'pending' } };
     if (c.path === '/promo/redeem' && c.method === 'POST') {
@@ -672,8 +692,7 @@ let offerViewA = [], offerClickA = [];
 /* ---------- Премиум за 149 ₽ (#335) ---------- */
 /* замок: уровни 1–10 бесплатны, 11–32 закрыты; только сайт — в ЯИ, VK, Telegram и во фрейме замка нет */
 {
-  const { ctx, page, errors } = await openGame({ auth: ['vk', 'yandex'], api: mockApi({}) });
-  await page.goto(PAGE + '?paytest=1'); await page.waitForTimeout(300);
+  const { ctx, page, errors } = await openGame({ auth: ['vk', 'yandex'], api: mockApi({}), premium: true });
   const r = await page.evaluate((fault) => {
     if (fault === 'premiumsite') window.paySite = () => true;
     doAct('start'); showLevelPick();
@@ -701,11 +720,102 @@ let offerViewA = [], offerClickA = [];
   check('консоль чиста на Премиуме', realErrors(errors).length === 0, realErrors(errors).slice(0, 2).join(' | '));
   await ctx.close();
 }
+{
+  const guest = await openGame({ auth: ['vk', 'yandex'], api: mockApi({}) });
+  await guest.page.goto(PAGE + '?paytest=1');
+  const guestOpen = await guest.page.evaluate(() => premiumOn());
+  await guest.ctx.close();
+
+  const st = { paymentAccess: 'closed' };
+  const { ctx, page, apiCalls } = await openGame({ auth: ['vk', 'yandex'], api: mockApi(st), storage: LOGGED });
+  await page.goto(PAGE + '?paytest=1');
+  await page.evaluate(() => authMe());
+  const ordinary = await page.evaluate(async () => {
+    menuGo('settings', 'premium');
+    const tab = !!document.querySelector('#overlay [data-act="tab:premium"]');
+    await payStart('premium');
+    return { tab, buy: !!document.querySelector('#overlay [data-act="pay-buy"]') };
+  });
+  const denied = !apiCalls.some(c => c.path === '/pay/create');
+  st.paymentAccess = 'owner';
+  await page.goto(PAGE);
+  await page.evaluate(() => authMe());
+  const ownerBuy = await page.evaluate(() => {
+    localStorage.setItem('pz_grand', '1');
+    menuGo('settings', 'premium');
+    return !!document.querySelector('#overlay [data-act="pay-buy"]');
+  });
+  check('при закрытых продажах paytest не открывает оплату, у владельца доступна пробная покупка (@acct-premium-owner-preview)',
+    !guestOpen && !ordinary.tab && !ordinary.buy && denied && ownerBuy,
+    JSON.stringify({ guestOpen, ...ordinary, denied, ownerBuy }));
+  await ctx.close();
+}
+
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pz-premium-check-'));
+  let protectedBuild;
+  try {
+    const html = path.join(dir, 'public.html'), script = path.join(dir, 'levels.js'), names = path.join(dir, 'names.json');
+    execFileSync('python3', [path.join(ROOT, 'tools/premium-web-build.py'), path.join(ROOT, 'index.html'), html, script, names]);
+    protectedBuild = { html: fs.readFileSync(html, 'utf8'), script: fs.readFileSync(script, 'utf8') };
+  } finally {
+    for (const file of fs.readdirSync(dir)) fs.unlinkSync(path.join(dir, file));
+    fs.rmdirSync(dir);
+  }
+  const auth = ['vk', 'yandex'];
+  const guest = await openGame({ auth, protectedBuild, api: mockApi({}), storage: { pz_grand: '1' } });
+  const guestState = await guest.page.evaluate(() => {
+    loadLevel(10);
+    openLevel(10, 'pick');
+    return { li: game.li, locked: levelLocked(10), stub: LEVELS[10].premiumStub, demo: !!DEMOS[10] };
+  });
+  const guestRequests = guest.apiCalls.filter(c => c.path.startsWith('/premium/')).length;
+  await guest.ctx.close();
+  const st = { ent: [{ product: 'premium' }], protectedScript: protectedBuild.script };
+  const { ctx, page, apiCalls, errors } = await openGame({ auth, protectedBuild, api: mockApi(st), storage: LOGGED });
+  await page.waitForFunction(() => entitled('premium'));
+  let release;
+  st.protectedWait = new Promise(resolve => { release = resolve; });
+  await page.evaluate(() => {
+    const open = openPremiumLevel;
+    openPremiumLevel = (...args) => { window.pendingPremiumOpen = open(...args); };
+    menuGo('main');
+    menuGo('levels', levelTab(10));
+  });
+  const requested = page.waitForRequest(r => r.url().endsWith('/premium/levels/test'));
+  await page.locator('.lvcard[data-lvl="10"]').click();
+  await requested;
+  await page.keyboard.press('Escape');
+  release();
+  await page.evaluate(() => window.pendingPremiumOpen);
+  const afterBack = await page.evaluate(() => ({ screen: menu.scr, li: game.li, stub: LEVELS[10].premiumStub }));
+  check('поздний ответ на загрузку платного уровня не возвращает игрока из меню (@acct-premium-cancel-open)',
+    afterBack.screen === 'main' && afterBack.li === 0 && afterBack.stub, JSON.stringify(afterBack));
+  const requestsAfterBack = apiCalls.length;
+  await page.evaluate(() => openLevel(10, 'pick'));
+  await page.waitForFunction(() => game.li === 10);
+  const paid = await page.evaluate(() => ({ build: typeof LEVELS[10].build, demo: !!DEMOS[10], canBuy: canBuyPremium() }));
+  await page.evaluate(() => openLevel(26, 'practice', 'practice'));
+  await page.waitForFunction(() => game.li === 26 && level.practice);
+  await page.evaluate(() => openLevel(31, 'exam'));
+  await page.waitForFunction(() => game.li === 31 && !!exam);
+  st.ent = [];
+  await page.evaluate(() => openLevel(10, 'pick'));
+  await page.waitForFunction(() => game.li === 0 && LEVELS[10].premiumStub && !!document.querySelector('#overlay .paywall'));
+  const paidCalls = apiCalls.slice(requestsAfterBack).filter(c => c.path === '/premium/levels/test');
+  check('платные уровни отсутствуют в публичном HTML, запуск и отзыв права проходят через API под CSP (@acct-premium-server-content)',
+    guestState.li === 0 && guestState.locked && guestState.stub && !guestState.demo && guestRequests === 0
+      && paid.build === 'function' && paid.demo && !paid.canBuy && paidCalls.length === 4
+      && paidCalls.every(c => /^Bearer /.test(c.auth)) && !errors.some(e => /Content Security Policy|pageerror:/.test(e)),
+    JSON.stringify({ guestState, guestRequests, paid, paidCalls: paidCalls.length, errors }));
+  await ctx.close();
+}
+
 /* покупка: только вошедший; «Купить» → /pay/create → форма Robokassa; возврат с InvId → статус → /me → уровень открыт */
 {
-  const st = {};
+  const st = { paymentAccess: 'owner' };
   const { ctx, page, apiCalls } = await openGame({ auth: ['vk', 'yandex'], api: mockApi(st), storage: LOGGED });
-  await page.goto(PAGE + '?paytest=1'); await page.waitForTimeout(600);
+  await page.waitForFunction(() => premiumOn());
   await page.evaluate((fault) => { if (fault === 'premiumlogin') window.__acct = acct; doAct('start'); openLevel(12, 'pick'); }, FAULT);
   const pay = await page.evaluate(() => ({ buy: !!document.querySelector('#overlay [data-act="pay-buy"]'), restore: !!document.querySelector('#overlay [data-act="pay-restore"]') }));
   await Promise.all([page.waitForURL(/auth\.robokassa\.ru/, { timeout: 5000 }).catch(() => null), page.evaluate(() => document.querySelector('#overlay [data-act="pay-buy"]').click())]);
@@ -724,10 +834,9 @@ let offerViewA = [], offerClickA = [];
 /* без аккаунта купить нельзя: у гостя нет «Купить», а payStart без входа на сервис не ходит */
 {
   const st = {};
-  const { ctx, page, apiCalls } = await openGame({ auth: ['vk', 'yandex'], api: mockApi(st) });
-  await page.goto(PAGE + '?paytest=1'); await page.waitForTimeout(300);
+  const { ctx, page, apiCalls } = await openGame({ auth: ['vk', 'yandex'], api: mockApi(st), premium: true });
   const r = await page.evaluate(async (fault) => { doAct('start'); openLevel(12, 'pick');
-    if (fault === 'premiumlogin') { acct = { id: 'x', name: 'x', provider: 'vk', ent: [] }; }
+    if (fault === 'premiumlogin') { acct = { id: 'x', name: 'x', provider: 'vk', ent: [] }; acctPaymentAccess = 'public'; }
     await payStart('premium'); return { buy: !!document.querySelector('#overlay [data-act="pay-buy"]'), login: document.querySelectorAll('#overlay .acctbtns button').length }; }, FAULT);
   const creates = apiCalls.filter((c) => c.path === '/pay/create').length;
   check('гость не может купить: «Купить» нет, вход на месте, запроса оплаты нет (@acct-premium-login-first)', !r.buy && r.login === 2 && creates === 0, JSON.stringify({ ...r, creates }));
@@ -736,8 +845,8 @@ let offerViewA = [], offerClickA = [];
 /* промокод: ссылка ?promo= подставляет код и открывает вкладку; гостю — вход; вошедшему — ответ сервера; ошибки — текстом */
 {
   const st = { promo: { VK2026: { tag: 'vk' }, OLD: { status: 410, error: 'promo-expired' } } };
-  const { ctx, page } = await openGame({ auth: ['vk', 'yandex'], api: mockApi(st), storage: LOGGED });
-  await page.goto(PAGE + '?paytest=1&promo=vk2026'); await page.waitForTimeout(700);
+  const { ctx, page } = await openGame({ auth: ['vk', 'yandex'], api: mockApi(st), storage: LOGGED, premium: true });
+  await page.goto(PAGE + '?promo=vk2026'); await page.waitForTimeout(700);
   const link = await page.evaluate(() => ({ tab: menu.scr === 'settings' && menu.tab === 'premium', val: (document.getElementById('promoInput') || {}).value, url: location.search }));
   await page.evaluate(() => { document.getElementById('promoInput').value = 'old'; doAct('promo-go'); });
   await page.waitForTimeout(400);
@@ -747,7 +856,7 @@ let offerViewA = [], offerClickA = [];
   const good = await page.evaluate(() => ({ text: document.getElementById('overlay').textContent, prem: entitled('premium'), lock: levelLocked(20) }));
   const ev = await rbEvents(page, 'promo_redeem');
   check('промокод: ссылка ?promo= открывает «Премиум» с кодом, ошибка — текстом, верный код открывает премиум, событие с меткой (@acct-promo-redeem)',
-    link.tab && link.val === 'VK2026' && link.url === '?paytest=1' && /Срок этого промокода закончился/.test(bad) && good.prem && !good.lock
+    link.tab && link.val === 'VK2026' && link.url === '' && /Срок этого промокода закончился/.test(bad) && good.prem && !good.lock
       && /Премиум активен/.test(good.text) && ev.length === 1 && ev[0].tag === 'vk' && (st.redeems || []).join(',') === 'OLD,VK2026',
     JSON.stringify({ link, bad: /Срок/.test(bad), good: { prem: good.prem, lock: good.lock }, ev, redeems: st.redeems }));
   await ctx.close();

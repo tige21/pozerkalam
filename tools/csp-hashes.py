@@ -18,6 +18,10 @@ for path in sys.argv[1:]:
             s = f.read()
     except OSError:
         continue
+    for digest in re.findall(r'<meta name="pz-premium-sha256" content="([A-Za-z0-9+/]{43}=)">', s):
+        q = "'sha256-%s'" % digest
+        if q not in out:
+            out.append(q)
     for m in re.finditer(r'<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>', s, re.S):
         if 'ld+json' in m.group(0):
             continue
