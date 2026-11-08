@@ -8800,11 +8800,25 @@ function anLevel(i){
   const l=LEVELS[i]||{};
   return { li:i+1, kind: l.custom?'custom' : l.examRoute?'exam' : l.drill?'drill' : l.strict?'city' : 'yard' };
 }
+let anDrive=null;
 function anLevelStart(via){
   const p=anLevel(game.li); p.via=via;
   if(level && level.def.examRoute) p.exam_mode=examTrain()?'train':'real';
   if(level && level.practice){ p.mode='practice'; p.variant=level.pvar ? level.pvar.id : null; }
+  p.attempt_id=Math.random().toString(36).slice(2);
+  anDrive={props:p, moved:false, step:false};
   track('level_start', p);
+}
+function anDriveTick(){
+  if(!anDrive || paused || game.done || demo) return;
+  if(game.moved && !anDrive.moved){
+    anDrive.moved=true;
+    track('first_move', anDrive.props);
+  }
+  if(anDrive.moved && !anDrive.step && game.li===0 && car.vel>0 && !level.def.phases[0].when(curS)){
+    anDrive.step=true;
+    track('first_step_done', anDrive.props);
+  }
 }
 /* «с какого устройства и как ему» — один замер за сессию после 20 с езды: на старте регулятор
    качества ещё не устоялся, а стоящая на паузе игра не говорит о скорости ничего */
@@ -9171,6 +9185,7 @@ function loadLevel(i){
   else if(P) showOv(practiceBriefHTML());
 }
 function restart(){
+  anDrive=null;
   missFwd=null;
   if(demo) stopDemo();
   voiceReset();
@@ -14305,15 +14320,15 @@ let tut=null;
 const TUT=[
   {kind:'gear', icon:'⏸',
    why:'Как в настоящем автомате: в P трансмиссия заблокирована, и выйти из P можно только с нажатым тормозом.',
-   act:()=> MOB?'1/4 · Зажми кнопку ТОРМОЗ и держи':'1/4 · Зажми и держи ТОРМОЗ — S или пробел',
+   act:()=> MOB?'Зажми и держи тормоз':'1/4 · Зажми и держи ТОРМОЗ — S или пробел',
    done:()=> input.back},
   {kind:'gear', icon:'⏸',
    why:'Enter всегда переключает D ⇄ R — при парковке это самое частое действие. Буквы P R N D в панели тоже кликабельны.',
-   act:()=> MOB?'2/4 · Держа ТОРМОЗ, тапни D':'2/4 · Держи тормоз и нажми Enter — включится D',
+   act:()=> MOB?'Держи тормоз и нажми D':'2/4 · Держи тормоз и нажми Enter — включится D',
    done:()=> car.sel==='D'||car.sel==='R'},
   {kind:'act', icon:'⬆',
    why:'Это крип автомата: в D и R машина ползёт без газа. Для точной парковки крипа обычно достаточно.',
-   act:()=>'3/4 · Отпусти тормоз — машина поползёт сама',
+   act:()=> MOB?'Отпусти тормоз — машина поедет':'3/4 · Отпусти тормоз — машина поползёт сама',
    done:()=> !input.back && Math.abs(car.vel)>0.25},
   {kind:'act', icon:'⬆',
    why:'Руль остаётся, где оставил (X или «0» — быстро в ноль). Тормоз всегда рядом: S, пробел или кнопка ТОРМОЗ.',
@@ -14326,14 +14341,14 @@ function maybeStartTut(){
   if(!seen && !demo && !tut && car.sel==='P' && !game.moved) tut={i:0};
 }
 function tutTick(){
-  if(!tut || demo || game.done) return;
+  if(!tut || paused || demo || game.done) return;
   const st=TUT[tut.i];
   if(st && st.done()){
     tut.i++;
-    if(tut.i>=TUT.length){
+    if(tut.i>=(MOB ? 3 : TUT.length)){
       tut=null;
       try{ localStorage.setItem('trainer_drive','1'); }catch(e){}
-      toast('Поехали! Дальше ведёт карточка-подсказка', 3);
+      if(!MOB) toast('Поехали! Дальше ведёт карточка-подсказка', 3);
     }
   }
 }
@@ -15193,10 +15208,11 @@ function doAct(a){
     else openLevel(pt.i,'play');
     return; }
   if(a==='pause'){ if(!game.done) menuGo('pause'); return; }
-  if(a==='restart'){ restart(); hideOv(); return; }
+  if(a==='restart'){ restart(); hideOv(); anLevelStart('again'); return; }
   if(a==='mainmenu'){ if(demo) stopDemo(); menuGo('main'); return; }
   if(a==='editor'){ openEditor(editorSource()); return; }
   if(a==='tour'){
+    tourRequested=true;
     try{ for(const k of ['trainer_hint','trainer_seen','trainer_drive']) localStorage.removeItem(k); }catch(e){}
     console.info('[menu] обучение сброшено');
     if(menu.root==='main'){ menu.note='Покажем, когда начнёшь уровень.'; menuGo('help', menu.tab, menu.from); }
@@ -15644,13 +15660,19 @@ function runCount(){
   try{ localStorage.setItem('trainer_runs',String(runsCnt)); }catch(e){}
   return true;
 }
+let tourRequested=false;
 function firstRunChain(){
-  let seen=true, seenOnb=true;
-  try{ seen = localStorage.getItem('trainer_hint')==='1';
-       seenOnb = localStorage.getItem('trainer_seen')==='1'; }catch(e){}
-  if(MOB && !seen) setTimeout(showTouchHelp,180);
-  /* на телефоне тур HUD идёт после туториала кнопок (цепочка в closeTouchHelp) */
-  else if(!seenOnb) setTimeout(showOnboard,240);
+  const requested=tourRequested;
+  tourRequested=false;
+  if(MOB){
+    /* на телефоне тур HUD идёт после туториала кнопок (цепочка в closeTouchHelp) */
+    if(requested) showTouchHelp();
+    else maybeStartTut();
+    return;
+  }
+  let seenOnb=true;
+  try{ seenOnb = localStorage.getItem('trainer_seen')==='1'; }catch(e){}
+  if(!seenOnb) setTimeout(showOnboard,240);
   else maybeStartTut();
 }
 function examLevelIdx(){ return LEVELS.findIndex(l=>l.examRoute); }
@@ -15903,7 +15925,7 @@ function pressKey(code){
     return;
   }
   switch(code){
-    case 'KeyR': restart(); if(paused) hideOv(); break;
+    case 'KeyR': restart(); if(paused) hideOv(); anLevelStart('again'); break;
     case 'KeyC': opt.camMode=(opt.camMode+1)%3; if(opt.camMode!==CAM_FP) opt.prev3rd=opt.camMode;
                  camSm=null; break;
     case 'KeyV': if(opt.camMode===CAM_FP) opt.camMode=opt.prev3rd;
@@ -17473,6 +17495,7 @@ function simTick(dt){
   else if(level.city){ const b=bodyPos(); game.lim=limitAt(b.u, b.v, car.th); }
   if(!paused && !game.done && !demo) examTick(dt);
   phaseTick(dt);
+  anDriveTick();
   tutTick();
   parkBeep(dt);
   audioTick(dt);
@@ -17514,7 +17537,9 @@ function win(){
   game.done=true;
   const vios = attempt ? attempt.log.filter(l=>l.code!=='kerb').length : 0;
   track('level_win', Object.assign(anLevel(game.li), { t:+game.t.toFixed(1), hits:game.hits, vios,
-    clean:game.hits===0 && !vios, err_cm: precDef() ? Math.round(Math.abs(precErr())*100) : null, demo:!!demo }));
+    clean:game.hits===0 && !vios, err_cm: precDef() ? Math.round(Math.abs(precErr())*100) : null, demo:!!demo,
+    attempt_id:!demo && anDrive ? anDrive.props.attempt_id : null }));
+  anDrive=null;
   if(demo) stopDemo();
   game.prog = precDef()
     ? progAdd(level.def.name, game.t, game.hits, precErr(), opt.refs===0)

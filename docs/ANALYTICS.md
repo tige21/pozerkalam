@@ -70,6 +70,8 @@ ch "SELECT querystring, country, detected_client_signals, detected_header_heuris
 |---|---|---|---|
 | `app_open` | загрузка страницы, раз | `platform` (web, pwa, vk, tg, ya), `framed`, `mob`, `lang`, `runs`, `build`, `account`, `provider`, `utm_*`, `source` | — |
 | `level_start` | «Поехали», «Играть» в главном меню, выбор уровня, «Следующий», цифра, «Заново», «отработать» из протокола, вход в практику | `li`, `kind`, `via` (start, play, pick, next, digit, again, train, practice, learn), `exam_mode`, `mode` (`practice` — практика городского урока), `variant` | `level-start` |
+| `first_move` | скорость игрока впервые выше 0,5 м/с по модулю | `li`, `kind`, `via`, `attempt_id`, режим, если задан | — |
+| `first_step_done` | на уровне 1 машина впервые проехала вперёд за границу начальной фазы у голубой линии | те же свойства | — |
 | `level_win` | зачёт | `li`, `kind`, `t`, `hits`, `vios` (нарушения на городском уроке), `clean` (без касаний и нарушений), `err_cm` (дриллы), `demo` | `win` |
 | `practice_pass` / `practice_fail` | конец практики городского урока | `li`, `kind`, `variant`, `score`, `code` (последнее нарушение) | `practice_pass` / `practice_fail` |
 | `level_fail` | провал попытки на строгих уровнях | `li`, `kind`, `code` | `level-fail` |
@@ -103,6 +105,12 @@ ch "SELECT querystring, country, detected_client_signals, detected_header_heuris
 Основная: `app_open → level_start → level_win`. Rybbit требует, чтобы каждый шаг воронки был
 строго позже предыдущего с точностью до секунды (spark, `getFunnel.ts`) — события одного
 нажатия цепочку рвут; у этой воронки шаги разделены ездой.
+
+Первый заезд: `level_start → first_move → first_step_done → level_win`. Сопоставляй события по
+`attempt_id` внутри сайта. Он создаётся при старте попытки и меняется после «Заново».
+`first_step_done` относится только к уровню 1. Для уровня 7, с которого начинает «Играть»
+в чистом профиле, сравнивай старт, движение и зачёт. Служебная загрузка и демонстрация
+не отправляют новые события движения и шага.
 
 Еженедельно:
 1. `app_open` по `platform` и `source` — откуда приходят.

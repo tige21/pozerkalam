@@ -150,6 +150,48 @@ const rbEvents = (page, name) => page.evaluate(n => (window.__rb || []).filter(e
 }
 
 {
+  const { ctx, page } = await openGame();
+  const result = await page.evaluate(() => {
+    const drive = () => {
+      input.back=true;
+      selectGear('D');
+      input.back=false;
+      input.fwd=true;
+      for(let i=0; i<120 && bodyPos().v<-5.8; i++) simTick(0.1);
+      input.fwd=false;
+      for(let i=0; i<5; i++) simTick(0.1);
+    };
+    const milestones = () => window.__rb.filter(e => e[0]==='event' && ['level_start','first_move','first_step_done','level_win'].includes(e[1]));
+    hideOv();
+    drive();
+    const before=milestones().length;
+    openLevel(0,'pick');
+    drive();
+    win();
+    const first=milestones();
+    pressKey('KeyR');
+    drive();
+    const retry=milestones().slice(first.length);
+    loadLevel(0);
+    hideOv();
+    drive();
+    startDemo();
+    for(let i=0; i<160 && demo; i++) simTick(0.1);
+    return {before,first,retry,extra:milestones().slice(first.length+retry.length)};
+  });
+  const names = events => events.map(e => e[1]).join(',');
+  const id = result.first[0]?.[2].attempt_id;
+  check('движение и первый шаг один раз за попытку, демонстрация и загрузка молчат (@an-first-drive)',
+    result.before===0 && !!id && names(result.first)==='level_start,first_move,first_step_done,level_win'
+      && result.first.every(e => e[2].attempt_id===id && e[2].li===1)
+      && names(result.retry)==='level_start,first_move,first_step_done'
+      && result.retry[0][2].attempt_id!==id && result.retry[0][2].via==='again'
+      && result.extra.every(e => e[1]==='level_win' && e[2].demo===1 && !e[2].attempt_id),
+    JSON.stringify(result));
+  await ctx.close();
+}
+
+{
   const { ctx, page, errors } = await openGame({ rybbit: false });
   await page.evaluate(() => { doAct('start'); showLevelPick(); document.querySelector('.lvcard[data-lvl="3"]').click(); });
   const st = await page.evaluate(() => ({ rb: typeof window.rybbit, buf: AN_BUF.length, rbOn: AN_RB }));

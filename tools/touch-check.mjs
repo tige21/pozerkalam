@@ -151,6 +151,42 @@ for (const [W, H] of sizes) {
 check('телефон в портрете: название, что это и просьба повернуть, кнопка «Во весь экран» в кадре; в альбомной экрана нет (@app-portrait-start)',
   port.length === 0, port.join(' | '));
 
+const firstDriveBad = [];
+for (const [width, height] of sizes) {
+  const first = await browser.newPage({ viewport: { width, height }, hasTouch: true, isMobile: true });
+  try {
+    await first.goto(url);
+    await first.locator('.mm-play').tap({ timeout: 3000 });
+    await first.waitForFunction(() => document.querySelector('#coach .cm')?.textContent==='Зажми и держи тормоз', null, { timeout: 3000 });
+    const ready = await first.evaluate(() => {
+      const coach = document.querySelector('#coach');
+      const rect = coach.getBoundingClientRect();
+      const controls = ['[data-hold="back"]', '[data-hold="fwd"]', '#tgear [data-gear="D"]'];
+      return !paused && parseFloat(getComputedStyle(coach).fontSize)>=13 && controls.every(selector => {
+        const target = document.querySelector(selector);
+        const r = target.getBoundingClientRect();
+        const overlaps = rect.left<r.right && rect.right>r.left && rect.top<r.bottom && rect.bottom>r.top;
+        return !overlaps && target.contains(document.elementFromPoint(r.x+r.width/2, r.y+r.height/2));
+      });
+    });
+    if (!ready) throw new Error('карточка мелкая, игра на паузе или кнопки перекрыты');
+    const brake = first.locator('[data-hold="back"]');
+    await brake.dispatchEvent('pointerdown', { pointerId: 10, pointerType: 'touch' });
+    await first.waitForFunction(() => document.querySelector('#coach .cm')?.textContent==='Держи тормоз и нажми D', null, { timeout: 3000 });
+    await first.locator('#tgear [data-gear="D"]').tap({ timeout: 3000 });
+    await first.waitForFunction(() => document.querySelector('#coach .cm')?.textContent==='Отпусти тормоз — машина поедет', null, { timeout: 3000 });
+    await brake.dispatchEvent('pointerup', { pointerId: 10, pointerType: 'touch' });
+    await first.waitForFunction(() => game.moved && !tut && localStorage.getItem('trainer_drive')==='1'
+      && document.querySelector('#coach .cm')?.textContent.includes('к карману'), null, { timeout: 1500 });
+  } catch (e) {
+    firstDriveBad.push(width+'×'+height+': '+e.message);
+  } finally {
+    await first.close();
+  }
+}
+check('первый заезд на телефоне: подсказки ведут до движения (@app-mobile-first-drive)',
+  firstDriveBad.length === 0, firstDriveBad.join(' | '));
+
 check('в консоли нет ошибок', errors.length === 0, errors.join(' | '));
 
 const failed = results.filter(r => !r.ok);
