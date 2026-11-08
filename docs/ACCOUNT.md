@@ -99,9 +99,33 @@ pozerkalam-account.service — server/account.py (Python 3.11 stdlib + SQLite)
 
 ## Покупки и пейволл
 
-- `PAYWALL = {product:'course', levels:[]}` в `index.html` — список платных уровней пуст,
-  его заполнит решение по M7 (`docs/monetization-m7.md`);
-- `PAY_ON = false` — кнопки «Купить» нет, пока не подключён провайдер;
+### Защищённая веб-сборка (#413)
+
+Публичный HTML содержит уровни 1–10 и карточки остальных уровней. Определения, варианты
+практики и демонстрации платных уровней хранятся в версионированных файлах на основном
+сервере вне webroot. `GET /api/v1/premium/levels/<BUILD>` требует Bearer и действующее право
+`premium`. Ответ `Cache-Control: no-store` идёт мимо service worker. Браузер исполняет только
+содержимое с хэшем, разрешённым в CSP этой сборки. Для загрузки платного уровня нужна сеть.
+
+Перенос старого доступа фиксируется один раз. Команда читает текущий серверный прогресс
+в транзакции и выдаёт постоянный доступ аккаунтам с зачётом встроенного уровня 11+.
+Предпросмотр показывает число подходящих аккаунтов. `--apply` фиксирует фактический момент
+отсечки, а повторный запуск сохраняет уже принятый результат.
+
+```bash
+pz-account grandfather /opt/pozerkalam-account/premium/<BUILD>.json
+pz-account grandfather /opt/pozerkalam-account/premium/<BUILD>.json --apply
+```
+
+Гость обращается в поддержку после входа. После проверки можно выдать доступ вручную
+через `pz-account grant <account> premium --ref legacy-support`. Локальный прогресс
+и поздняя синхронизация сами право не выдают. История публичного репозитория и ранее
+скачанные сборки по-прежнему содержат старые упражнения.
+
+### Покупка
+
+- `PAYWALL` в `index.html` задаёт продукт `premium` и начало платного диапазона с уровня 11;
+- `PAY_ON = false` скрывает публичную покупку, серверный режим `owner` открывает её владельцу;
 - замок в `openLevel` (входы игрока), не в `loadLevel` (на нём гейты); первый уровень и свои
   площадки не закрываются;
 - покупки сервиса — таблица `entitlements`, `/me` отдаёт активные; клиентский замок защищает
@@ -128,16 +152,24 @@ pozerkalam-account.service — server/account.py (Python 3.11 stdlib + SQLite)
 
 | Запрос | Ответ |
 |---|---|
-| `POST /pay/create` (Bearer) `{"product":"premium"}` | `200 {"url","inv","test"}`; `401 auth`; `400 product`; `503 pay-off` (нет ключей текущего режима); `409 owned` (премиум уже есть) |
+| `POST /pay/create` (Bearer) `{"product":"premium"}` | `200 {"url","inv","test"}`; `401 auth`; `400 product`; `403 pay-owner-only`; `503 pay-off` (закрыто или нет ключей); `503 pay-test-only`; `409 owned` (премиум уже есть) |
 | `GET /pay/status?inv=N` (Bearer) | `200 {"status":"pending"\|"paid"}` по своему платежу, иначе `404` |
 | `POST /pay/robokassa/result` (форма, GET тоже) | `OK<InvId>` text/plain; `400 bad sign` / `bad sum` / `bad mode`; `500 retry later` (не удалось перечитать состояние) |
 | `POST /promo/redeem` (Bearer) `{"code"}` | `200 {"ok":true,"product","tag","entitlements"}`; уже есть премиум — `200 {"ok":true,"already":true,...}` без траты использования; `400 promo-format`; `404 promo-unknown` (нет или выключен); `410 promo-expired`; `410 promo-exhausted`; `429 rate` |
 | `GET /health` | дополнительно `pay`, `pay_test` |
 
-Таблицы (миграция 3): `payments` (`inv_id` — он же InvId Robokassa, сумма в копейках, статус
+Таблицы платежей (миграция 3): `payments` (`inv_id` — он же InvId Robokassa, сумма в копейках, статус
 `pending/paid/canceled`, флаг `test`), `promo` (`max_uses`, `uses`, `expires_at`, `tag`,
 `disabled_at`), `promo_redemptions` (код + аккаунт, один раз). Ключей на аккаунт нет: оплаченное и
 погашенное переживает удаление аккаунта (платёж обезличивается, как покупка).
+
+**Создание счетов (#414).** `PAY_CREATE_MODE` задаёт допуск к `POST /pay/create`.
+По умолчанию `closed`. В режиме `owner` счёт могут создать только аккаунты из `PAY_OWNER_ACCOUNTS`
+(ID через запятую). В режиме `public` счёт может создать любой вошедший аккаунт. Ограничение
+`ROBOKASSA_TEST_ACCOUNTS` продолжает действовать в тестовом режиме. Сервис возвращает
+`account.payment_access` при входе, обновлении сессии и в `GET /me`. При отказе обычному аккаунту
+в режиме владельца API отвечает 403, при закрытых продажах — 503. Приём уведомлений,
+`GET /pay/status` и доступ к выданным правам работают и при `closed`.
 
 **Тест и бой.** `ROBOKASSA_IS_TEST=true|false` выбирает пару паролей: `ROBOKASSA_TEST_PASSWORD_1/2`
 или `ROBOKASSA_PASSWORD_1/2`. В тесте в адрес оплаты добавляется `IsTest=1`, а уведомление

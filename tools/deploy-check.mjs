@@ -58,15 +58,24 @@ const mv = at('mv -f .next/*');
 check('страница игры на проде заменяется атомарно: .next и mv, не scp поверх (@dist-game-upload-atomic)',
   nextUp > 0 && mv > nextUp && at('"$HOST:$DOCROOT/play/"') < 0, JSON.stringify({ '.next': nextUp, mv }));
 
+const privateFile = at('scpr build/premium/levels.js "$HOST:/opt/pozerkalam-account/premium/');
+const cutoff = at('sshr "pz-account grandfather /opt/pozerkalam-account/premium/');
+check('платные данные и отсечка готовы на основном сервере до публикации HTML (@dist-premium-before-files)',
+  order(privateFile, cutoff, pReload, pFiles) && at('mirror_scp build/premium/') < 0,
+  JSON.stringify({ privateFile, cutoff, pReload, pFiles }));
+
 /* хэш скрипта считается так же, как браузер: sha256 тела между тегами, base64 */
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pz-csp-'));
 const body = 'window.A = "ё";\n';
+const privateScript = 'installPremiumLevels([], {});';
+const digest = crypto.createHash('sha256').update(privateScript).digest('base64');
 fs.writeFileSync(path.join(tmp, 'a.html'), `<script>${body}</script><script src="/x.js"></script>`
-  + '<script type="application/ld+json">{"a":1}</script>');
+  + '<script type="application/ld+json">{"a":1}</script>'
+  + '<meta name="pz-premium-sha256" content="' + digest + '">');
 fs.writeFileSync(path.join(tmp, 'b.html'), `<script>${body}</script><script>b()</script>`);
 const got = execFileSync('python3', [path.join(ROOT, 'tools', 'csp-hashes.py'), path.join(tmp, 'a.html'),
   path.join(tmp, 'b.html'), path.join(tmp, 'нет.html')], { encoding: 'utf8' }).trim().split(/\s+/);
-const want = [body, 'b()'].map(s => "'sha256-" + crypto.createHash('sha256').update(s, 'utf8').digest('base64') + "'");
+const want = [privateScript, body, 'b()'].map(s => "'sha256-" + crypto.createHash('sha256').update(s, 'utf8').digest('base64') + "'");
 /* фото профиля: браузер грузит его по ссылке, которую пропустил сервис (AVATAR_HOSTS / AVATAR_EXACT в account.py)
    и игра (AV_RE в index.html). Хост, которого нет в img-src, CSP молча режет — в кружке осталась бы буква */
 {

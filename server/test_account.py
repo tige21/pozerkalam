@@ -8,6 +8,7 @@ challenge из адреса авторизации и секрет клиент�
 
 import argparse
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import io
 import json
@@ -155,7 +156,7 @@ class AccountTest(unittest.TestCase):
                'ROBOKASSA_MERCHANT_LOGIN': 'pozerkalam', 'ROBOKASSA_IS_TEST': 'true',
                'ROBOKASSA_TEST_PASSWORD_1': 'tp1-secret', 'ROBOKASSA_TEST_PASSWORD_2': 'tp2-secret',
                'ROBOKASSA_PASSWORD_1': 'lp1-secret', 'ROBOKASSA_PASSWORD_2': 'lp2-secret',
-               'ROBOKASSA_SERVICE_URL': self.rk.base}
+               'ROBOKASSA_SERVICE_URL': self.rk.base, 'PAY_CREATE_MODE': 'public'}
         self.env = env
         self.rk.state, self.rk.result = 100, 0
         self.rk.calls.clear()
@@ -594,6 +595,49 @@ class AccountTest(unittest.TestCase):
         q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(self.create(tok)['url']).query))
         self.assertEqual(q['SuccessUrl2'], 'https://pozerkalam.space/play/')
 
+    def test_live_invoice_access_modes(self):
+        self.go_live()
+        owner, other = self.login('vk'), self.login('yandex')
+        owner_id, tok = owner['account']['id'], owner['access']
+        other_tok = other['access']
+        self.app.cfg = account.Config({**self.env, 'ROBOKASSA_IS_TEST': 'false',
+                                       'PAY_CREATE_MODE': 'owner', 'PAY_OWNER_ACCOUNTS': owner_id})
+        path = '/pay/create?paytest=1'
+        product = {'product': 'premium'}
+        self.assertEqual(self.call('POST', path, product)[:2], (401, {'error': 'auth'}))
+        self.assertEqual(self.call('POST', path, product, other_tok)[:2], (403, {'error': 'pay-owner-only'}))
+        self.assertEqual(self.app.store.conn().execute('SELECT COUNT(*) FROM payments').fetchone()[0], 0)
+        self.assertEqual(self.call('GET', '/me', token=other_tok)[1]['account']['payment_access'], 'closed')
+        self.assertEqual(self.call('GET', '/me', token=tok)[1]['account']['payment_access'], 'owner')
+        refresh = self.call('POST', '/auth/refresh', {'refresh': owner['refresh']})[1]
+        self.assertEqual(refresh['account']['payment_access'], 'owner')
+        invoice = self.create(tok)
+        self.assertFalse(invoice['test'])
+        inv = invoice['inv']
+        self.app.cfg.pay_create_mode = 'closed'
+        self.assertEqual(self.call('POST', path, product, tok)[:2], (503, {'error': 'pay-off'}))
+        self.assertEqual(self.call('GET', '/pay/status?inv=%d' % inv, token=tok)[:2], (200, {'status': 'pending'}))
+        self.assertEqual(self.notify(inv, secret='lp2-secret')[:2], (200, 'OK%d' % inv))
+        self.assertEqual(self.notify(inv, secret='lp2-secret')[:2], (200, 'OK%d' % inv))
+        self.assertEqual(self.call('GET', '/pay/status?inv=%d' % inv, token=tok)[:2], (200, {'status': 'paid'}))
+        self.assertEqual(len(self.premium(tok)), 1)
+        self.assertEqual(self.call('GET', '/me', token=tok)[1]['account']['payment_access'], 'closed')
+        self.app.cfg.pay_create_mode = 'public'
+        self.assertEqual(self.call('GET', '/me', token=other_tok)[1]['account']['payment_access'], 'public')
+        self.assertFalse(self.create(other_tok)['test'])
+
+    def test_invoice_creation_defaults_closed(self):
+        tok = self.login()['access']
+        base_env = {**self.env, 'ROBOKASSA_IS_TEST': 'false'}
+        base_env.pop('PAY_CREATE_MODE', None)
+        for setting in ({}, {'PAY_CREATE_MODE': ''}, {'PAY_CREATE_MODE': 'typo'}, {'PAY_CREATE_MODE': 'owner'}):
+            with self.subTest(setting=setting):
+                self.app.cfg = account.Config({**base_env, **setting})
+                self.assertTrue(self.app.cfg.pay_on)
+                self.assertEqual(self.app.cfg.pay_create_mode, 'closed')
+                self.assertEqual(self.call('POST', '/pay/create', {'product': 'premium'}, tok)[:2],
+                                 (503, {'error': 'pay-off'}))
+
     def test_pay_create_guards(self):
         self.assertEqual(self.call('POST', '/pay/create', {'product': 'premium'})[:2], (401, {'error': 'auth'}))
         tok = self.login()['access']
@@ -610,6 +654,33 @@ class AccountTest(unittest.TestCase):
         account.cli_grant(self.app, argparse.Namespace(account=acc, product='premium', days=0, ref='t'))
         self.assertEqual(self.call('POST', '/pay/create', {'product': 'premium'}, tok)[:2], (409, {'error': 'owned'}))
         self.assertEqual(self.app.store.conn().execute('SELECT COUNT(*) FROM payments').fetchone()[0], 0)
+
+    def test_parallel_pay_create_reuses_one_invoice(self):
+        tok = self.login()['access']
+        ready = threading.Barrier(2, timeout=3)
+        original_tx = self.app.store.tx
+
+        def synchronized_tx():
+            ready.wait()
+            return original_tx()
+
+        self.app.store.tx = synchronized_tx
+        try:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                requests = [pool.submit(self.create, tok) for _ in range(2)]
+                first, second = [request.result() for request in requests]
+        finally:
+            self.app.store.tx = original_tx
+        self.assertEqual(first['inv'], second['inv'])
+        self.assertEqual(first['url'], second['url'])
+        rows = self.app.store.conn().execute('SELECT inv_id, status FROM payments').fetchall()
+        self.assertEqual([tuple(row) for row in rows], [(first['inv'], 'pending')])
+
+    def test_pay_create_reuses_original_amount(self):
+        tok = self.login()['access']
+        first = self.create(tok)
+        self.app.cfg.premium_price += 100
+        self.assertEqual(self.create(tok), first)
 
     def test_pay_create_retries_taken_inv_id(self):
         tok = self.login()['access']
@@ -793,6 +864,76 @@ class AccountTest(unittest.TestCase):
 
     def redeem(self, tok, code, ip='10.0.0.1'):
         return self.call('POST', '/promo/redeem', {'code': code}, tok, ip=ip)
+
+    def test_premium_bundle_checks_active_live_entitlement(self):
+        self.go_live()
+        signed = self.login()
+        tok, acc = signed['access'], signed['account']['id']
+        build = '2' * 16
+        path = '/api/v1/premium/levels/' + build
+        self.app.cfg.premium_bundle_dir = self.tmp.name
+        content = 'installPremiumLevels([], {});\n'
+        with open(os.path.join(self.tmp.name, build + '.js'), 'w', encoding='utf-8') as f:
+            f.write(content)
+        self.assertEqual(self.call('GET', path)[:2], (401, {'error': 'auth'}))
+        self.assertEqual(self.call('GET', path, token=tok)[:2], (403, {'error': 'premium-required'}))
+
+        self.app.cfg.pay_create_mode = 'closed'
+        account.cli_grant(self.app, argparse.Namespace(account=acc, product='premium', days=0, ref='protected'))
+        st, body, headers = self.call('GET', path, token=tok)
+        self.assertEqual((st, body, headers.get('Cache-Control')), (200, {'script': content}, 'no-store'))
+        self.assertEqual(self.call('GET', path + '.js', token=tok)[0], 404)
+        self.assertEqual(self.call('GET', '/api/v1/premium/levels/' + '3' * 16, token=tok)[0], 404)
+        self.app.store.conn().execute("UPDATE entitlements SET expires_at=? WHERE account_id=?", (account.now(), acc))
+        self.assertEqual(self.call('GET', path, token=tok)[0], 403)
+        account.cli_grant(self.app, argparse.Namespace(account=acc, product='premium', days=0, ref='protected'))
+        account.cli_revoke(self.app, argparse.Namespace(account=acc, product='premium'))
+        self.assertEqual(self.call('GET', path, token=tok)[0], 403)
+
+    def test_premium_bundle_denies_test_only_grant_in_live_mode(self):
+        self.app.cfg.premium_bundle_dir = self.tmp.name
+        tok = self.login()['access']
+        inv = self.create(tok)['inv']
+        self.assertEqual(self.notify(inv)[:2], (200, 'OK%d' % inv))
+        build = '2' * 16
+        with open(os.path.join(self.tmp.name, build + '.js'), 'w', encoding='utf-8') as f:
+            f.write('installPremiumLevels([], {});')
+        path = '/api/v1/premium/levels/' + build
+        self.assertEqual(self.call('GET', path, token=tok)[0], 200)
+        self.go_live()
+        self.assertEqual(self.call('GET', path, token=tok)[0], 403)
+
+    def test_grandfather_captures_server_progress_once(self):
+        vk, ya = self.login('vk'), self.login('yandex')
+        a, b = vk['access'], ya['access']
+        names = ['11 · Карман', '12 · Разъезд']
+        levels = os.path.join(self.tmp.name, 'level-names.json')
+        with open(levels, 'w', encoding='utf-8') as f:
+            json.dump(names, f)
+        args = argparse.Namespace(levels=levels, apply=False, check=False)
+        self.assertEqual(self.call('PUT', '/progress', {'data': {names[0]: {'n': 1}}}, a)[0], 200)
+        self.assertEqual(self.call('PUT', '/progress', {'data': {
+            names[0]: {'n': 0, 'practice': {'n': 1, 'passed': 0}},
+            '10 · Тупик': {'n': 1}, '11 · Чужой уровень': {'n': 2},
+        }}, b)[0], 200)
+        args.check = True
+        with self.assertRaisesRegex(SystemExit, 'ещё не зафиксирована'):
+            account.cli_grandfather(self.app, args)
+        args.check = False
+        account.cli_grandfather(self.app, args)
+        self.assertEqual(self.premium(a), [])
+        args.apply = True
+        account.cli_grandfather(self.app, args)
+        self.assertEqual(len(self.premium(a)), 1)
+        self.assertEqual(self.premium(b), [])
+        self.assertEqual(self.call('PUT', '/progress', {'data': {names[0]: {'n': 2}}}, b)[0], 200)
+        account.cli_grandfather(self.app, args)
+        self.assertEqual(self.premium(b), [])
+        args.apply, args.check = False, True
+        account.cli_grandfather(self.app, args)
+        c = self.app.store.conn()
+        self.assertEqual(c.execute('SELECT grants FROM premium_cutoff').fetchone()[0], 1)
+        self.assertEqual(c.execute("SELECT COUNT(*) FROM entitlements WHERE source='grandfather'").fetchone()[0], 1)
 
     def test_promo_errors(self):
         tok = self.login()['access']
