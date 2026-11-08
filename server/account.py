@@ -764,36 +764,36 @@ class App:
         if cfg.pay_test and acc_id not in cfg.pay_test_accounts:
             log.warning('pay create: тестовый режим, acct=%s не в списке', mask(acc_id))
             return 503, {'error': 'pay-test-only'}
-        # свежий неоплаченный счёт отдаётся снова: второй счёт поверх первого — путь к двойному списанию
-        fresh = self.store.conn().execute(
-            "SELECT inv_id FROM payments WHERE account_id=? AND product=? AND status='pending' AND test=? "
-            "AND created_at>? ORDER BY created_at DESC LIMIT 1",
-            (acc_id, product, int(cfg.pay_test), now() - PAY_REUSE_S)).fetchone()
-        if fresh:
-            if any(e['product'] == PREMIUM for e in self.entitlements(self.store.conn(), acc_id)):
+        with self.store.tx() as c:
+            if any(e['product'] == PREMIUM for e in self.entitlements(c, acc_id)):
                 return 409, {'error': 'owned'}
-            inv = fresh['inv_id']
+            created_at = now()
+            # Поиск и создание под одной блокировкой, иначе два запроса успеют выписать разные счета.
+            fresh = c.execute(
+                "SELECT inv_id, amount FROM payments WHERE account_id=? AND product=? AND status='pending' AND test=? "
+                "AND created_at>? ORDER BY created_at DESC, inv_id DESC LIMIT 1",
+                (acc_id, product, int(cfg.pay_test), created_at - PAY_REUSE_S)).fetchone()
+            if fresh:
+                inv, amount = fresh['inv_id'], fresh['amount']
+            else:
+                amount = cfg.premium_price
+                for _ in range(RK_INV_TRIES):
+                    inv = secrets.randbelow(RK_INV_MAX) + 1
+                    inserted = c.execute(
+                        'INSERT INTO payments(inv_id, account_id, product, amount, test, created_at) '
+                        'VALUES (?,?,?,?,?,?) ON CONFLICT(inv_id) DO NOTHING',
+                        (inv, acc_id, product, amount, int(cfg.pay_test), created_at)).rowcount
+                    if inserted:
+                        break
+                    log.warning('pay create: InvId %d занят, новая попытка', inv)
+                else:
+                    log.error('pay create: не нашли свободный InvId за %d попыток', RK_INV_TRIES)
+                    return 500, {'error': 'internal'}
+        if fresh:
             log.info('pay create: acct=%s тот же счёт inv=%d', mask(acc_id), inv)
-            return 200, {'url': robokassa_pay_url(cfg, inv, cfg.premium_price, cfg.premium_title, product),
-                         'inv': inv, 'test': cfg.pay_test}
-        inv = None
-        for _ in range(RK_INV_TRIES):
-            cand = secrets.randbelow(RK_INV_MAX) + 1
-            try:
-                with self.store.tx() as c:
-                    if any(e['product'] == PREMIUM for e in self.entitlements(c, acc_id)):
-                        return 409, {'error': 'owned'}
-                    c.execute('INSERT INTO payments(inv_id, account_id, product, amount, test, created_at) '
-                              'VALUES (?,?,?,?,?,?)', (cand, acc_id, product, cfg.premium_price, int(cfg.pay_test), now()))
-                inv = cand
-                break
-            except sqlite3.IntegrityError:
-                log.warning('pay create: InvId %d занят, новая попытка', cand)
-        if inv is None:
-            log.error('pay create: не нашли свободный InvId за %d попыток', RK_INV_TRIES)
-            return 500, {'error': 'internal'}
-        url = robokassa_pay_url(cfg, inv, cfg.premium_price, cfg.premium_title, product)
-        log.info('pay create: acct=%s inv=%d сумма %s test=%s', mask(acc_id), inv, money(cfg.premium_price), cfg.pay_test)
+        else:
+            log.info('pay create: acct=%s inv=%d сумма %s test=%s', mask(acc_id), inv, money(amount), cfg.pay_test)
+        url = robokassa_pay_url(cfg, inv, amount, cfg.premium_title, product)
         return 200, {'url': url, 'inv': inv, 'test': cfg.pay_test}
 
     def pay_status(self, acc_id, inv):

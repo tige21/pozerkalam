@@ -8,6 +8,7 @@ challenge из адреса авторизации и секрет клиент�
 
 import argparse
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import io
 import json
@@ -610,6 +611,33 @@ class AccountTest(unittest.TestCase):
         account.cli_grant(self.app, argparse.Namespace(account=acc, product='premium', days=0, ref='t'))
         self.assertEqual(self.call('POST', '/pay/create', {'product': 'premium'}, tok)[:2], (409, {'error': 'owned'}))
         self.assertEqual(self.app.store.conn().execute('SELECT COUNT(*) FROM payments').fetchone()[0], 0)
+
+    def test_parallel_pay_create_reuses_one_invoice(self):
+        tok = self.login()['access']
+        ready = threading.Barrier(2, timeout=3)
+        original_tx = self.app.store.tx
+
+        def synchronized_tx():
+            ready.wait()
+            return original_tx()
+
+        self.app.store.tx = synchronized_tx
+        try:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                requests = [pool.submit(self.create, tok) for _ in range(2)]
+                first, second = [request.result() for request in requests]
+        finally:
+            self.app.store.tx = original_tx
+        self.assertEqual(first['inv'], second['inv'])
+        self.assertEqual(first['url'], second['url'])
+        rows = self.app.store.conn().execute('SELECT inv_id, status FROM payments').fetchall()
+        self.assertEqual([tuple(row) for row in rows], [(first['inv'], 'pending')])
+
+    def test_pay_create_reuses_original_amount(self):
+        tok = self.login()['access']
+        first = self.create(tok)
+        self.app.cfg.premium_price += 100
+        self.assertEqual(self.create(tok), first)
 
     def test_pay_create_retries_taken_inv_id(self):
         tok = self.login()['access']
