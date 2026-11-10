@@ -16083,6 +16083,13 @@ function zoomBy(k){
   else opt.dist=clamp(opt.dist+k*0.025,3.4,22);
 }
 canvas.addEventListener('contextmenu',e=>{ if(editor) e.preventDefault(); });
+if(anPlatform()==='web' && window.webkit?.messageHandlers?.performAction &&
+   typeof window.TelegramWebviewProxy?.postEvent==='function'){
+  /* Браузер Telegram на iOS обрабатывает сворачивание поверх WebView, вне touch-action. */
+  canvas.addEventListener('touchmove',()=>{
+    window.TelegramWebviewProxy.postEvent('cancellingTouch','{}');
+  },{passive:true});
+}
 canvas.addEventListener('pointerdown',e=>{
   if(showroomOn()){ e.preventDefault(); showroomPtr(e,'down'); return; }
   if(editor){ e.preventDefault(); try{ canvas.setPointerCapture(e.pointerId); }catch(err){}
