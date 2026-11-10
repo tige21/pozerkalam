@@ -6,7 +6,7 @@
 «авто» — исполняет `tools/gherkin-run.mjs`, человеку нужен как источник эталонных чисел.
 «руками» — закрыто инструментом в браузере, перед деплоем стоит пройти глазами.
 
-<!-- codes: e39042b54c49 -->
+<!-- codes: 9b1ea21067b9 -->
 
 ## acct
 
@@ -338,7 +338,7 @@
 
 ### Покупка ведёт на форму оплаты и открывает уровень после возврата
 
-`acct-premium-buy` · руками · `specs/features/acct/vhod.feature:217`
+`acct-premium-buy` · руками · `specs/features/acct/vhod.feature:223`
 
 Ссылка: доска #229; план .ai-factory/plans/account-auth-analytics-paywall.md; флоу входа —
 
@@ -391,6 +391,16 @@
 - **Когда** владелец входит в аккаунт с правом пробной покупки
 - **Тогда** во вкладке «Премиум» есть кнопка покупки, даже если уровни уже открыты
 
+### Публичный режим открывает оплату в защищённой сборке
+
+`acct-premium-public-checkout` · руками · `specs/features/acct/vhod.feature:217`
+
+Ссылка: доска #229; план .ai-factory/plans/account-auth-analytics-paywall.md; флоу входа —
+
+- **Дано** игрок вошёл, Премиум ещё закрыт, а сервис открыл публичные продажи
+- **Когда** игрок нажимает «Купить за 149 ₽»
+- **Тогда** защищённая сборка отправляет один запрос на оплату и открывает форму Robokassa
+
 ### Сайт выдаёт платные уровни после проверки права
 
 `acct-premium-server-content` · руками · `specs/features/acct/vhod.feature:201`
@@ -418,7 +428,7 @@
 
 ### Промокод из поста открывает Премиум
 
-`acct-promo-redeem` · руками · `specs/features/acct/vhod.feature:225`
+`acct-promo-redeem` · руками · `specs/features/acct/vhod.feature:231`
 
 Ссылка: доска #229; план .ai-factory/plans/account-auth-analytics-paywall.md; флоу входа —
 
