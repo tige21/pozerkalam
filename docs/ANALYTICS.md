@@ -68,8 +68,11 @@ ch "SELECT querystring, country, detected_client_signals, detected_header_heuris
 
 | Событие | Когда | Свойства | Цель Метрики |
 |---|---|---|---|
-| `app_open` | загрузка страницы, раз | `platform` (web, pwa, vk, tg, ya), `framed`, `mob`, `lang`, `runs`, `build`, `account`, `provider`, `utm_*`, `source` | — |
-| `level_start` | «Поехали», «Играть» в главном меню, выбор уровня, «Следующий», цифра, «Заново», «отработать» из протокола, вход в практику | `li`, `kind`, `via` (start, play, pick, next, digit, again, train, practice, learn), `exam_mode`, `mode` (`practice` — практика городского урока), `variant` | `level-start` |
+| `app_open` | загрузка страницы, раз | `platform` (web, pwa, vk, tg, ya), `framed`, `mob`, `lang`, `runs`, `build`, `account`, `provider`, `utm_*`, `source`, `browser_handoff` | — |
+| `rotate_view` | показ экрана поворота в обычной веб-версии | `vw`, `vh` | — |
+| `rotate_exit` | экран поворота скрыт | `reason` (`landscape` — альбомная ориентация, `touch_off` — отключено сенсорное управление), `seconds` — время с показа | — |
+| `rotate_copy` | результат нажатия «Скопировать ссылку» | `result` (`success` — Clipboard API подтвердил запись, `manual` — выделена ссылка для ручного копирования) | — |
+| `level_start` | «Поехали», «Играть» в главном меню, выбор уровня, «Следующий», цифра, «Заново», «отработать» из протокола, вход в практику | `li`, `kind`, `via` (start, play, pick, next, digit, again, train, practice, learn), `exam_mode`, `mode` (`practice` — практика городского урока), `variant`, `browser_handoff` | `level-start` |
 | `level_win` | зачёт | `li`, `kind`, `t`, `hits`, `vios` (нарушения на городском уроке), `clean` (без касаний и нарушений), `err_cm` (дриллы), `demo` | `win` |
 | `practice_pass` / `practice_fail` | конец практики городского урока | `li`, `kind`, `variant`, `score`, `code` (последнее нарушение) | `practice_pass` / `practice_fail` |
 | `level_fail` | провал попытки на строгих уровнях | `li`, `kind`, `code` | `level-fail` |
@@ -95,6 +98,18 @@ ch "SELECT querystring, country, detected_client_signals, detected_header_heuris
 **Метки кампаний:** `utm_*` из адреса и `source` — метка запуска Mini App
 (`tgWebAppStartParam`, `startapp`, `vk_ref`; от неё остаётся ведущий `[A-Za-z0-9_-]+`, как у spark).
 
+**Переход из Threads (#450):** экран поворота предлагает скопировать
+`https://pozerkalam.space/play/`. В ссылку переносятся только `utm_source`, `utm_medium`,
+`utm_campaign`, `utm_content`, `utm_term` (до 128 знаков каждый) и добавляется
+`browser_handoff=rotate`. Параметры входа, оплаты и фрагмент отбрасываются.
+`app_open` и `level_start` передают `browser_handoff` только при значении `rotate` в адресе.
+Метка показывает запуск по такой ссылке, но не доказывает, что человек сменил браузер.
+`rotate_copy` также не означает открытие браузера; `manual` не подтверждает копирование.
+
+`rotate_view` следует за `app_open`; повторный `resize` без смены видимости событий не создаёт.
+`rotate_exit` означает скрытие экрана поворота, закрытие вкладки и уход в другое приложение
+не учитывает. В Ya/VK/TG, PWA и iframe помощь и события `rotate_*` выключены.
+
 **Аккаунт:** после входа `rybbit.identify(<id аккаунта>)` и `ym(…,'setUserID')`, после выхода —
 `clearIdentity()`. Визиты одного человека с телефона и компьютера склеиваются.
 
@@ -103,6 +118,13 @@ ch "SELECT querystring, country, detected_client_signals, detected_header_heuris
 Основная: `app_open → level_start → level_win`. Rybbit требует, чтобы каждый шаг воронки был
 строго позже предыдущего с точностью до секунды (spark, `getFunnel.ts`) — события одного
 нажатия цепочку рвут; у этой воронки шаги разделены ездой.
+
+Для экрана поворота считай уникальные сессии с `rotate_view`, `rotate_exit` и `rotate_copy`
+отдельно, с разрезом по браузеру и результату копирования. `app_open` и `rotate_view` могут
+попасть в одну секунду, поэтому обычная последовательная воронка Rybbit их пропустит.
+Отдельно считай открытия и старты с `browser_handoff=rotate`.
+При смене браузера анонимный посетитель получает другую идентичность: эти группы нельзя
+склеивать в индивидуальную конверсию или складывать как число разных людей.
 
 Еженедельно:
 1. `app_open` по `platform` и `source` — откуда приходят.

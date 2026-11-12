@@ -930,6 +930,22 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -8735,6 +8751,7 @@ const AN_RB=!!document.querySelector('script[src$="/rb/script.js"]');
 /* скрипт Rybbit async: события до его загрузки копятся (до 20) и досылаются не дольше 10 с —
    контракт адаптера spark (src/core/analytics/rybbit.ts); не загрузился — блокировщик или офлайн */
 const AN_BUF=[], AN_BUF_MAX=20, AN_WAIT_MS=10000;
+const AN_UTM=['utm_source','utm_medium','utm_campaign','utm_content','utm_term'];
 let anBufT=0, anTimer=0;
 const AN_DEBUG=(()=>{ try{ return (localStorage.getItem('pz_debug')||'').indexOf('an')>=0; }catch(e){ return false; } })();
 function anProps(p){
@@ -8788,8 +8805,9 @@ function anFramed(){ try{ return window.top!==window; }catch(e){ return true; } 
    который Rybbit сам не видит (spark, attribution.ts); от метки остаётся ведущий [A-Za-z0-9_-] */
 function anSource(){
   const o={}, q=new URLSearchParams(location.search);
-  for(const k of ['utm_source','utm_medium','utm_campaign','utm_content','utm_term']){
+  for(const k of AN_UTM){
     const v=q.get(k); if(v) o[k]=v.slice(0,128); }
+  if(q.get('browser_handoff')==='rotate') o.browser_handoff='rotate';
   const h=new URLSearchParams(location.hash.replace(/^#/,''));
   const src=q.get('tgWebAppStartParam')||h.get('tgWebAppStartParam')||q.get('startapp')||q.get('vk_ref');
   const m=src && /^[A-Za-z0-9_-]+/.exec(src);
@@ -8802,6 +8820,7 @@ function anLevel(i){
 }
 function anLevelStart(via){
   const p=anLevel(game.li); p.via=via;
+  const handoff=anSource().browser_handoff; if(handoff) p.browser_handoff=handoff;
   if(level && level.def.examRoute) p.exam_mode=examTrain()?'train':'real';
   if(level && level.practice){ p.mode='practice'; p.variant=level.pvar ? level.pvar.id : null; }
   track('level_start', p);
@@ -17176,12 +17195,53 @@ function setTouch(on){
   try{ localStorage.setItem('trainer_touch', MOB?'1':'0'); }catch(e){}
   applyTouchMode(); resize();
 }
+const rotateState={ready:false,visible:false,since:0};
+function rotateHelpAllowed(){ return anPlatform()==='web' && !anFramed(); }
+function rotateUrl(){
+  const url=new URL('https://pozerkalam.space/play/'), source=anSource();
+  for(const k of AN_UTM) if(source[k]) url.searchParams.set(k,source[k]);
+  url.searchParams.set('browser_handoff','rotate');
+  return url.href;
+}
+function rotateSync(){
+  const allowed=rotateHelpAllowed(), help=$('rotBrowser'), field=$('rotLink');
+  help.hidden=!allowed;
+  if(allowed && !field.value) field.value=rotateUrl();
+  /* Первый resize идёт до app_open: показ экрана должен попасть в буфер после запуска приложения. */
+  if(!rotateState.ready) return;
+  const visible=MOB && innerHeight>innerWidth;
+  if(visible===rotateState.visible) return;
+  rotateState.visible=visible;
+  if(!allowed) return;
+  if(visible){
+    rotateState.since=performance.now();
+    track('rotate_view',{vw:innerWidth,vh:innerHeight});
+  } else track('rotate_exit',{reason:MOB?'landscape':'touch_off',seconds:+((performance.now()-rotateState.since)/1000).toFixed(1)});
+}
+function rotateCopy(){
+  const button=$('rotCopy'), field=$('rotLink'), status=$('rotStatus');
+  if(button.disabled || !rotateHelpAllowed()) return;
+  const link=rotateUrl(); field.value=link;
+  button.disabled=true; status.textContent='Копируем ссылку…';
+  const finish=(result)=>{
+    button.disabled=false;
+    if(result==='success') status.textContent='Ссылка скопирована. Открой браузер и вставь её в адресную строку.';
+    else {
+      status.textContent='Скопируй выделенную ссылку вручную и открой её в браузере.';
+      field.focus(); field.select(); field.setSelectionRange(0,field.value.length);
+    }
+    track('rotate_copy',{result});
+  };
+  try{ navigator.clipboard.writeText(link).then(()=>finish('success'),()=>finish('manual')); }
+  catch(e){ finish('manual'); }
+}
 function applyTouchMode(){
   document.body.classList.toggle('touch', MOB);
   document.body.classList.toggle('portrait', MOB && window.innerHeight>window.innerWidth);
   /* «Во весь экран» поворачивает экран сам (lock в toggleFull) — там, где браузер это умеет: Android да,
      iPhone нет, там кнопки нет и остаётся просьба повернуть */
   const rf=$('rotFull'); if(rf) rf.hidden=!fullAvail() || isFull();
+  rotateSync();
 }
 function bindHold(el, act){
   const on=(e)=>{ e.preventDefault(); initAudio(); if(paused) return;
@@ -17422,6 +17482,7 @@ $('gearVal').addEventListener('click',e=>{
 });
 $('restartBtn').addEventListener('click',()=>{ initAudio(); pressKey('KeyR'); });
 $('rotFull').addEventListener('click',()=>{ initAudio(); toggleFull(); });
+$('rotCopy').addEventListener('click',rotateCopy);
 $('demoBtn').addEventListener('click',()=>{ initAudio(); if(demo) stopDemo(); else startDemo(); });
 $('fbBtn').addEventListener('click',()=>{ initAudio(); doAct('feedback:game'); });
 $('trafBtn').addEventListener('click',()=>{ initAudio(); cycleTraffic(); });
@@ -17612,6 +17673,7 @@ requestAnimationFrame(frame);
 track('app_open', Object.assign({ platform:anPlatform(), framed:anFramed(), mob:MOB,
   lang:(navigator.language||'').slice(0,8), runs:runsCnt, build:window.BUILD||'dev',
   account: AUTH_ON ? (acct?1:0) : null, provider: acct ? acct.provider : null }, anSource()));
+rotateState.ready=true; rotateSync();
 if(acct) anIdentify(acct.id);
 authBoot().then(()=>{
   payBoot();

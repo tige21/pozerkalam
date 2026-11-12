@@ -79,8 +79,9 @@ const check = (name, ok, detail) => { results.push({ name, ok: !!ok, detail }); 
 const browser = await chromium.launch({ executablePath: findChrome(), headless: true });
 
 /* одна страница = один сценарий: свои вставки, свой мок API, своя задержка скрипта трекера */
-async function openGame({ rybbit = true, auth = null, rbDelay = 0, api = null, storage = {}, files = {}, premium = false, protectedBuild = null } = {}) {
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+async function openGame({ rybbit = true, auth = null, rbDelay = 0, api = null, storage = {}, files = {}, premium = false, protectedBuild = null,
+  viewport = { width: 1280, height: 720 }, touch = false, search = '', init = null } = {}) {
+  const ctx = await browser.newContext({ viewport, hasTouch: touch, isMobile: touch });
   const page = await ctx.newPage();
   const errors = [], apiCalls = [];
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
@@ -124,11 +125,124 @@ async function openGame({ rybbit = true, auth = null, rbDelay = 0, api = null, s
     localStorage.setItem('trainer_runs', '9'); localStorage.setItem('trainer_touch', '0');
     for (const k in st) localStorage.setItem(k, st[k]);
   }, storage);
-  await page.goto(PAGE);
+  if (init) await page.addInitScript(init);
+  await page.goto(PAGE + search);
   await page.waitForTimeout(300);
   return { ctx, page, errors, apiCalls };
 }
 const rbEvents = (page, name) => page.evaluate(n => (window.__rb || []).filter(e => e[0] === 'event' && (!n || e[1] === n)).map(e => e[2]), name);
+
+{
+  const { ctx, page } = await openGame({ viewport: { width: 390, height: 844 }, touch: true, rbDelay: 1500,
+    init: () => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: value => new Promise(resolve => { window.__copied = value; window.__finishCopy = resolve; })
+    } }) });
+  await page.waitForTimeout(1300);
+  const helpExists = await page.locator('#rotCopy').count() === 1;
+  check('ссылка копируется с подтверждением после ответа буфера (@app-portrait-copy-link)', helpExists, 'кнопка копирования');
+  if (helpExists) {
+    await page.evaluate(() => { resize(); resize(); resize(); });
+    const first = await page.evaluate(() => window.__rb.filter(e => e[0] === 'event').map(e => e[1]));
+    await page.getByRole('button', { name: 'Скопировать ссылку', exact: true }).click();
+    const pending = await page.locator('#rotStatus').innerText();
+    await page.evaluate(() => window.__finishCopy());
+    await page.waitForFunction(() => document.getElementById('rotStatus').textContent.includes('Ссылка скопирована'));
+    const copy = await page.evaluate(() => ({ text: window.__copied, status: document.getElementById('rotStatus').textContent }));
+    check('ссылка копируется с подтверждением после ответа буфера (@app-portrait-copy-link)',
+      copy.text === PAGE + '?browser_handoff=rotate' && !pending.includes('Ссылка скопирована') && copy.status.includes('браузер'), JSON.stringify(copy));
+
+    await page.evaluate(() => history.replaceState(null, '', '?utm_source=threads&utm_medium=social&utm_campaign=first&utm_content=post&utm_term=parking&code=secret&state=private&access_token=token&SignatureValue=signature&InvId=123#auth=secret'));
+    const safe = await page.evaluate(() => rotateUrl());
+    check('публичная ссылка сохраняет только метки кампании (@app-portrait-link-safe)',
+      safe === PAGE + '?utm_source=threads&utm_medium=social&utm_campaign=first&utm_content=post&utm_term=parking&browser_handoff=rotate', safe);
+
+    await page.setViewportSize({ width: 844, height: 390 });
+    await page.waitForFunction(() => !document.body.classList.contains('portrait'));
+    await page.evaluate(() => { resize(); resize(); });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForFunction(() => document.body.classList.contains('portrait'));
+    const views = await rbEvents(page, 'rotate_view'), exits = await rbEvents(page, 'rotate_exit');
+    await page.evaluate(() => setTouch(false));
+    const touchExits = await rbEvents(page, 'rotate_exit');
+    check('показ и выход экрана поворота идут после запуска без дублей resize (@an-portrait-view-exit)',
+      first[0] === 'app_open' && first.filter(n => n === 'rotate_view').length === 1
+      && views.length === 2 && exits.length === 1 && exits[0].reason === 'landscape' && exits[0].seconds >= 0
+      && touchExits.length === 2 && touchExits[1].reason === 'touch_off', JSON.stringify({ first, views, exits: touchExits }));
+    const copies = await rbEvents(page, 'rotate_copy');
+    check('копирование сообщает результат, но не открытие внешнего браузера (@an-portrait-copy-event)',
+      copies.length === 1 && copies[0].result === 'success' && !('url' in copies[0]) && (await rbEvents(page, 'browser_open')).length === 0,
+      JSON.stringify(copies));
+  }
+  await ctx.close();
+}
+
+for (const mode of ['denied', 'missing', 'throws']) {
+  const { ctx, page, errors } = await openGame({ viewport: { width: 390, height: 844 }, touch: true });
+  const exists = await page.locator('#rotCopy').count() === 1;
+  if (exists) {
+    await page.evaluate(mode => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: mode === 'missing' ? undefined : {
+      writeText: () => { if (mode === 'throws') throw new Error('clipboard unavailable'); return Promise.reject(new DOMException('denied', 'NotAllowedError')); }
+    } }), mode);
+    await page.locator('#rotCopy').click();
+    const state = await page.evaluate(() => {
+      const field = document.getElementById('rotLink');
+      return { status: document.getElementById('rotStatus').textContent, focused: document.activeElement === field,
+        allSelected: field.selectionStart === 0 && field.selectionEnd === field.value.length,
+        callout: getComputedStyle(field).webkitTouchCallout, readonly: field.readOnly };
+    });
+    check('отказ буфера оставляет ссылку для ручного копирования (@app-portrait-copy-manual)',
+      state.focused && state.allSelected && state.readonly && state.status.includes('вручную') && !state.status.includes('Ссылка скопирована')
+      && state.callout !== 'none' && errors.length === 0, mode + ': ' + JSON.stringify(state));
+    const events = await rbEvents(page, 'rotate_copy');
+    check('копирование сообщает результат, но не открытие внешнего браузера (@an-portrait-copy-event)',
+      events.length === 1 && events[0].result === 'manual', mode + ': ' + JSON.stringify(events));
+  } else check('отказ буфера оставляет ссылку для ручного копирования (@app-portrait-copy-manual)', false, mode + ': нет кнопки');
+  await ctx.close();
+}
+
+{
+  const { ctx, page } = await openGame({ search: '?utm_source=threads&browser_handoff=rotate' });
+  await page.evaluate(() => doAct('play'));
+  const opens = await rbEvents(page, 'app_open'), starts = await rbEvents(page, 'level_start');
+  await page.goto(PAGE + '?browser_handoff=untrusted');
+  await page.waitForFunction(() => window.__rb?.some(e => e[1] === 'app_open'));
+  const unknown = await rbEvents(page, 'app_open');
+  check('переход по скопированной ссылке виден при открытии и старте (@an-browser-handoff)',
+    opens[0].browser_handoff === 'rotate' && opens[0].utm_source === 'threads' && starts[0]?.browser_handoff === 'rotate'
+    && !('browser_handoff' in unknown[0]), JSON.stringify({ opens, starts, unknown }));
+  await ctx.close();
+}
+
+{
+  const { ctx, page } = await openGame({ rybbit: false, viewport: { width: 390, height: 844 }, touch: true });
+  await page.setViewportSize({ width: 844, height: 390 });
+  const quiet = await page.evaluate(() => { resize(); return AN_BUF.length === 0 && !window.__rb; });
+  check('показ и выход экрана поворота идут после запуска без дублей resize (@an-portrait-view-exit)', quiet, 'без тега трекера');
+  await ctx.close();
+}
+
+{
+  const { ctx, page } = await openGame({ viewport: { width: 390, height: 844 }, touch: true });
+  const platforms = await page.evaluate(() => {
+    const visible = () => { applyTouchMode(); const el = document.getElementById('rotBrowser'); return !!el && !el.hidden; };
+    const out = { web: visible() };
+    window.BUILD = 'ya-test'; out.ya = visible(); window.BUILD = 'test';
+    history.replaceState(null, '', '?vk_app_id=1'); out.vk = visible();
+    history.replaceState(null, '', '?tgWebAppData=test'); out.tg = visible();
+    history.replaceState(null, '', '/play/');
+    Object.defineProperty(navigator, 'standalone', { configurable: true, value: true }); out.pwa = visible();
+    Object.defineProperty(navigator, 'standalone', { configurable: true, value: false });
+    return out;
+  });
+  await page.evaluate(() => { const frame = document.createElement('iframe'); frame.src = '/play/'; document.body.append(frame); });
+  const child = await page.waitForSelector('iframe');
+  const frame = await child.contentFrame();
+  await frame.waitForFunction(() => typeof applyTouchMode === 'function');
+  platforms.frame = await frame.evaluate(() => { applyTouchMode(); const el = document.getElementById('rotBrowser'); return !!el && !el.hidden; });
+  check('помощь внешнего браузера доступна только обычному сайту (@app-portrait-help-web-only)',
+    platforms.web && ['ya', 'vk', 'tg', 'pwa', 'frame'].every(k => !platforms[k]), JSON.stringify(platforms));
+  await ctx.close();
+}
 
 {
   const { ctx, page, errors } = await openGame({ rbDelay: 1500 });
