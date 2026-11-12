@@ -452,17 +452,26 @@ body.compact #edhint{left:168px;top:8px;font-size:11px;padding:5px 9px}
 #thelp.small .thact{padding:7px;gap:7px}
 #thelp.small .thact button{padding:9px 16px;font-size:14px}
 body.touch.portrait #rotate{display:flex;position:fixed;inset:0;z-index:30;
-  align-items:center;justify-content:center;text-align:center;padding:28px;
+  align-items:flex-start;justify-content:center;text-align:center;padding:20px;
+  overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;
   background:#0b0f14;color:#cfe0f0;font-size:17px;line-height:1.5}
 /* ссылка из мессенджера открывается в портрете: здесь игрок впервые видит тренажёр, и одно «поверни телефон»
    на чёрном не говорило, что это и зачем (#179) */
-#rotate .rot{max-width:340px}
-#rotate .rot-ic{display:inline-block;width:52px;height:52px;margin-bottom:16px;color:#9fd0ff;animation:rotHint 2.6s ease-in-out infinite}
+#rotate .rot{width:100%;max-width:340px;flex:none;margin:auto}
+#rotate .rot-ic{display:inline-block;width:40px;height:40px;margin-bottom:8px;color:#9fd0ff;animation:rotHint 2.6s ease-in-out infinite}
 #rotate .rot-ic svg{width:100%;height:100%;display:block}
 #rotate h1{margin:0 0 8px;font-size:26px;line-height:1.2;color:#fff}
 #rotate p{margin:0 0 14px;color:#9fb3c8;font-size:15px}
 #rotate .rot-do{color:#e6eef6;font-size:17px;font-weight:600}
 #rotate button{margin-top:4px;padding:13px 26px;font-size:16px}
+#rotate .rot-help{margin-top:16px;padding-top:16px;border-top:1px solid #334252}
+#rotate h2{margin:0 0 8px;font-size:19px;line-height:1.3;color:#e6eef6}
+#rotate .rot-help p{margin-bottom:8px}
+#rotate input{display:block;width:100%;min-height:44px;padding:10px 12px;margin:8px 0;
+  border:1px solid #52677d;border-radius:8px;background:#121e2b;color:#e8eef6;
+  font:inherit;font-size:16px;line-height:1.4;-webkit-touch-callout:default;touch-action:auto}
+#rotate #rotCopy{width:100%;min-height:44px}
+#rotate .rot-status{min-height:2.8em;margin:8px 0 0;font-size:13px;color:#cfe0f0}
 @keyframes rotHint{0%,35%{transform:rotate(0)}65%,100%{transform:rotate(90deg)}}
 body.compact #topleft{display:none}
 body.compact #topleft .task,body.compact #topleft .tip{display:none}
@@ -878,9 +887,16 @@ body.touch #overlay .seg button{min-height:40px}
 <div id="rotate"><div class="rot">
   <div class="rot-ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="7" y="2.5" width="10" height="19" rx="2.4"/><path d="M11 18.6h2"/></svg></div>
   <h1>По зеркалам</h1>
-  <p>Тренажёр манёвров в браузере: парковка по зеркалам, город по правилам и экзаменационный маршрут.</p>
-  <p class="rot-do">Поверни телефон горизонтально — руль, педали и зеркала помещаются только так.</p>
+  <p>Тренажёр парковки и манёвров.</p>
+  <p class="rot-do">Поверни телефон горизонтально.</p>
   <button type="button" id="rotFull" hidden>Во весь экран</button>
+  <div class="rot-help" id="rotBrowser" hidden>
+    <h2>Открой в браузере телефона</h2>
+    <p>В Threads поворот экрана может не работать. Скопируй ссылку для Safari или Chrome.</p>
+    <input id="rotLink" type="text" readonly aria-label="Ссылка на игру" spellcheck="false">
+    <button type="button" id="rotCopy">Скопировать ссылку</button>
+    <p class="rot-status" id="rotStatus" role="status" aria-live="polite"></p>
+  </div>
 </div></div>
 
 <div id="overlay">
@@ -8735,6 +8751,7 @@ const AN_RB=!!document.querySelector('script[src$="/rb/script.js"]');
 /* скрипт Rybbit async: события до его загрузки копятся (до 20) и досылаются не дольше 10 с —
    контракт адаптера spark (src/core/analytics/rybbit.ts); не загрузился — блокировщик или офлайн */
 const AN_BUF=[], AN_BUF_MAX=20, AN_WAIT_MS=10000;
+const AN_UTM=['utm_source','utm_medium','utm_campaign','utm_content','utm_term'];
 let anBufT=0, anTimer=0;
 const AN_DEBUG=(()=>{ try{ return (localStorage.getItem('pz_debug')||'').indexOf('an')>=0; }catch(e){ return false; } })();
 function anProps(p){
@@ -8788,8 +8805,9 @@ function anFramed(){ try{ return window.top!==window; }catch(e){ return true; } 
    который Rybbit сам не видит (spark, attribution.ts); от метки остаётся ведущий [A-Za-z0-9_-] */
 function anSource(){
   const o={}, q=new URLSearchParams(location.search);
-  for(const k of ['utm_source','utm_medium','utm_campaign','utm_content','utm_term']){
+  for(const k of AN_UTM){
     const v=q.get(k); if(v) o[k]=v.slice(0,128); }
+  if(q.get('browser_handoff')==='rotate') o.browser_handoff='rotate';
   const h=new URLSearchParams(location.hash.replace(/^#/,''));
   const src=q.get('tgWebAppStartParam')||h.get('tgWebAppStartParam')||q.get('startapp')||q.get('vk_ref');
   const m=src && /^[A-Za-z0-9_-]+/.exec(src);
@@ -8802,6 +8820,7 @@ function anLevel(i){
 }
 function anLevelStart(via){
   const p=anLevel(game.li); p.via=via;
+  const handoff=anSource().browser_handoff; if(handoff) p.browser_handoff=handoff;
   if(level && level.def.examRoute) p.exam_mode=examTrain()?'train':'real';
   if(level && level.practice){ p.mode='practice'; p.variant=level.pvar ? level.pvar.id : null; }
   track('level_start', p);
@@ -17169,12 +17188,53 @@ function setTouch(on){
   try{ localStorage.setItem('trainer_touch', MOB?'1':'0'); }catch(e){}
   applyTouchMode(); resize();
 }
+const rotateState={ready:false,visible:false,since:0};
+function rotateHelpAllowed(){ return anPlatform()==='web' && !anFramed(); }
+function rotateUrl(){
+  const url=new URL('https://pozerkalam.space/play/'), source=anSource();
+  for(const k of AN_UTM) if(source[k]) url.searchParams.set(k,source[k]);
+  url.searchParams.set('browser_handoff','rotate');
+  return url.href;
+}
+function rotateSync(){
+  const allowed=rotateHelpAllowed(), help=$('rotBrowser'), field=$('rotLink');
+  help.hidden=!allowed;
+  if(allowed && !field.value) field.value=rotateUrl();
+  /* Первый resize идёт до app_open: показ экрана должен попасть в буфер после запуска приложения. */
+  if(!rotateState.ready) return;
+  const visible=MOB && innerHeight>innerWidth;
+  if(visible===rotateState.visible) return;
+  rotateState.visible=visible;
+  if(!allowed) return;
+  if(visible){
+    rotateState.since=performance.now();
+    track('rotate_view',{vw:innerWidth,vh:innerHeight});
+  } else track('rotate_exit',{reason:MOB?'landscape':'touch_off',seconds:+((performance.now()-rotateState.since)/1000).toFixed(1)});
+}
+function rotateCopy(){
+  const button=$('rotCopy'), field=$('rotLink'), status=$('rotStatus');
+  if(button.disabled || !rotateHelpAllowed()) return;
+  const link=rotateUrl(); field.value=link;
+  button.disabled=true; status.textContent='Копируем ссылку…';
+  const finish=(result)=>{
+    button.disabled=false;
+    if(result==='success') status.textContent='Ссылка скопирована. Открой браузер и вставь её в адресную строку.';
+    else {
+      status.textContent='Скопируй выделенную ссылку вручную и открой её в браузере.';
+      field.focus(); field.select(); field.setSelectionRange(0,field.value.length);
+    }
+    track('rotate_copy',{result});
+  };
+  try{ navigator.clipboard.writeText(link).then(()=>finish('success'),()=>finish('manual')); }
+  catch(e){ finish('manual'); }
+}
 function applyTouchMode(){
   document.body.classList.toggle('touch', MOB);
   document.body.classList.toggle('portrait', MOB && window.innerHeight>window.innerWidth);
   /* «Во весь экран» поворачивает экран сам (lock в toggleFull) — там, где браузер это умеет: Android да,
      iPhone нет, там кнопки нет и остаётся просьба повернуть */
   const rf=$('rotFull'); if(rf) rf.hidden=!fullAvail() || isFull();
+  rotateSync();
 }
 function bindHold(el, act){
   const on=(e)=>{ e.preventDefault(); initAudio(); if(paused) return;
@@ -17415,6 +17475,7 @@ $('gearVal').addEventListener('click',e=>{
 });
 $('restartBtn').addEventListener('click',()=>{ initAudio(); pressKey('KeyR'); });
 $('rotFull').addEventListener('click',()=>{ initAudio(); toggleFull(); });
+$('rotCopy').addEventListener('click',rotateCopy);
 $('demoBtn').addEventListener('click',()=>{ initAudio(); if(demo) stopDemo(); else startDemo(); });
 $('fbBtn').addEventListener('click',()=>{ initAudio(); doAct('feedback:game'); });
 $('trafBtn').addEventListener('click',()=>{ initAudio(); cycleTraffic(); });
@@ -17605,6 +17666,7 @@ requestAnimationFrame(frame);
 track('app_open', Object.assign({ platform:anPlatform(), framed:anFramed(), mob:MOB,
   lang:(navigator.language||'').slice(0,8), runs:runsCnt, build:window.BUILD||'dev',
   account: AUTH_ON ? (acct?1:0) : null, provider: acct ? acct.provider : null }, anSource()));
+rotateState.ready=true; rotateSync();
 if(acct) anIdentify(acct.id);
 authBoot().then(()=>{
   payBoot();
