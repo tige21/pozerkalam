@@ -18,7 +18,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const HTML = path.join(ROOT, 'index.html');
 const SRC = path.join(ROOT, 'build', 'assets');
 /* EMBED_BUDGET_MB — другой бюджет: так tools/cabin-check.mjs доказывает, что --check краснеет */
-const BUDGET = (+process.env.EMBED_BUDGET_MB || 2.2) * 1024 * 1024;
+const BUDGET = (+process.env.EMBED_BUDGET_MB || 2.5) * 1024 * 1024;
 const BEGIN = '<!-- assets:begin — генерат tools/assets/embed.mjs, руками не править -->';
 const END = '<!-- assets:end -->';
 
@@ -100,8 +100,8 @@ function check() {
   const ptpl = block.match(/<template id="props-mesh">([^<]*)<\/template>/);
   if (!ptpl) fails.push('нет моделей обустройства <template id="props-mesh">');
   else { try { const d = JSON.parse(ptpl[1]); if (!d.models || !PROPS_NEED.every((k) => d.models[k] && d.models[k].f.length)) fails.push(`в моделях обустройства нет ${PROPS_NEED.join(', ')}`); } catch { fails.push('модели обустройства — не JSON'); } }
-  log(`index.html ${(size / 1048576).toFixed(2)} МБ, бюджет ${(BUDGET / 1048576).toFixed(1)} МБ, блок ${(block.length / 1048576).toFixed(2)} МБ`);
-  if (size > BUDGET) fails.push(`страница ${(size / 1048576).toFixed(2)} МБ больше бюджета`);
+  log(`index.html ${(size / 1048576).toFixed(2)} МиБ, бюджет ${(BUDGET / 1048576).toFixed(1)} МиБ, блок ${(block.length / 1048576).toFixed(2)} МиБ`);
+  if (size > BUDGET) fails.push(`страница ${(size / 1048576).toFixed(2)} МиБ больше бюджета`);
   for (const f of fails) console.error('ПРОВАЛ: ' + f);
   if (!fails.length) log('ok: блок цел, картинки WebP, бюджет соблюдён');
   process.exit(fails.length ? 1 : 0);
@@ -146,6 +146,7 @@ function build() {
   if (!fs.existsSync(CAR_MESH)) throw new Error('нет build/assets/car-mesh.json — сначала Blender -b -P tools/blender/models.py');
   const mesh = JSON.parse(fs.readFileSync(CAR_MESH, 'utf8'));
   if (mesh.fingerprint !== stamp.fingerprint) throw new Error('модель кузова собрана на других константах — tools/blender/models.py заново');
+  mesh.bodies.muscle = JSON.parse(fs.readFileSync(new URL("../../assets/src/player-muscle.json", import.meta.url), "utf8")).body;
   lines.push(`<template id="car-mesh">${JSON.stringify(mesh)}</template>`);
   if (!mesh.bodies || !mesh.bodies.sedan) throw new Error('в car-mesh.json нет кузова sedan — tools/blender/models.py заново');
   log(`car-mesh: ${Object.entries(mesh.bodies).map(([k, b]) => `${k} ${b.f.length}`).join(', ')} граней, ${(JSON.stringify(mesh).length / 1024).toFixed(0)} КБ`);

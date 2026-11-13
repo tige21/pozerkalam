@@ -9192,6 +9192,7 @@ function loadLevel(i){
   else if(P) showOv(practiceBriefHTML());
 }
 function restart(){
+  playerBody=selectedPlayerBody();
   missFwd=null;
   if(demo) stopDemo();
   voiceReset();
@@ -13466,8 +13467,9 @@ function drawSceneInto(o){
     const c=bodyPos();
     carRampUse=true;
     try{
-      emitCarMesh(c.u,c.v,car.th,[206,214,226],car.steer,
-                  {brake:input.back, rev:car.sel==='R', own:true, blink:car.blink});
+      emitCarMesh(c.u,c.v,car.th,PLAYER_COLORS[playerBody],car.steer,
+                  {brake:input.back, rev:car.sel==='R', own:true, blink:car.blink},
+                  {body:inside ? 'sedan' : playerBody});
       if(bake){
         /* тон лобового и живые слои — перед глазом; салонное зеркало смотрит назад, им там не место */
         if(bake===cabinBake) emitWindshieldTint(cabinCtx(c.u,c.v,car.th));
@@ -13667,7 +13669,12 @@ let mirBot=-1;
    ниже y=0 (пол и подиум), машина выше, камера над ними: пол и подиум сливаются первым проходом,
    машина вторым, и порядок граней между проходами точный — как у настила эстакады */
 const SHOW_R=2.9, SHOW_FLOOR=-0.30, SHOW_SPIN=rad(12), SHOW_HOLD=3;
-const SHOW_COL=[206,214,226];
+let preferredPlayerBody='sedan', playerBody='sedan';
+try{ if(localStorage.getItem('trainer_player_body')==='muscle') preferredPlayerBody='muscle'; }catch(e){}
+function selectedPlayerBody(){
+  return carModel.state==='ready' && carModel.bodies[preferredPlayerBody] ? preferredPlayerBody : 'sedan';
+}
+const PLAYER_COLORS={sedan:[206,214,226], muscle:[24,25,28]};
 const showroom={ yaw:rad(-38), vel:SHOW_SPIN, holdT:0, dragged:false, drag:null, lx:0, lt:0, warned:false,
   calm:(()=>{ try{ return matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(e){ return false; } })() };
 function showroomOn(){ return document.body.classList.contains('menu'); }
@@ -13722,7 +13729,8 @@ function drawShowroom(dt){
     flushFaces();
     carShadow(0, 0, S.yaw);
     if(carModel.state!=='ready' && !S.warned){ S.warned=true; console.warn('[menu] витрина без модели кузова — лофт'); }
-    emitCarMesh(0, 0, S.yaw, SHOW_COL, 0, {own:true}, {body:'sedan', style:'a'});
+    const body=selectedPlayerBody();
+    emitCarMesh(0, 0, S.yaw, PLAYER_COLORS[body], 0, {own:true}, {body});
     flushFaces();
   } finally { RAMP_ON=ramp; carRampUse=crU; camPivot=null; setVP(0,0,W,H); }
 }
@@ -15805,7 +15813,7 @@ function menuProfileHTML(){
 /* ---------- настройки ---------- */
 /* одна таблица на все переключатели: строка знает, как прочитать значение и как его применить.
    Применение идёт теми же путями, что клавиши, — запись в localStorage не дублируется */
-const SET_TABS=[['screen','Экран'],['hints','Подсказки'],['mirrors','Зеркала'],['sound','Звук и поток']];
+const SET_TABS=[['screen','Экран'],['hints','Подсказки'],['mirrors','Зеркала'],['vehicle','Автомобиль'],['sound','Звук и поток']];
 function setGfx(v){
   opt.gfx=v;
   try{ localStorage.setItem('trainer_gfx', v); }catch(e){}
@@ -15837,6 +15845,13 @@ function setTraffic(v){
 }
 function fullAvail(){ const el=document.documentElement; return !!(el.requestFullscreen || el.webkitRequestFullscreen); }
 const SETTINGS=[
+  {id:'vehicle', tab:'vehicle', label:'Кузов', kind:'seg', vals:[['sedan','Седан'],['muscle','Чёрный маслкар']],
+   show:()=>carModel.state==='ready' && !!carModel.bodies.muscle,
+   desc:()=>'Выбранный кузов появится в следующем заезде. Управление и габариты те же.',
+   get:selectedPlayerBody, set:v=>{
+     preferredPlayerBody=v;
+     try{ localStorage.setItem('trainer_player_body',v); }catch(e){}
+   }},
   {id:'gfx', tab:'screen', label:'Графика', kind:'seg', vals:[['auto','авто'],['max','максимум']],
    desc:()=>gpuSoft() ? GPU_NOTE : opt.gfx==='max' ? 'Все детали всегда, кадры могут просесть' : 'Качество подстраивается под скорость кадра',
    get:()=>opt.gfx, set:setGfx},
@@ -15887,6 +15902,7 @@ function menuSettingsHTML(tab){
   if(tab==='premium' && !premiumOn()) tab='screen';
   let s=menuHead('Настройки', setTabs(), tab)+'<div class="mbody">';
   if(tab==='premium') s+=premiumTabHTML();
+  if(tab==='vehicle' && (carModel.state!=='ready' || !carModel.bodies.muscle)) s+='<p class="mnote">Сейчас доступен седан.</p>';
   for(const x of SETTINGS) if(x.tab===tab && (!x.show || x.show())) s+=setRowHTML(x);
   if(tab==='mirrors') s+='<div class="mrow"><button type="button" class="ghost" data-act="mirreset">Сбросить зеркала</button></div>'
     +'<p class="mnote">Зеркало можно повернуть, потянув прямо по нему.'+(MOB?'':' Колесо мыши над зеркалом меняет размер.')+'</p>';
