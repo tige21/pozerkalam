@@ -877,6 +877,95 @@ let offerViewA = [], offerClickA = [];
     fs.rmdirSync(dir);
   }
   const auth = ['vk', 'yandex'];
+  {
+    const { ctx, page, apiCalls, errors } = await openGame({ auth, protectedBuild, api: mockApi({}) });
+    await page.locator('[data-act="play"]').click();
+    const route = [];
+    let resumed = null;
+    for (let step = 0; step < 16; step++) {
+      const before = await page.evaluate(() => ({ li: game.li, wall: !!ovCard.querySelector('.paywall') }));
+      if (before.wall) break;
+      route.push(before.li);
+      await page.evaluate(() => { game.hits = 0; game.t = 20; win(); });
+      await page.locator('#overlay [data-act="next"]').click();
+      if (step === 3) {
+        const li = await page.evaluate(() => game.li);
+        await page.reload();
+        await page.locator('[data-act="play"]').click();
+        resumed = { before: li, after: await page.evaluate(() => game.li) };
+      }
+    }
+    const finish = await page.evaluate(() => ({ wall: !!ovCard.querySelector('.paywall'), target: paywallLi,
+      passed: LEVELS.slice(0, 10).filter(l => progPassed(l.name)).length }));
+    const expected = [6, 9, 1, 8, 0, 2, 3, 4, 5, 7];
+    check('десять бесплатных зачётов без повторов ведут на пейволл 11 (@acct-free-course-once)',
+      JSON.stringify(route) === JSON.stringify(expected) && new Set(route).size === 10 && finish.passed === 10
+        && finish.wall && finish.target === 10 && !apiCalls.some(c => c.path.startsWith('/premium/'))
+        && !realErrors(errors).length,
+      JSON.stringify({ route: route.map(i => i + 1), finish, errors: realErrors(errors) }));
+    await page.evaluate(() => localStorage.setItem('trainer_last', LEVELS[7].name));
+    await page.reload();
+    await page.locator('[data-act="play"]').click();
+    const returned = await page.evaluate(() => ({ wall: !!ovCard.querySelector('.paywall'), target: paywallLi }));
+    check('перезагрузка продолжает непройденное, после десяти зачётов «Играть» ведёт к Премиуму (@acct-free-course-resume)',
+      resumed?.before === 0 && resumed.after === 0 && returned.wall && returned.target === 10,
+      JSON.stringify({ resumed, returned }));
+    await page.evaluate(() => localStorage.removeItem('trainer_last'));
+    await page.reload();
+    await page.locator('[data-act="play"]').click();
+    const noLast = await page.evaluate(() => ({ wall: !!ovCard.querySelector('.paywall'), target: paywallLi }));
+    check('зачтённый бесплатный курс без сохранённого последнего уровня ведёт к Премиуму (@acct-free-course-synced)',
+      noLast.wall && noLast.target === 10, JSON.stringify(noLast));
+    await page.evaluate(() => menuGo('levels', levelTab(6)));
+    await page.locator('.lvcard[data-lvl="6"]').click();
+    const picked = await page.evaluate(() => ({ li: game.li, passed: progPassed(LEVELS[6].name), wall: !!ovCard.querySelector('.paywall') }));
+    await page.evaluate(() => { game.hits = 0; game.t = 20; win(); });
+    await page.locator('#overlay [data-act="again"]').click();
+    const retried = await page.evaluate(() => ({ li: game.li, done: game.done, wall: !!ovCard.querySelector('.paywall') }));
+    check('пройденный бесплатный уровень можно выбрать вручную и повторить через «Заново» (@acct-free-course-repeat)',
+      picked.li === 6 && picked.passed && !picked.wall && retried.li === 6 && !retried.done && !retried.wall,
+      JSON.stringify({ picked, retried }));
+    await ctx.close();
+  }
+  {
+    const st = { paymentAccess: 'public', ent: [{ product: 'premium' }], protectedScript: protectedBuild.script };
+    const { ctx, page, apiCalls } = await openGame({ auth, protectedBuild, api: mockApi(st), storage: LOGGED });
+    await page.waitForFunction(() => entitled('premium'));
+    await page.evaluate(() => {
+      localStorage.setItem('trainer_progress', JSON.stringify(Object.fromEntries(LEVELS.slice(0, 10)
+        .filter((l, i) => i !== 7).map(l => [l.name, { n: 1, passed: 1, clean: 1, best: 20 }]))));
+      openLevel(7, 'pick'); game.hits = 0; game.t = 20; win();
+    });
+    await page.locator('#overlay [data-act="next"]').click();
+    await page.waitForFunction(() => game.li !== 7, null, { timeout: 10_000 }).catch(() => {});
+    const paidNext = await page.evaluate(() => ({ li: game.li, wall: !!ovCard.querySelector('.paywall'),
+      build: typeof LEVELS[10].build }));
+    check('Премиум после десятого бесплатного зачёта запускает уровень 11 с сервера (@acct-free-course-premium)',
+      paidNext.li === 10 && !paidNext.wall && paidNext.build === 'function'
+        && apiCalls.filter(c => c.path === '/premium/levels/test').length === 1,
+      JSON.stringify({ ...paidNext, privateRequests: apiCalls.filter(c => c.path.startsWith('/premium/')).length }));
+    await page.evaluate(() => openLevel(26, 'practice', 'practice'));
+    await page.waitForFunction(() => game.li === 26 && level.practice);
+    await page.evaluate(() => {
+      localStorage.setItem('trainer_progress', JSON.stringify(Object.fromEntries(LEVELS.filter(l => !l.custom)
+        .map(l => [l.name, { n: 1, passed: 1, clean: 1, best: 20 }]))));
+      showOv(practiceResultHTML(true));
+    });
+    await page.locator('#overlay [data-act="next"]').click();
+    await page.waitForFunction(() => game.li !== 26, null, { timeout: 10_000 }).catch(() => {});
+    const practiceNext = await page.evaluate(() => ({ li: game.li, practice: !!level.practice }));
+    check('практика переходит к следующему уроку даже при зачтённой учёбе (@acct-practice-next-order)',
+      practiceNext.li === 27 && practiceNext.practice, JSON.stringify(practiceNext));
+    await page.evaluate(() => {
+      LEVELS.push(Object.assign({}, LEVELS[0], { custom: true, name: 'Проверка пользовательского уровня' }));
+      openLevel(LEVELS.length - 1, 'pick'); game.hits = 0; game.t = 20; win();
+    });
+    await page.locator('#overlay [data-act="next"]').click();
+    const customNext = await page.evaluate(() => ({ li: game.li, wall: !!ovCard.querySelector('.paywall') }));
+    check('после последнего пользовательского уровня сохраняется переход к первому (@acct-custom-next-order)',
+      customNext.li === 0 && !customNext.wall, JSON.stringify(customNext));
+    await ctx.close();
+  }
   const guest = await openGame({ auth, protectedBuild, api: mockApi({}), storage: { pz_grand: '1' } });
   const guestState = await guest.page.evaluate(() => {
     loadLevel(10);
