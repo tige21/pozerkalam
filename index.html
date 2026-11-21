@@ -15493,10 +15493,21 @@ function noviceNext(li){
   for(let j=k+1;j<P.length;j++) if(!progPassed(LEVELS[P[j]].name)) return P[j];
   return -1;
 }
-/* «Следующий уровень» на итогах и клавиша N: по пути новичка, пока он не пройден, дальше — по номерам */
+/* Зачёты практики хранятся отдельно от учёбы: пропуск пройденного относится только к бесплатным урокам. */
 function nextLevel(li){
   const n=noviceNext(li); if(n>=0) return n;
-  if(noviceIdx().includes(li)){ const f=LEVELS.findIndex((l,i)=>!l.custom && !progPassed(l.name) && !levelLocked(i)); if(f>=0) return f; }
+  if(li<PAYWALL.from && !(LEVELS[li] && LEVELS[li].custom)){
+    const from=noviceIdx().includes(li) ? 0 : li+1;
+    for(let k=0;k<PAYWALL.from;k++){
+      const i=(from+k)%PAYWALL.from, l=LEVELS[i];
+      if(l && !l.custom && !progPassed(l.name) && !levelLocked(i)){
+        if(AN_DEBUG) console.info('[levels] следующий бесплатный', {from:li+1, to:i+1});
+        return i;
+      }
+    }
+    if(AN_DEBUG) console.info('[levels] бесплатные уровни пройдены', {next:PAYWALL.from+1});
+    return PAYWALL.from;
+  }
   return (li+1)%LEVELS.length;
 }
 function playTarget(){
@@ -15504,9 +15515,11 @@ function playTarget(){
   try{ last=localStorage.getItem('trainer_last'); }catch(e){}
   const li = last ? LEVELS.findIndex(l=>l.name===last) : -1;
   if(li<0){ const p=noviceIdx().find(i=>!progPassed(LEVELS[i].name));
-    return {i:p!==undefined ? p : 0, why:last?'прошлого уровня больше нет':'первый запуск — путь новичка'}; }
+    return {i:p!==undefined ? p : nextLevel(-1), why:last?'прошлого уровня больше нет':p!==undefined?'первый запуск — путь новичка':'старт по сохранённому прогрессу'}; }
   if(!progPassed(LEVELS[li].name)) return {i:li, why:'прошлый уровень не пройден'};
   { const n=noviceNext(li); if(n>=0) return {i:n, why:'следующий на пути новичка'}; }
+  if(li<PAYWALL.from && !LEVELS[li].custom){ const i=nextLevel(li);
+    return {i:i, why:i===PAYWALL.from?'бесплатные уровни пройдены':'следующий непройденный бесплатный'}; }
   for(let k=1;k<LEVELS.length;k++){
     const j=(li+k)%LEVELS.length, l=LEVELS[j];
     if(!l.custom && !progPassed(l.name) && !levelLocked(j)) return {i:j, why:'первый непройденный после прошлого'};
