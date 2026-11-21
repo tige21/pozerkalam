@@ -54,7 +54,7 @@ MIRROR_IP="${MIRROR_IP:-194.5.65.182}"
 : "${METRIKA_ID:=}"
 : "${RYBBIT_SITE_ID:=}"
 : "${AUTH_PROVIDERS:=}"
-: "${PREMIUM_WEB_PROTECTED:=0}"
+: "${PREMIUM_WEB_PROTECTED:=1}"
 : "${PREMIUM_CAPTURE_CUTOFF:=0}"
 
 # При включённом VPN (Happ) маршрут по умолчанию уходит в utun, и ssh к серверу

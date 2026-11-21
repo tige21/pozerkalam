@@ -588,6 +588,55 @@ await guard('app-menu-no-hud', async () => {
   check('за главным меню HUD, подсказка и тач-кнопки скрыты, время уровня стоит (@app-menu-no-hud)', bad.length === 0, bad.join(' | '));
 });
 
+await guard('app-menu-player-vehicle', async () => {
+  const bad = [];
+  for (const vp of [{ width: 1280, height: 720 }, { width: 844, height: 390 }]) {
+    const p = await open(vp, { touch: vp.width === 844 });
+    await p.waitForFunction(() => carModel.state === 'ready');
+    const geometry = await p.evaluate(() => JSON.stringify({ car: CAR, hull: CAR_HULL }));
+    await p.evaluate(() => menuGo('settings', 'vehicle', 'main'));
+    await p.locator('[data-act="set:vehicle:1"]').click();
+    const selected = await p.evaluate(() => {
+      menuGo('main');
+      const calls = [], original = emitCarMesh;
+      emitCarMesh = (...args) => { if (args[5]?.own) calls.push(args[6]?.body); return original(...args); };
+      try { drawShowroom(0); } finally { emitCarMesh = original; }
+      loadLevel(0);
+      return { saved: localStorage.getItem('trainer_player_body'), body: playerBody, shown: calls.includes('muscle') };
+    });
+    if (selected.saved !== 'muscle' || selected.body !== 'muscle' || !selected.shown)
+      bad.push(JSON.stringify({ viewport: vp, selected }));
+    await p.reload();
+    await p.waitForFunction(() => carModel.state === 'ready');
+    const restored = await p.evaluate(() => { loadLevel(0); return playerBody; });
+    if (restored !== 'muscle') bad.push(vp.width + ': выбор потерян после перезагрузки');
+    await p.evaluate(() => menuGo('settings', 'vehicle', 'pause'));
+    await p.locator('[data-act="set:vehicle:0"]').click();
+    const changed = await p.evaluate(() => {
+      const during = playerBody;
+      restart();
+      return { during, after: playerBody, geometry: JSON.stringify({ car: CAR, hull: CAR_HULL }) };
+    });
+    if (changed.during !== 'muscle' || changed.after !== 'sedan' || changed.geometry !== geometry)
+      bad.push(JSON.stringify({ viewport: vp, changed }));
+    await p.evaluate(() => menuGo('settings', 'vehicle', 'main'));
+    await p.locator('[data-act="set:vehicle:1"]').click();
+    const fallback = await p.evaluate(() => {
+      carModel.state = 'error';
+      restart();
+      menuGo('settings', 'vehicle', 'main');
+      return { body: playerBody, saved: localStorage.getItem('trainer_player_body'),
+        shown: ovCard.textContent.includes('Сейчас доступен седан.'),
+        choice: !!ovCard.querySelector('[data-act="set:vehicle:1"]') };
+    });
+    if (fallback.body !== 'sedan' || fallback.saved !== 'muscle' || !fallback.shown || fallback.choice)
+      bad.push(JSON.stringify({ viewport: vp, fallback }));
+    await p.close();
+  }
+  check('кузов сохраняется, виден в меню, меняется в следующем заезде и переживает отказ модели (@app-menu-player-vehicle)',
+    bad.length === 0, bad.join(' | '));
+});
+
 check('в консоли нет ошибок', errors.length === 0, errors.slice(0, 3).join(' | '));
 const failed = results.filter(r => !r.ok);
 console.log(JSON.stringify({ total: results.length, failed: failed.length, fault: FAULT || null, names: failed.map(r => r.name) }));

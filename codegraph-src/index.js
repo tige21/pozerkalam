@@ -930,6 +930,22 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 "use strict";
 /* ---------- canvas ---------- */
 const canvas = document.getElementById('view');
@@ -8735,6 +8751,7 @@ const AN_RB=!!document.querySelector('script[src$="/rb/script.js"]');
 /* скрипт Rybbit async: события до его загрузки копятся (до 20) и досылаются не дольше 10 с —
    контракт адаптера spark (src/core/analytics/rybbit.ts); не загрузился — блокировщик или офлайн */
 const AN_BUF=[], AN_BUF_MAX=20, AN_WAIT_MS=10000;
+const AN_UTM=['utm_source','utm_medium','utm_campaign','utm_content','utm_term'];
 let anBufT=0, anTimer=0;
 const AN_DEBUG=(()=>{ try{ return (localStorage.getItem('pz_debug')||'').indexOf('an')>=0; }catch(e){ return false; } })();
 function anProps(p){
@@ -8788,8 +8805,9 @@ function anFramed(){ try{ return window.top!==window; }catch(e){ return true; } 
    который Rybbit сам не видит (spark, attribution.ts); от метки остаётся ведущий [A-Za-z0-9_-] */
 function anSource(){
   const o={}, q=new URLSearchParams(location.search);
-  for(const k of ['utm_source','utm_medium','utm_campaign','utm_content','utm_term']){
+  for(const k of AN_UTM){
     const v=q.get(k); if(v) o[k]=v.slice(0,128); }
+  if(q.get('browser_handoff')==='rotate') o.browser_handoff='rotate';
   const h=new URLSearchParams(location.hash.replace(/^#/,''));
   const src=q.get('tgWebAppStartParam')||h.get('tgWebAppStartParam')||q.get('startapp')||q.get('vk_ref');
   const m=src && /^[A-Za-z0-9_-]+/.exec(src);
@@ -8802,6 +8820,7 @@ function anLevel(i){
 }
 function anLevelStart(via){
   const p=anLevel(game.li); p.via=via;
+  const handoff=anSource().browser_handoff; if(handoff) p.browser_handoff=handoff;
   if(level && level.def.examRoute) p.exam_mode=examTrain()?'train':'real';
   if(level && level.practice){ p.mode='practice'; p.variant=level.pvar ? level.pvar.id : null; }
   track('level_start', p);
@@ -9173,6 +9192,7 @@ function loadLevel(i){
   else if(P) showOv(practiceBriefHTML());
 }
 function restart(){
+  playerBody=selectedPlayerBody();
   missFwd=null;
   if(demo) stopDemo();
   voiceReset();
@@ -13447,8 +13467,9 @@ function drawSceneInto(o){
     const c=bodyPos();
     carRampUse=true;
     try{
-      emitCarMesh(c.u,c.v,car.th,[206,214,226],car.steer,
-                  {brake:input.back, rev:car.sel==='R', own:true, blink:car.blink});
+      emitCarMesh(c.u,c.v,car.th,PLAYER_COLORS[playerBody],car.steer,
+                  {brake:input.back, rev:car.sel==='R', own:true, blink:car.blink},
+                  {body:inside ? 'sedan' : playerBody});
       if(bake){
         /* тон лобового и живые слои — перед глазом; салонное зеркало смотрит назад, им там не место */
         if(bake===cabinBake) emitWindshieldTint(cabinCtx(c.u,c.v,car.th));
@@ -13648,7 +13669,12 @@ let mirBot=-1;
    ниже y=0 (пол и подиум), машина выше, камера над ними: пол и подиум сливаются первым проходом,
    машина вторым, и порядок граней между проходами точный — как у настила эстакады */
 const SHOW_R=2.9, SHOW_FLOOR=-0.30, SHOW_SPIN=rad(12), SHOW_HOLD=3;
-const SHOW_COL=[206,214,226];
+let preferredPlayerBody='sedan', playerBody='sedan';
+try{ if(localStorage.getItem('trainer_player_body')==='muscle') preferredPlayerBody='muscle'; }catch(e){}
+function selectedPlayerBody(){
+  return carModel.state==='ready' && carModel.bodies[preferredPlayerBody] ? preferredPlayerBody : 'sedan';
+}
+const PLAYER_COLORS={sedan:[206,214,226], muscle:[24,25,28]};
 const showroom={ yaw:rad(-38), vel:SHOW_SPIN, holdT:0, dragged:false, drag:null, lx:0, lt:0, warned:false,
   calm:(()=>{ try{ return matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(e){ return false; } })() };
 function showroomOn(){ return document.body.classList.contains('menu'); }
@@ -13703,7 +13729,8 @@ function drawShowroom(dt){
     flushFaces();
     carShadow(0, 0, S.yaw);
     if(carModel.state!=='ready' && !S.warned){ S.warned=true; console.warn('[menu] витрина без модели кузова — лофт'); }
-    emitCarMesh(0, 0, S.yaw, SHOW_COL, 0, {own:true}, {body:'sedan', style:'a'});
+    const body=selectedPlayerBody();
+    emitCarMesh(0, 0, S.yaw, PLAYER_COLORS[body], 0, {own:true}, {body});
     flushFaces();
   } finally { RAMP_ON=ramp; carRampUse=crU; camPivot=null; setVP(0,0,W,H); }
 }
@@ -14827,7 +14854,7 @@ function paywallHTML(i){
     /* про привязку к аккаунту — одна строка: гость читал её дважды, над кнопками входа и в их подписи */
     +(acct ? '<p class="sd">Покупка привязана к аккаунту и откроется на любом устройстве.</p>' : '')
     +(window.PREMIUM_WEB ? '<p class="sd">Проходил платные уровни до запуска? <a href="mailto:eeper03@mail.ru">Напиши в поддержку</a>.</p>' : '')+'</div>';
-  const lead=PAY_ON || window.PREMIUM_FORCE
+  const lead=PAY_ON || window.PREMIUM_WEB || window.PREMIUM_FORCE
     ? 'Чтобы купить, войди — покупка привяжется к аккаунту и откроется на любом устройстве.'
     : 'Войди, чтобы проверить доступ к Премиуму.';
   if(!acct) return s+(AUTH_ON ? acctBtnsHTML(lead) : '')
@@ -14846,7 +14873,9 @@ function paywallShow(i, via){
 }
 async function payStart(product){
   if(!acct){ showOv(paywallHTML(paywallLi)); return; }
-  if(!canBuyPremium()) return;
+  const allowed=canBuyPremium();
+  if(AN_DEBUG) console.info('[FIX:335] покупка', {product:product, access:acctPaymentAccess, protected:!!window.PREMIUM_WEB, allowed:allowed});
+  if(!allowed) return;
   track('purchase_start', {product:product, li:paywallLi+1});
   let r;
   try{ r=await apiFetch('/pay/create','POST',{product:product}); }catch(e){ r={status:0, json:{}}; }
@@ -15786,7 +15815,7 @@ function menuProfileHTML(){
 /* ---------- настройки ---------- */
 /* одна таблица на все переключатели: строка знает, как прочитать значение и как его применить.
    Применение идёт теми же путями, что клавиши, — запись в localStorage не дублируется */
-const SET_TABS=[['screen','Экран'],['hints','Подсказки'],['mirrors','Зеркала'],['sound','Звук и поток']];
+const SET_TABS=[['screen','Экран'],['hints','Подсказки'],['mirrors','Зеркала'],['vehicle','Автомобиль'],['sound','Звук и поток']];
 function setGfx(v){
   opt.gfx=v;
   try{ localStorage.setItem('trainer_gfx', v); }catch(e){}
@@ -15818,6 +15847,13 @@ function setTraffic(v){
 }
 function fullAvail(){ const el=document.documentElement; return !!(el.requestFullscreen || el.webkitRequestFullscreen); }
 const SETTINGS=[
+  {id:'vehicle', tab:'vehicle', label:'Кузов', kind:'seg', vals:[['sedan','Седан'],['muscle','Чёрный маслкар']],
+   show:()=>carModel.state==='ready' && !!carModel.bodies.muscle,
+   desc:()=>'Выбранный кузов появится в следующем заезде. Управление и габариты те же.',
+   get:selectedPlayerBody, set:v=>{
+     preferredPlayerBody=v;
+     try{ localStorage.setItem('trainer_player_body',v); }catch(e){}
+   }},
   {id:'gfx', tab:'screen', label:'Графика', kind:'seg', vals:[['auto','авто'],['max','максимум']],
    desc:()=>gpuSoft() ? GPU_NOTE : opt.gfx==='max' ? 'Все детали всегда, кадры могут просесть' : 'Качество подстраивается под скорость кадра',
    get:()=>opt.gfx, set:setGfx},
@@ -15868,6 +15904,7 @@ function menuSettingsHTML(tab){
   if(tab==='premium' && !premiumOn()) tab='screen';
   let s=menuHead('Настройки', setTabs(), tab)+'<div class="mbody">';
   if(tab==='premium') s+=premiumTabHTML();
+  if(tab==='vehicle' && (carModel.state!=='ready' || !carModel.bodies.muscle)) s+='<p class="mnote">Сейчас доступен седан.</p>';
   for(const x of SETTINGS) if(x.tab===tab && (!x.show || x.show())) s+=setRowHTML(x);
   if(tab==='mirrors') s+='<div class="mrow"><button type="button" class="ghost" data-act="mirreset">Сбросить зеркала</button></div>'
     +'<p class="mnote">Зеркало можно повернуть, потянув прямо по нему.'+(MOB?'':' Колесо мыши над зеркалом меняет размер.')+'</p>';
@@ -16083,6 +16120,13 @@ function zoomBy(k){
   else opt.dist=clamp(opt.dist+k*0.025,3.4,22);
 }
 canvas.addEventListener('contextmenu',e=>{ if(editor) e.preventDefault(); });
+if(anPlatform()==='web' && window.webkit?.messageHandlers?.performAction &&
+   typeof window.TelegramWebviewProxy?.postEvent==='function'){
+  /* Браузер Telegram на iOS обрабатывает сворачивание поверх WebView, вне touch-action. */
+  canvas.addEventListener('touchmove',()=>{
+    window.TelegramWebviewProxy.postEvent('cancellingTouch','{}');
+  },{passive:true});
+}
 canvas.addEventListener('pointerdown',e=>{
   if(showroomOn()){ e.preventDefault(); showroomPtr(e,'down'); return; }
   if(editor){ e.preventDefault(); try{ canvas.setPointerCapture(e.pointerId); }catch(err){}
@@ -17169,12 +17213,53 @@ function setTouch(on){
   try{ localStorage.setItem('trainer_touch', MOB?'1':'0'); }catch(e){}
   applyTouchMode(); resize();
 }
+const rotateState={ready:false,visible:false,since:0};
+function rotateHelpAllowed(){ return anPlatform()==='web' && !anFramed(); }
+function rotateUrl(){
+  const url=new URL('https://pozerkalam.space/play/'), source=anSource();
+  for(const k of AN_UTM) if(source[k]) url.searchParams.set(k,source[k]);
+  url.searchParams.set('browser_handoff','rotate');
+  return url.href;
+}
+function rotateSync(){
+  const allowed=rotateHelpAllowed(), help=$('rotBrowser'), field=$('rotLink');
+  help.hidden=!allowed;
+  if(allowed && !field.value) field.value=rotateUrl();
+  /* Первый resize идёт до app_open: показ экрана должен попасть в буфер после запуска приложения. */
+  if(!rotateState.ready) return;
+  const visible=MOB && innerHeight>innerWidth;
+  if(visible===rotateState.visible) return;
+  rotateState.visible=visible;
+  if(!allowed) return;
+  if(visible){
+    rotateState.since=performance.now();
+    track('rotate_view',{vw:innerWidth,vh:innerHeight});
+  } else track('rotate_exit',{reason:MOB?'landscape':'touch_off',seconds:+((performance.now()-rotateState.since)/1000).toFixed(1)});
+}
+function rotateCopy(){
+  const button=$('rotCopy'), field=$('rotLink'), status=$('rotStatus');
+  if(button.disabled || !rotateHelpAllowed()) return;
+  const link=rotateUrl(); field.value=link;
+  button.disabled=true; status.textContent='Копируем ссылку…';
+  const finish=(result)=>{
+    button.disabled=false;
+    if(result==='success') status.textContent='Ссылка скопирована. Открой браузер и вставь её в адресную строку.';
+    else {
+      status.textContent='Скопируй выделенную ссылку вручную и открой её в браузере.';
+      field.focus(); field.select(); field.setSelectionRange(0,field.value.length);
+    }
+    track('rotate_copy',{result});
+  };
+  try{ navigator.clipboard.writeText(link).then(()=>finish('success'),()=>finish('manual')); }
+  catch(e){ finish('manual'); }
+}
 function applyTouchMode(){
   document.body.classList.toggle('touch', MOB);
   document.body.classList.toggle('portrait', MOB && window.innerHeight>window.innerWidth);
   /* «Во весь экран» поворачивает экран сам (lock в toggleFull) — там, где браузер это умеет: Android да,
      iPhone нет, там кнопки нет и остаётся просьба повернуть */
   const rf=$('rotFull'); if(rf) rf.hidden=!fullAvail() || isFull();
+  rotateSync();
 }
 function bindHold(el, act){
   const on=(e)=>{ e.preventDefault(); initAudio(); if(paused) return;
@@ -17415,6 +17500,7 @@ $('gearVal').addEventListener('click',e=>{
 });
 $('restartBtn').addEventListener('click',()=>{ initAudio(); pressKey('KeyR'); });
 $('rotFull').addEventListener('click',()=>{ initAudio(); toggleFull(); });
+$('rotCopy').addEventListener('click',rotateCopy);
 $('demoBtn').addEventListener('click',()=>{ initAudio(); if(demo) stopDemo(); else startDemo(); });
 $('fbBtn').addEventListener('click',()=>{ initAudio(); doAct('feedback:game'); });
 $('trafBtn').addEventListener('click',()=>{ initAudio(); cycleTraffic(); });
@@ -17605,6 +17691,7 @@ requestAnimationFrame(frame);
 track('app_open', Object.assign({ platform:anPlatform(), framed:anFramed(), mob:MOB,
   lang:(navigator.language||'').slice(0,8), runs:runsCnt, build:window.BUILD||'dev',
   account: AUTH_ON ? (acct?1:0) : null, provider: acct ? acct.provider : null }, anSource()));
+rotateState.ready=true; rotateSync();
 if(acct) anIdentify(acct.id);
 authBoot().then(()=>{
   payBoot();

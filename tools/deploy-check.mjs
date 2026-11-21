@@ -27,6 +27,25 @@ const at = (needle, from = 0) => {
 };
 const order = (...xs) => xs.every(x => x > 0) && xs.every((x, i) => i === 0 || xs[i - 1] < x);
 
+const premiumDefault = lines.filter(l => /^:\s+"\$\{PREMIUM_WEB_PROTECTED:=/.test(l)).join('\n');
+const defaultMode = execFileSync('bash', ['-c', 'unset PREMIUM_WEB_PROTECTED\n' + premiumDefault + '\nprintf "%s" "${PREMIUM_WEB_PROTECTED:-}"'], { encoding: 'utf8' });
+check('без параметра защиты выкатка собирает платные уровни вне публичной страницы (@dist-premium-default-protected)',
+  defaultMode === '1', JSON.stringify({ mode: defaultMode }));
+
+const mirrorConfig = fs.readFileSync(process.env.MIRROR_ACCOUNT_CONFIG || path.join(ROOT, 'server/nginx-account-mirror.conf'), 'utf8').replace(/#.*$/gm, '');
+const mirrorTLS = Object.fromEntries([...mirrorConfig.matchAll(/^\s*(proxy_ssl_\w+)\s+([^;]+);/gm)].map(m => [m[1], m[2].trim()]));
+const requiredTLS = {
+  proxy_ssl_session_reuse: 'off',
+  proxy_ssl_verify: 'on',
+  proxy_ssl_server_name: 'on',
+  proxy_ssl_name: 'pozerkalam.space',
+  proxy_ssl_trusted_certificate: '/etc/ssl/certs/ca-certificates.crt',
+};
+check('зеркало проверяет TLS upstream и не переиспользует сессию другого прокси (@dist-account-mirror-tls)',
+  Object.entries(requiredTLS).every(([key, value]) => mirrorTLS[key] === value)
+    && at('mirror_scp server/nginx-account-mirror.conf /tmp/pz-account.conf') > 0,
+  JSON.stringify(mirrorTLS));
+
 /* прод: заголовок на бокс → reload → дождались нового CSP → только потом файлы игры */
 const mirrorStart = at('==> зарубежное зеркало');
 const pHeaders = at('pozerkalam-headers.conf "$HOST:/etc/nginx/snippets/pozerkalam-headers.conf"');
