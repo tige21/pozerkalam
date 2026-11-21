@@ -14772,7 +14772,7 @@ function paySite(){ return String(window.BUILD||'').indexOf('ya-')!==0 && !anFra
 function premiumOn(){ return AUTH_ON && paySite() && (PAY_ON || !!window.PREMIUM_WEB || acctPaymentAccess==='owner' || !!window.PREMIUM_FORCE); }
 function canBuyPremium(){
   return !!acct && AUTH_ON && paySite() && (acctPaymentAccess==='owner'
-    || (PAY_ON || !!window.PREMIUM_FORCE) && acctPaymentAccess==='public');
+    || (PAY_ON || !!window.PREMIUM_WEB || !!window.PREMIUM_FORCE) && acctPaymentAccess==='public');
 }
 function clearPremiumLevels(){
   premiumOpenSeq++;
@@ -14854,7 +14854,7 @@ function paywallHTML(i){
     /* про привязку к аккаунту — одна строка: гость читал её дважды, над кнопками входа и в их подписи */
     +(acct ? '<p class="sd">Покупка привязана к аккаунту и откроется на любом устройстве.</p>' : '')
     +(window.PREMIUM_WEB ? '<p class="sd">Проходил платные уровни до запуска? <a href="mailto:eeper03@mail.ru">Напиши в поддержку</a>.</p>' : '')+'</div>';
-  const lead=PAY_ON || window.PREMIUM_FORCE
+  const lead=PAY_ON || window.PREMIUM_WEB || window.PREMIUM_FORCE
     ? 'Чтобы купить, войди — покупка привяжется к аккаунту и откроется на любом устройстве.'
     : 'Войди, чтобы проверить доступ к Премиуму.';
   if(!acct) return s+(AUTH_ON ? acctBtnsHTML(lead) : '')
@@ -14873,7 +14873,9 @@ function paywallShow(i, via){
 }
 async function payStart(product){
   if(!acct){ showOv(paywallHTML(paywallLi)); return; }
-  if(!canBuyPremium()) return;
+  const allowed=canBuyPremium();
+  if(AN_DEBUG) console.info('[FIX:335] покупка', {product:product, access:acctPaymentAccess, protected:!!window.PREMIUM_WEB, allowed:allowed});
+  if(!allowed) return;
   track('purchase_start', {product:product, li:paywallLi+1});
   let r;
   try{ r=await apiFetch('/pay/create','POST',{product:product}); }catch(e){ r={status:0, json:{}}; }

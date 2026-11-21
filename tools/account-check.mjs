@@ -884,6 +884,14 @@ let offerViewA = [], offerClickA = [];
     return { li: game.li, locked: levelLocked(10), stub: LEVELS[10].premiumStub, demo: !!DEMOS[10] };
   });
   const guestRequests = guest.apiCalls.filter(c => c.path.startsWith('/premium/')).length;
+  const guestPurchase = await guest.page.evaluate(() => ({
+    lead: document.querySelector('#overlay .acctlead')?.textContent,
+    login: document.querySelectorAll('#overlay .acctbtns button').length,
+    buy: !!document.querySelector('#overlay [data-act="pay-buy"]')
+  }));
+  check('гость защищённой сборки видит приглашение войти для покупки (@acct-premium-protected-guest-copy)',
+    /Чтобы купить, войди/.test(guestPurchase.lead) && guestPurchase.login === 2 && !guestPurchase.buy,
+    JSON.stringify(guestPurchase));
   await guest.ctx.close();
   const st = { ent: [{ product: 'premium' }], protectedScript: protectedBuild.script };
   const { ctx, page, apiCalls, errors } = await openGame({ auth, protectedBuild, api: mockApi(st), storage: LOGGED });
@@ -922,6 +930,52 @@ let offerViewA = [], offerClickA = [];
       && paid.build === 'function' && paid.demo && !paid.canBuy && paidCalls.length === 4
       && paidCalls.every(c => /^Bearer /.test(c.auth)) && !errors.some(e => /Content Security Policy|pageerror:/.test(e)),
     JSON.stringify({ guestState, guestRequests, paid, paidCalls: paidCalls.length, errors }));
+  const closed = await page.evaluate(async () => {
+    await authMe();
+    await payStart('premium');
+    return { buy: !!document.querySelector('#overlay [data-act="pay-buy"]'), locked: levelLocked(10) };
+  });
+  check('защищённая сборка сохраняет запрет покупки при закрытых продажах (@acct-premium-protected-closed)',
+    closed.locked && !closed.buy && !apiCalls.some(c => c.path === '/pay/create'), JSON.stringify(closed));
+  st.paymentAccess = 'public';
+  const publicState = await page.evaluate(async () => {
+    await authMe();
+    menuGo('settings', 'premium');
+    const settingsBuy = !!document.querySelector('#overlay [data-act="pay-buy"]');
+    openLevel(10, 'pick');
+    return { settingsBuy, payOn: PAY_ON, protected: !!window.PREMIUM_WEB, forced: !!window.PREMIUM_FORCE,
+      access: acctPaymentAccess, entitled: entitled('premium') };
+  });
+  const buy = page.locator('#overlay [data-act="pay-buy"]');
+  const canBuy = await buy.isVisible();
+  let back = null;
+  if (canBuy) {
+    await Promise.all([page.waitForURL(/auth\.robokassa\.ru/), buy.click()]);
+  }
+  const creates = apiCalls.filter(c => c.path === '/pay/create');
+  const went = /auth\.robokassa\.ru/.test(page.url());
+  check('обычный аккаунт в защищённой сборке начинает публичную покупку без тестового флага (@acct-premium-public-checkout)',
+    !publicState.payOn && publicState.protected && !publicState.forced && publicState.access === 'public'
+      && !publicState.entitled && publicState.settingsBuy && canBuy && went && creates.length === 1
+      && creates[0].body.product === 'premium' && /^Bearer /.test(creates[0].auth),
+    JSON.stringify({ publicState, canBuy, went, creates: creates.length }));
+  const requestsBeforeReturn = apiCalls.length;
+  if (went) {
+    st.paid = true;
+    st.ent = [{ product: 'premium', expires_at: null }];
+    await page.goto(PAGE + '?OutSum=149.00&InvId=777&SignatureValue=abc&IsTest=1&Shp_product=premium');
+    await page.waitForFunction(() => game.li === 10 && !LEVELS[10].premiumStub, null, { timeout: 5000 });
+    back = await page.evaluate(() => ({ li: game.li, entitled: entitled('premium'), search: location.search,
+      build: typeof LEVELS[10].build, overlay: document.getElementById('overlay').style.display }));
+  }
+  const returnedCalls = apiCalls.slice(requestsBeforeReturn);
+  const privateCalls = returnedCalls.filter(c => c.path === '/premium/levels/test');
+  const purchaseOk = went ? await rbEvents(page, 'purchase_ok') : [];
+  check('после оплаты обычный аккаунт получает право и запускает платный уровень под CSP (@acct-premium-public-return)',
+    back?.li === 10 && back.entitled && back.search === '' && back.build === 'function' && back.overlay === 'none'
+      && privateCalls.length === 1 && /^Bearer /.test(privateCalls[0].auth) && returnedCalls.some(c => c.path === '/me')
+      && purchaseOk.length === 1 && !errors.some(e => /Content Security Policy|pageerror:/.test(e)),
+    JSON.stringify({ back, privateCalls: privateCalls.length, purchaseOk: purchaseOk.length, errors }));
   await ctx.close();
 }
 
