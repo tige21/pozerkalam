@@ -132,6 +132,7 @@ check('телефон: тап раскрывает полный текст по�
    «поверни телефон» на чёрном — ни названия, ни что это. Теперь название, строка о тренажёре, просьба повернуть
    и, где браузер умеет полноэкранный режим, кнопка, которая поворачивает экран сама; в альбомной — экрана нет */
 const port = [];
+const browserHelpBad = [];
 for (const [W, H] of sizes) {
   const p4 = await browser.newPage({ viewport: { width: H, height: W }, deviceScaleFactor: 2, hasTouch: true, isMobile: true });
   await p4.goto(url); await p4.waitForTimeout(400);
@@ -141,6 +142,16 @@ for (const [W, H] of sizes) {
     const rb = b && b.getBoundingClientRect();
     return { shown: vis(el), cover: cs.position === 'fixed' && +cs.zIndex >= 30, title: h1 ? h1.textContent : '', text: el.textContent.replace(/\s+/g, ' ').length,
       btn: vis(b), inView: !!rb && rb.bottom <= innerHeight && rb.top >= 0 && rb.height >= 40, full: fullAvail() }; });
+  const help = await p4.evaluate(() => {
+    const box = document.getElementById('rotBrowser'), field = document.getElementById('rotLink'), copy = document.getElementById('rotCopy');
+    if (!box || !field || !copy) return { ok: false, reason: 'нет выхода в браузер' };
+    copy.scrollIntoView({ block: 'nearest' });
+    const r = copy.getBoundingClientRect(), top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+    return { ok: !box.hidden && box.textContent.includes('Threads') && field.value.startsWith('https://pozerkalam.space/play/')
+      && (top === copy || copy.contains(top)) && r.top >= 0 && r.bottom <= innerHeight && r.height >= 44
+      && document.getElementById('rotate').scrollWidth <= innerWidth, width: innerWidth, bottom: r.bottom };
+  });
+  if (!help.ok) browserHelpBad.push(`${H}x${W}: ${JSON.stringify(help)}`);
   /* тот же телефон, повёрнутый горизонтально: экрана нет */
   await p4.setViewportSize({ width: W, height: H }); await p4.waitForTimeout(250);
   const land = await p4.evaluate(() => { const el = document.getElementById('rotate'); return getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().width > 0; });
@@ -150,6 +161,7 @@ for (const [W, H] of sizes) {
 }
 check('телефон в портрете: название, что это и просьба повернуть, кнопка «Во весь экран» в кадре; в альбомной экрана нет (@app-portrait-start)',
   port.length === 0, port.join(' | '));
+check('выход в браузер доступен на пяти портретных размерах (@app-portrait-browser-help)', browserHelpBad.length === 0, browserHelpBad.join(' | '));
 
 check('в консоли нет ошибок', errors.length === 0, errors.join(' | '));
 

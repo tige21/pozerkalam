@@ -370,7 +370,7 @@ await browser.close();
 /* ---- сборка ---- */
 const budgetEnv = FAULT === 'budget' ? { ...process.env, EMBED_BUDGET_MB: '0.5' } : process.env;
 const budget = spawnSync('node', [path.join(ROOT, 'tools/assets/embed.mjs'), '--check'], { env: budgetEnv, encoding: 'utf8' });
-check('index.html в бюджете 2,2 МБ, блок картинок цел, все грани — WebP (@dist-asset-budget)',
+check('index.html в бюджете, блок картинок цел, все грани — WebP (@dist-asset-budget)',
   budget.status === 0, (budget.stdout + budget.stderr).trim().split('\n').filter(Boolean).slice(-2).join(' · '));
 
 /* блок картинок не внутри <script>: иначе base64 уехал бы в зеркало codegraph и под мутатор */

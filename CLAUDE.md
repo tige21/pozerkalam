@@ -125,8 +125,8 @@ node tools/assets/embed.mjs && tools/mirror-script.sh   # блок <!-- assets -
 - Картинки — только `data:` в `<div id="assets">` до основного `<script>`, модель кузова —
   `<template id="car-mesh">`: инструменты открывают игру через `file://`, и внешняя картинка
   закрыла бы канвасу `getImageData`. Блок — не скрипт, поэтому зеркало codegraph и мутатор его не
-  видят (`@dist-assets-outside-script`). Бюджет `index.html` — 2,2 МБ (`embed.mjs --check`,
-  `@dist-asset-budget`); сейчас 2,17 МБ. Во встроенном блоке только то, что читает игра: два куба
+  видят (`@dist-assets-outside-script`). Бюджет `index.html` — 2,5 МиБ (`embed.mjs --check`,
+  `@dist-asset-budget`). Во встроенном блоке только то, что читает игра: два куба
   (салон и салонное зеркало), накладка руля, пять дисков, три картинки трамвая, небо, девять плиток
   фасадов и стекло двух зеркал (контур стекла — `clean.py` → `build/assets/mirror.json` → `data-outline`). Исходники
   фар, фонарей и решёток стилей, `mat-wheel-leather` и референсы удалены 03.10.2026 — их не читали ни
